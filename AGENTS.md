@@ -14,6 +14,10 @@ Use the five canonical triage labels. Read `docs/agents/triage-labels.md` when t
 
 Use a single-context layout with root `CONTEXT.md` and `docs/adr/`. Read `docs/agents/domain.md` before exploring domain terminology or architectural decisions.
 
+## Wiki maintenance
+
+Read `docs/openwiki-sync.md` when installing the post-commit hook, investigating Wiki sync failures, or retrying publication. Project commit and push operations finish without waiting for or repairing the background Wiki job.
+
 <!-- OPENWIKI:START -->
 
 ## OpenWiki
