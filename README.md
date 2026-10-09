@@ -69,6 +69,20 @@ python -m pytest
 
 About ten seconds. The tests open small windows on each attached monitor, click in them, and move the cursor, because they run real scripts through the real launcher. Several assert cursor positions, so keep hands off the mouse and keyboard during the run. A run with a human moving the mouse fails those assertions while the clicks themselves still land.
 
+## Measured: clicks while the cursor keeps moving
+
+`experiments/jiggle/run.py` fires 200 `Click x, y` at a 24x24 pixel button, one launcher process per click, while a second script moves the cursor to a random point on the primary monitor as fast as the injected-input path allows. Measured on 2026-10-08 on this machine: Windows 11, AutoHotkey 2.0.22, a 3840x2160 primary display at 200%.
+
+| Condition | Send mode in effect | Cursor moves per second | Hits |
+| --- | --- | --- | --- |
+| Another AutoHotkey script holds the mouse hook | SendEvent fallback | 61 | 399 of 400 |
+| Another AutoHotkey script holds the mouse hook | SendEvent fallback | 380 | 198 of 200 |
+| No other hook | SendInput | 371 to 387 | 393 of 400 |
+
+No launcher failures in any run. Mean script time per click, including process start, was 100 to 138 ms.
+
+Reading: about 99 percent in both modes, and the difference between them is within noise at this sample size. That supports the design decision to optimize for short scripts rather than for injection mode. The misses in SendInput mode show that even one atomic input batch does not guarantee a Win32 button registers the click; the likely mechanism is a cursor move reaching the button between its down and up messages, which clears its pushed state. Not investigated further. The target of one move per millisecond was out of reach because each injected move costs about 2.5 ms on this path; the rates above are what the jiggler achieved.
+
 ## Status
 
-Milestone 1: launcher, prelude, and a click that lands on both monitors. Not built yet: the screenshot script, the agent skill file, the accessibility-tree binding (UIA-v2), and the jiggle test that measures the click hit rate under physical cursor movement (issue #2).
+Milestone 1: launcher, prelude, and a click that lands on both monitors, plus the jiggle measurement above. Not built yet: the screenshot script, the agent skill file, and the accessibility-tree binding (UIA-v2).
