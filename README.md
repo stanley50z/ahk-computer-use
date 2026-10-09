@@ -9,6 +9,16 @@ Design record: `docs/design/acu-brainstorm-2026-10-08.md`. Research notes: `docs
 - Windows with AutoHotkey v2 installed at `C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe`, or set `ACU_AHK` to the executable.
 - Python 3.12 or newer. The launcher uses only the standard library.
 
+## Install the skill
+
+`acu/` is also the agent skill: `acu/SKILL.md` sits beside the launcher and scripts and teaches an agent the loop. Link it where the coding harnesses look:
+
+```
+python install_skill.py
+```
+
+That creates directory junctions (symlinks outside Windows) at `~/.agents/skills/acu` for Pi and Codex, `~/.claude/skills/acu` for Claude Code, and `~/.config/opencode/skills/acu` for OpenCode, so the installed skill always matches the checkout. `python install_skill.py --remove` deletes the links. Restart a running harness, or `/reload` in Pi, to pick it up.
+
 ## Usage
 
 ```
@@ -113,4 +123,4 @@ Reading: about 99 percent in both modes, and the difference between them is with
 
 ## Status
 
-Milestone 1: launcher, prelude, a click that lands on both monitors, the jiggle measurement above, and the screenshot script. Not built yet: the agent skill file and the accessibility-tree binding (UIA-v2).
+Milestone 1: launcher, prelude, a click that lands on both monitors, the jiggle measurement above, the screenshot script, and the skill. Not built yet: the accessibility-tree binding (UIA-v2).
