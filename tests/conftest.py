@@ -116,17 +116,18 @@ def visible_frame(hwnd):
 
 @pytest.fixture
 def open_window():
-    """Factory that starts helper_window.ahk as a stand-in for a user's application and returns its hwnd.
+    """Factory that starts a stand-in for a user's application window and returns its hwnd.
 
-    Every window it opened is killed when the test ends.
+    Runs tests/scripts/helper_window.ahk unless `script` names another fixture script; extra keyword
+    arguments become environment variables for it. Every window it opened is killed when the test ends.
     """
     procs = []
 
-    def start(title, x, y, backcolor=""):
-        env = {**os.environ, "ACU_TEST_TITLE": title, "ACU_TEST_X": str(x), "ACU_TEST_Y": str(y), "ACU_TEST_BACKCOLOR": backcolor}
+    def start(title, x, y, backcolor="", script="helper_window.ahk", **extra_env):
+        env = {**os.environ, "ACU_TEST_TITLE": title, "ACU_TEST_X": str(x), "ACU_TEST_Y": str(y), "ACU_TEST_BACKCOLOR": backcolor, **extra_env}
         procs.append(
             subprocess.Popen(
-                [str(ahk_exe()), str(SCRIPTS / "helper_window.ahk")],
+                [str(ahk_exe()), str(SCRIPTS / script)],
                 env=env,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,

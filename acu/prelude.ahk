@@ -5,12 +5,16 @@
 ;   - runtime errors printed to stderr with exit code 1, and load-time warnings printed to stdout, never a dialog
 ;   - the user's foreground window and cursor restored when the script ends, unless the user took over
 ;     or the script called AcuKeepForeground() because its job was to leave a window showing
+;   - UI Automation through the UIA class, so a script can find a control by name and act on it
 #Requires AutoHotkey v2.0
 #NoTrayIcon
 #SingleInstance Off
 ; A load-time warning, such as a call to a function that does not exist, is a modal dialog by default. It
 ; appears before the script has a main window, so the launcher's close request cannot reach it. Print it instead.
+; LocalSameAsGlobal stays off, as it is by default: a script that names a global like one of the prelude's
+; locals would otherwise print a warning that is not about the script.
 #Warn All, StdOut
+#Warn LocalSameAsGlobal, Off
 
 FileEncoding "UTF-8-RAW"
 
@@ -197,3 +201,10 @@ AcuProcessAt(x, y) {
     DllCall("GetWindowThreadProcessId", "ptr", root, "uint*", &pid)
     return pid
 }
+
+; ---------------------------------------------------------------------------------------------------
+; UI Automation
+
+; Descolada's UIA-v2 library (MIT, see lib/UIA-LICENSE.txt). It costs about 30 ms per script and gives every
+; script the accessibility tree: UIA.ElementFromHandle(target).FindElement({Type:"Button", Name:"Six"}).Invoke()
+#Include "%A_LineFile%\..\lib\UIA.ahk"

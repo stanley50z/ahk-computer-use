@@ -47,6 +47,7 @@ The trailer is always the last line. The prelude's own notes, such as an error r
 - Mouse and pixel coordinates are screen coordinates, and the thread is per-monitor-v2 DPI aware. A pixel position in a screenshot is a click position.
 - No injected delays: `SetMouseDelay -1` and `SetDefaultMouseSpeed 0`. Clicks and moves are single jumps even when AutoHotkey falls back from SendInput to SendEvent, which it does whenever another AutoHotkey script on the machine has a keyboard or mouse hook.
 - Runtime errors are printed with their message, file, line, and stack, and the script exits with code 1. No dialog ever appears. Load-time syntax errors are printed the same way by AutoHotkey itself, and load-time warnings, such as a call to a function that does not exist, go to the output too. By default those warnings are modal dialogs that appear before the script has a window, so nothing could close them.
+- The `UIA` class from Descolada's UIA-v2 library, so a script can find a control by name and act on it without the pointer. See below.
 - No tray icon, and several scripts may run at once.
 - The foreground window and cursor position from the start of the script are restored when it ends, including on errors and on the watchdog's close request. See the rules below.
 
@@ -77,6 +78,35 @@ scale=3
 
 `source` is the captured screen rectangle, origin then size. `scale` is source pixels per image pixel. A point (px, py) in the image is the screen point (sourceX + px * scale, sourceY + py * scale). Without `--out`, files go to `%LOCALAPPDATA%\ACU\shots\`, a managed folder where only the newest 30 PNG files are kept, because screenshots can contain secrets. `--out` writes anywhere; files outside the managed folder are never pruned.
 
+## Finding controls by name
+
+`acu/tree.ahk` lists a window's controls from its accessibility tree, the same tree a screen reader uses. Modern applications draw their own buttons inside one blank window, so this is the only programmatic way to find them.
+
+```
+python acu/run.py acu/tree.ahk -- "<WinTitle>" [--depth 25] [--max 300]
+```
+
+The first line is `window=<hwnd> "<title>" <exe>`. Then one line per element of the control view, depth first:
+
+```
+2,2,2,5,3 Button "Six" id="num6Button" @2073,1917 157x71 invoke
+2,2,2,2 Text "Display is 0" id="CalculatorResults" @1700,1300 400x80
+```
+
+Path, type, name when present, `id=` when present, `value=` when present, screen bounds, then the actions the element supports (`invoke toggle value select expand scroll`) and its state (`disabled offscreen focused`). Quoted fields are printed as AutoHotkey string contents, with quotes, backticks, and line breaks escaped the way a script would write them, so a name can be pasted into `FindElement` as it is. Paths number the control view, which is the view `ElementFromPath` walks; a raw-view numbering was tried and does not resolve on Calculator. The dump ends with `elements=N` and `truncated=yes|no`; a depth cut that hides children counts as truncation.
+
+Every script has the `UIA` class, so acting needs no include:
+
+```autohotkey
+root := UIA.ElementFromHandle("Calculator")
+root.FindElement({Type:"Button", Name:"Six"}).Invoke()      ; by name
+root.FindElement({AutomationId:"num6Button"}).Invoke()         ; by id
+root.ElementFromPath("2,2,2,5,3").Click()                       ; by path from the dump; Click moves the pointer
+root.FindElement({Type:"Edit"}).Value := "text"                ; a control flagged value
+```
+
+Measured on Calculator: one button by name in 47 ms, all 48 buttons in 31 ms, the whole tree of 77 elements in 32 ms, and 6 × 7 = through `Invoke()` alone with the result read back from the display element. A Chrome window with 136 elements took 0.8 s, because the dump fetches the whole subtree in one round trip before applying `--depth` and `--max`; the budget bounds the output, not the fetch.
+
 ## Restore rules
 
 The prelude restores the entry foreground window and cursor at exit, with two exceptions:
@@ -90,6 +120,10 @@ To know where it placed the cursor without installing a hook, the prelude shadow
 - A `{Click}` written directly inside `Send`, and any `WinActivate`, are not tracked. A script that only activates a window and types relies on the cursor check alone.
 
 Scripts should end at a stable state. A script whose purpose is to leave an application showing calls `AcuKeepForeground()` anywhere in its body; the foreground is then left where the script put it and only the cursor is restored. Takeover detection still applies: if the user moved the cursor, nothing is restored.
+
+## Third-party code
+
+`acu/lib/UIA.ahk` is Descolada's UIA-v2 library, copied from https://github.com/Descolada/UIA-v2 at commit 2846a9b (2026-04-23), MIT, license in `acu/lib/UIA-LICENSE.txt`. The prelude includes it, which costs about 30 ms per script. One line is changed, marked `; ACU patch:` in the element indexer: a single-segment numeric path such as `"3"` now resolves like `"3,2"` already did, so every path the tree dump prints is accepted by `ElementFromPath`. To update, copy the upstream file over it, re-apply that line, and run the tests.
 
 ## Debugging artifacts
 
@@ -107,7 +141,7 @@ Set `ACU_HOME` to move both. Script text is never logged, only its SHA-256, beca
 python -m pytest
 ```
 
-About fifteen seconds. The tests open small windows on each attached monitor, click in them, move the cursor, and take screenshots, because they run real scripts through the real launcher. Several assert cursor positions, so keep hands off the mouse and keyboard during the run. A run with a human moving the mouse fails those assertions while the clicks themselves still land. The screenshot tests read PNGs with Pillow, the only test dependency: `pip install pillow`.
+About twenty seconds. The tests open small windows on each attached monitor, click in them, move the cursor, take screenshots, and launch and close Windows Calculator once, because they run real scripts through the real launcher. Several assert cursor positions, so keep hands off the mouse and keyboard during the run. A run with a human moving the mouse fails those assertions while the clicks themselves still land. The screenshot tests read PNGs with Pillow, the only test dependency: `pip install pillow`.
 
 ## Measured: clicks while the cursor keeps moving
 
@@ -125,4 +159,4 @@ Reading: about 99 percent in both modes, and the difference between them is with
 
 ## Status
 
-Milestone 1: launcher, prelude, a click that lands on both monitors, the jiggle measurement above, the screenshot script, and the skill. Not built yet: the accessibility-tree binding (UIA-v2).
+Milestone 1: launcher, prelude, a click that lands on both monitors, the jiggle measurement above, the screenshot script, and the skill. Milestone 2: the accessibility tree, so an agent finds controls by name before it reads a screenshot. Next: architecture decision records and a glossary for the decisions the code has confirmed.

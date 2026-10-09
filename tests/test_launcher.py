@@ -58,6 +58,14 @@ def test_call_to_missing_function_is_printed_and_exits_nonzero():
     assert elapsed < 2.5, f"took {elapsed:.1f}s, which means a dialog blocked until the watchdog fired"
 
 
+def test_globals_named_like_prelude_locals_produce_no_warning():
+    result = run_acu("globals_named_like_prelude_locals.ahk", "--timeout", "3")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "sum=6" in result.stdout.splitlines()
+    assert "Warning" not in result.stdout, result.stdout
+
+
 def test_syntax_error_is_printed_and_exits_nonzero():
     result = run_acu("syntax_error.ahk", "--timeout", "3")
 
