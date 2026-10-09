@@ -2,11 +2,14 @@
 
 import re
 import sys
+from pathlib import Path
+
+import pytest
 
 from conftest import REPO
 
 sys.path.insert(0, str(REPO))
-from install_skill import ROOTS, install, is_link  # noqa: E402
+from install_skill import PROJECT_ROOTS, USER_ROOTS, install, is_link  # noqa: E402
 
 SKILL_DIR = REPO / "acu"
 SKILL_FILE = SKILL_DIR / "SKILL.md"
@@ -35,20 +38,25 @@ def test_skill_names_only_files_that_exist_beside_it():
         assert (SKILL_DIR / script).is_file()
 
 
-def test_installer_links_the_skill_into_every_harness_root_and_removes_cleanly(tmp_path):
-    first = install(tmp_path)
-    second = install(tmp_path)
+@pytest.mark.parametrize("roots", [PROJECT_ROOTS, USER_ROOTS], ids=["project", "global"])
+def test_installer_links_the_skill_into_every_harness_root_and_removes_cleanly(tmp_path, roots):
+    first = install(tmp_path, roots)
+    second = install(tmp_path, roots)
 
-    assert len(first) == len(ROOTS) and all(line.startswith("installed") for line in first)
+    assert len(first) == len(roots) and all(line.startswith("installed") for line in first)
     assert all(line.startswith("already installed") for line in second)
-    for root in ROOTS:
+    for root in roots:
         link = tmp_path / root / "acu"
         assert is_link(link)
         assert (link / "SKILL.md").read_text(encoding="utf-8") == SKILL_FILE.read_text(encoding="utf-8")
         assert (link / "run.py").is_file()
 
-    removed = install(tmp_path, remove=True)
+    removed = install(tmp_path, roots, remove=True)
 
     assert all(line.startswith("removed") for line in removed)
-    assert not any((tmp_path / root / "acu").exists() for root in ROOTS)
+    assert not any((tmp_path / root / "acu").exists() for root in roots)
     assert SKILL_FILE.is_file(), "removing links must leave the checkout alone"
+
+
+def test_project_roots_cover_the_four_harnesses_in_repo():
+    assert set(PROJECT_ROOTS) == {Path(".agents") / "skills", Path(".claude") / "skills"}

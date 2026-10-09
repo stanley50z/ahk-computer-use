@@ -18,7 +18,7 @@ Use a single-context layout with root `CONTEXT.md` and `docs/adr/`. Read `docs/a
 
 Run the tests with `python -m pytest`, about fifteen seconds. They open small windows, move the cursor, and take screenshots, and several assert cursor positions, so keep hands off the mouse and keyboard during a run. The screenshot tests need Pillow. Launcher usage, prelude behavior, and debugging artifact paths are in `README.md`.
 
-`acu/` doubles as the agent skill directory: `acu/SKILL.md` is what other harnesses load, and `install_skill.py` links the directory into their skill roots. Keep the skill under about 120 lines; longer material belongs in `README.md`.
+`acu/` doubles as the agent skill directory: `acu/SKILL.md` is what other harnesses load. `install_skill.py` links the directory into this repository's `.agents/skills` and `.claude/skills` (gitignored junctions, run it once per checkout), so only sessions inside this repository see the skill while it is under test. Keep the skill under about 120 lines; longer material belongs in `README.md`.
 
 Inside this repository `acu` is the computer-use skill and the user-level `cua-driver` skill is switched off: by `skillOverrides` in `.claude/settings.json` for Claude Code, by `permission.skill` in `opencode.json` for OpenCode, and by `.pi/extensions/acu-only.ts` for Pi. Codex has no per-project switch, so in Codex use `acu` for desktop work and leave `cua-driver` alone.
 

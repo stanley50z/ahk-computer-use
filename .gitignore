@@ -2,4 +2,6 @@
 !/.pi/
 /.pi/*
 !/.pi/extensions/
+/.agents/
+/.claude/skills/
 __pycache__/

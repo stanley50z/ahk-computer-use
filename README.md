@@ -11,13 +11,15 @@ Design record: `docs/design/acu-brainstorm-2026-10-08.md`. Research notes: `docs
 
 ## Install the skill
 
-`acu/` is also the agent skill: `acu/SKILL.md` sits beside the launcher and scripts and teaches an agent the loop. Link it where the coding harnesses look:
+`acu/` is also the agent skill: `acu/SKILL.md` sits beside the launcher and scripts and teaches an agent the loop. Link it where the coding harnesses look inside this repository:
 
 ```
 python install_skill.py
 ```
 
-That creates directory junctions (symlinks outside Windows) at `~/.agents/skills/acu` for Pi and Codex, `~/.claude/skills/acu` for Claude Code, and `~/.config/opencode/skills/acu` for OpenCode, so the installed skill always matches the checkout. `python install_skill.py --remove` deletes the links. Restart a running harness, or `/reload` in Pi, to pick it up.
+That creates two directory junctions (symlinks outside Windows), `.agents/skills/acu` for Pi, Codex, and OpenCode and `.claude/skills/acu` for Claude Code. Both are gitignored, so run the command once per checkout. Only sessions started inside this repository see the skill; other agent sessions on the machine are untouched. `python install_skill.py --remove` deletes the links. Restart a running harness, or `/reload` in Pi, to pick up a change.
+
+To make the skill available from every directory on the machine, `python install_skill.py --global` links into `~/.agents/skills`, `~/.claude/skills`, and `~/.config/opencode/skills` instead. Not used while ACU is being tested.
 
 ## Usage
 

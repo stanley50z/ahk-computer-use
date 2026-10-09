@@ -204,7 +204,7 @@
       <tr><td><span class="status done">Prelude</span></td><td><span class="path">acu/prelude.ahk</span></td><td>Screen coordinates, per-monitor DPI, no injected delays, errors printed with file and line instead of a dialog, foreground and cursor restored at exit unless the user took over.</td><td>12 tests</td></tr>
       <tr><td><span class="status done">Jiggle rig</span></td><td><span class="path">experiments/jiggle/</span></td><td>Measures the click hit rate while the cursor keeps moving. Not part of the test suite.</td><td>5 runs below</td></tr>
       <tr><td><span class="status done">Screenshot script</span></td><td><span class="path">acu/screenshot.ahk</span></td><td>Captures one display, one window without activating it, or one rectangle. Prints the saved path, image size, source rectangle, and scale.</td><td>7 tests</td></tr>
-      <tr><td><span class="status done">Skill</span></td><td><span class="path">acu/SKILL.md</span>, <span class="path">install_skill.py</span></td><td>Teaches the loop, the script shape, and how to read the output. The installer links the skill directory into the roots Pi, Codex, Claude Code, and OpenCode scan.</td><td>3 tests, plus a live check in each harness</td></tr>
+      <tr><td><span class="status done">Skill</span></td><td><span class="path">acu/SKILL.md</span>, <span class="path">install_skill.py</span></td><td>Teaches the loop, the script shape, and how to read the output. The installer links the skill directory into this repository's own skill paths, so Pi, Codex, Claude Code, and OpenCode see it only in sessions started here while it is under test.</td><td>4 tests, plus a live check in each harness</td></tr>
       <tr><td><span class="status next">Accessibility tree</span></td><td class="quiet">milestone 2</td><td>UIA-v2 binding so the agent can find elements by name and act on them without the pointer.</td><td class="quiet">none yet</td></tr>
     </tbody>
   </table>
@@ -284,7 +284,7 @@
     <li>Run log: <span class="path">%LOCALAPPDATA%\ACU\logs\runs.jsonl</span>; crash reports: <span class="path">%LOCALAPPDATA%\ACU\crashes\</span>; screenshots: <span class="path">%LOCALAPPDATA%\ACU\shots\</span></li>
     <li>Run a script: <code>python acu/run.py script.ahk --timeout 30</code></li>
     <li>Take a screenshot: <code>python acu/run.py acu/screenshot.ahk -- fullscreen 1</code></li>
-    <li>Install the skill into every harness: <code>python install_skill.py</code></li>
+    <li>Install the skill for sessions inside this repository: <code>python install_skill.py</code></li>
   </ul>
 
 </main>
