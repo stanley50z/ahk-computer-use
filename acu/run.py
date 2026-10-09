@@ -1,8 +1,8 @@
 """ACU launcher: run one AutoHotkey v2 script under the ACU prelude with captured output and a hard timeout.
 
-Usage: python acu/run.py SCRIPT.ahk [--timeout SECONDS]
+Usage: python acu/run.py SCRIPT.ahk [--timeout SECONDS] [-- ARG ...]
 
-Prints the script's stdout and stderr followed by one "[acu] ..." trailer line, then exits with the
+Arguments after -- are passed to the script and arrive in its A_Args. Prints the script's stdout and stderr followed by one "[acu] ..." trailer line, then exits with the
 script's exit code, or 124 when the watchdog fired. At the timeout the script is first asked to close
 (WM_CLOSE to its main window, which runs the prelude's exit handler) and killed if it is still running
 one second later.
@@ -24,7 +24,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Sequence
 
 HERE = Path(__file__).resolve().parent
 PRELUDE = HERE / "prelude.ahk"
@@ -82,13 +82,13 @@ def request_close(pid: int) -> None:
     user32.EnumWindows(callback_type(visit), None)
 
 
-def run_script(script: Path, timeout: float) -> Run:
+def run_script(script: Path, timeout: float, args: Sequence[str] = ()) -> Run:
     """Run the script under the prelude with the watchdog and return what happened.
 
     Waits for the AutoHotkey process itself, not for end-of-file on its output: a program the script
     launches inherits the pipe and would otherwise hold the launcher open until that program closed.
     """
-    command = [str(ahk_exe()), "/ErrorStdOut=UTF-8", "/include", str(PRELUDE), str(script)]
+    command = [str(ahk_exe()), "/ErrorStdOut=UTF-8", "/include", str(PRELUDE), str(script), *args]
     started = time.monotonic()
     proc = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     chunks: list[bytes] = []
@@ -150,16 +150,26 @@ def record(script: Path, run: Run, timeout: float) -> None:
         log.write(json.dumps(entry) + "\n")
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run an AutoHotkey v2 script under the ACU prelude.")
+def main(argv: Sequence[str] | None = None) -> int:
+    # Split at the first -- by hand: everything after it belongs to the script, whatever argparse version runs.
+    launcher_args = list(sys.argv[1:] if argv is None else argv)
+    script_args: list[str] = []
+    if "--" in launcher_args:
+        split = launcher_args.index("--")
+        launcher_args, script_args = launcher_args[:split], launcher_args[split + 1 :]
+
+    parser = argparse.ArgumentParser(
+        description="Run an AutoHotkey v2 script under the ACU prelude.",
+        epilog="Arguments after -- are passed to the script and arrive in its A_Args.",
+    )
     parser.add_argument("script", type=Path, help="path to the .ahk script")
     parser.add_argument("--timeout", type=float, default=30, help="seconds before the watchdog stops the script")
-    args = parser.parse_args(argv)
+    args = parser.parse_args(launcher_args)
     script = args.script.resolve()
     if not script.is_file():
         parser.error(f"script not found: {script}")
 
-    run = run_script(script, args.timeout)
+    run = run_script(script, args.timeout, script_args)
 
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     text = run.output

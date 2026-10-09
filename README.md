@@ -12,10 +12,10 @@ Design record: `docs/design/acu-brainstorm-2026-10-08.md`. Research notes: `docs
 ## Usage
 
 ```
-python acu/run.py script.ahk [--timeout 30]
+python acu/run.py script.ahk [--timeout 30] [-- arguments for the script]
 ```
 
-The output is the script's stdout and stderr, merged in order, followed by one trailer line:
+Arguments after `--` reach the script in `A_Args`. The output is the script's stdout and stderr, merged in order, followed by one trailer line:
 
 ```
 [acu] ok 213ms
@@ -38,6 +38,33 @@ The trailer is always the last line. The prelude's own notes, such as an error r
 - No tray icon, and several scripts may run at once.
 - The foreground window and cursor position from the start of the script are restored when it ends, including on errors and on the watchdog's close request. See the rules below.
 
+## Seeing the screen
+
+`acu/screenshot.ahk` is the agent's eyes. It saves a PNG and reports where that image sits on the screen, so a point the agent picks in the image converts to a click position mechanically.
+
+```
+python acu/run.py acu/screenshot.ahk -- fullscreen [monitor]
+python acu/run.py acu/screenshot.ahk -- app "<WinTitle>"
+python acu/run.py acu/screenshot.ahk -- custom <x1> <y1> <x2> <y2>
+```
+
+- `fullscreen` captures one display, by AutoHotkey monitor number, default 1.
+- `app` captures one window by any WinTitle, such as `ahk_exe notepad.exe` or a title fragment. The window renders itself into the image, so it shows its own content even when another window covers it, and the foreground never changes. The image is cropped to the visible frame. A minimized window is an error; restore or activate it first.
+- `custom` captures the screen rectangle from (x1, y1) to (x2, y2), exclusive, in screen pixels. This is the zoom: a small rectangle comes back at full resolution.
+
+Options for every action: `--out <path.png>` and `--max <pixels>`, the longest side of the saved image, default 1280, 0 to keep full size.
+
+The script prints four lines before the launcher trailer:
+
+```
+saved=C:\Users\you\AppData\Local\ACU\shots\20261008-213055-123-fullscreen.png
+image=1280x720
+source=0,0 3840x2160
+scale=3
+```
+
+`source` is the captured screen rectangle, origin then size. `scale` is source pixels per image pixel. A point (px, py) in the image is the screen point (sourceX + px * scale, sourceY + py * scale). Without `--out`, files go to `%LOCALAPPDATA%\ACU\shots\`, a managed folder where only the newest 30 PNG files are kept, because screenshots can contain secrets. `--out` writes anywhere; files outside the managed folder are never pruned.
+
 ## Restore rules
 
 The prelude restores the entry foreground window and cursor at exit, with two exceptions:
@@ -58,6 +85,7 @@ Scripts should end at a stable state. There is no opt-out flag for restore yet.
 | --- | --- |
 | Run log, one JSON line per run | `%LOCALAPPDATA%\ACU\logs\runs.jsonl` |
 | Crash reports for errors and timeouts, with the full output | `%LOCALAPPDATA%\ACU\crashes\<timestamp>-<script hash>.json` |
+| Screenshots taken without `--out`, newest 30 kept | `%LOCALAPPDATA%\ACU\shots\<timestamp>-<action>.png` |
 
 Set `ACU_HOME` to move both. Script text is never logged, only its SHA-256, because scripts can contain secrets. A crash report does quote the run's output, and an error message can cite fragments of the failing line, so treat crash reports as sensitive too.
 
@@ -67,7 +95,7 @@ Set `ACU_HOME` to move both. Script text is never logged, only its SHA-256, beca
 python -m pytest
 ```
 
-About ten seconds. The tests open small windows on each attached monitor, click in them, and move the cursor, because they run real scripts through the real launcher. Several assert cursor positions, so keep hands off the mouse and keyboard during the run. A run with a human moving the mouse fails those assertions while the clicks themselves still land.
+About fifteen seconds. The tests open small windows on each attached monitor, click in them, move the cursor, and take screenshots, because they run real scripts through the real launcher. Several assert cursor positions, so keep hands off the mouse and keyboard during the run. A run with a human moving the mouse fails those assertions while the clicks themselves still land. The screenshot tests read PNGs with Pillow, the only test dependency: `pip install pillow`.
 
 ## Measured: clicks while the cursor keeps moving
 
@@ -85,4 +113,4 @@ Reading: about 99 percent in both modes, and the difference between them is with
 
 ## Status
 
-Milestone 1: launcher, prelude, and a click that lands on both monitors, plus the jiggle measurement above. Not built yet: the screenshot script, the agent skill file, and the accessibility-tree binding (UIA-v2).
+Milestone 1: launcher, prelude, a click that lands on both monitors, the jiggle measurement above, and the screenshot script. Not built yet: the agent skill file and the accessibility-tree binding (UIA-v2).

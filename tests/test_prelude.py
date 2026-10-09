@@ -4,21 +4,13 @@ import ctypes
 
 import pytest
 
-from conftest import run_acu
+from conftest import reported, run_acu
 
 SM_CMONITORS = 80
 
 
 def monitor_count():
     return ctypes.windll.user32.GetSystemMetrics(SM_CMONITORS)
-
-
-def reported(stdout, key):
-    """Value of the `key=value` line a probe script printed."""
-    for line in stdout.splitlines():
-        if line.startswith(key + "="):
-            return line[len(key) + 1 :]
-    raise AssertionError(f"no {key}= line in output:\n{stdout}")
 
 
 @pytest.mark.parametrize(

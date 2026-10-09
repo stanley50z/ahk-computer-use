@@ -16,7 +16,7 @@ Use a single-context layout with root `CONTEXT.md` and `docs/adr/`. Read `docs/a
 
 ## Development
 
-Run the tests with `python -m pytest`, about ten seconds. They open small windows and move the cursor, and several assert cursor positions, so keep hands off the mouse and keyboard during a run. Launcher usage, prelude behavior, and debugging artifact paths are in `README.md`.
+Run the tests with `python -m pytest`, about fifteen seconds. They open small windows, move the cursor, and take screenshots, and several assert cursor positions, so keep hands off the mouse and keyboard during a run. The screenshot tests need Pillow. Launcher usage, prelude behavior, and debugging artifact paths are in `README.md`.
 
 ## Wiki maintenance
 

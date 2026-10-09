@@ -17,6 +17,13 @@ def test_prints_script_output_and_exits_zero():
     assert "hello from ahk 你好" in result.stdout
 
 
+def test_forwards_arguments_after_double_dash_to_the_script():
+    result = run_acu("echo_args.ahk", "--timeout", "5", "--", "alpha", "beta gamma", "--max", "0")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "args=alpha|beta gamma|--max|0" in result.stdout.splitlines()
+
+
 def test_returns_when_the_script_exits_even_if_a_program_it_launched_is_still_running():
     started = time.monotonic()
     result = run_acu("spawn_child.ahk", "--timeout", "10")

@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ACU progress, 2026-10-08</title>
+<style>
+  :root {
+    --paper: #f3f5f8;
+    --panel: #ffffff;
+    --ink: #141c2b;
+    --ink-soft: #5b6577;
+    --line: #d4d9e2;
+    --done: #1f7a4d;
+    --done-wash: #e3f2ea;
+    --next: #1c5fd6;
+    --next-wash: #e4ecfb;
+    --later: #8a93a3;
+    --later-wash: #eceef2;
+    --code: #eef1f5;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--paper); }
+  body {
+    margin: 0;
+    color: var(--ink);
+    font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+  }
+  main { max-width: 900px; margin: 0 auto; padding: 48px 28px 80px; }
+  h1 {
+    font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+    font-size: 36px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.15;
+    margin: 0 0 8px;
+  }
+  h2 { font-size: 24px; font-weight: 600; letter-spacing: -0.005em; margin: 56px 0 14px; }
+  h3 { font-size: 17px; font-weight: 600; margin: 24px 0 8px; }
+  p { margin: 0 0 12px; max-width: 72ch; }
+  .lede { font-size: 17px; color: var(--ink-soft); max-width: 66ch; }
+  .meta { color: var(--ink-soft); margin-bottom: 28px; }
+  code, .path {
+    font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.92em;
+    background: var(--code); padding: 1px 5px; border-radius: 3px;
+  }
+  pre {
+    background: var(--code); padding: 12px 14px; border-radius: 6px; overflow-x: auto;
+    font-family: "Cascadia Mono", Consolas, monospace; font-size: 13.5px; line-height: 1.5;
+  }
+  pre code { background: none; padding: 0; }
+  a { color: var(--next); }
+  a:focus-visible { outline: 2px solid var(--next); outline-offset: 2px; }
+
+  /* Milestone strip: this content is a sequence, so the markers are numbered. */
+  .strip { list-style: none; margin: 0 0 8px; padding: 0; display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+  .strip li { position: relative; padding: 10px 0 0; font-size: 13px; line-height: 1.3; }
+  .strip li::before {
+    content: ""; display: block; height: 6px; border-radius: 3px; margin-bottom: 10px; background: var(--later-wash);
+  }
+  .strip li.done::before { background: var(--done); }
+  .strip li.next::before { background: var(--next); }
+  .strip li span { display: block; color: var(--ink-soft); }
+  .strip li strong { font-weight: 600; }
+  .strip li.next strong { color: var(--next); }
+  .strip-note { color: var(--ink-soft); font-size: 13.5px; margin: 0 0 4px; }
+
+  /* The loop: the one element allowed to be loud. */
+  .loop { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin: 22px 0 10px; }
+  .stage {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px 18px 14px;
+    position: relative;
+  }
+  .stage h3 { margin: 0 0 4px; font-size: 20px; }
+  .stage .verb { color: var(--ink-soft); font-size: 13.5px; margin: 0 0 14px; }
+  .stage.gap { border-color: var(--next); box-shadow: 0 0 0 3px var(--next-wash); }
+  .chips { display: flex; flex-direction: column; gap: 8px; }
+  .chip {
+    display: grid; grid-template-columns: 10px 1fr auto; gap: 10px; align-items: center;
+    padding: 8px 10px; border-radius: 6px; font-size: 14px; background: var(--later-wash); color: var(--ink-soft);
+  }
+  .chip::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--later); }
+  .chip.done { background: var(--done-wash); color: var(--ink); }
+  .chip.done::before { background: var(--done); }
+  .chip.next { background: var(--next-wash); color: var(--ink); font-weight: 600; }
+  .chip.next::before { background: var(--next); }
+  .chip small { font-weight: 400; color: var(--ink-soft); font-size: 12.5px; }
+  .legend { display: flex; gap: 18px; font-size: 13px; color: var(--ink-soft); margin: 8px 0 0; }
+  .legend span::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+  .legend .l-done::before { background: var(--done); }
+  .legend .l-next::before { background: var(--next); }
+  .legend .l-later::before { background: var(--later); }
+
+  /* The answer box for the question that was asked. */
+  .answer { background: var(--panel); border-left: 4px solid var(--next); padding: 18px 22px; border-radius: 0 8px 8px 0; margin: 18px 0 8px; }
+  .answer h2 { margin: 0 0 12px; font-size: 22px; }
+  .answer p:last-child { margin-bottom: 0; }
+  .flow { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin: 14px 0 16px; }
+  .flow div { background: var(--code); border-radius: 6px; padding: 10px 12px; font-size: 14px; }
+  .flow div b { display: block; font-weight: 600; margin-bottom: 2px; }
+  .flow div.missing { background: var(--next-wash); border: 1px dashed var(--next); }
+
+  table { border-collapse: collapse; width: 100%; margin: 10px 0 18px; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { font-weight: 600; color: var(--ink-soft); font-size: 13px; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  th.num { text-align: right; }
+  .status { white-space: nowrap; font-weight: 600; }
+  .status.done { color: var(--done); }
+  .status.next { color: var(--next); }
+  .status.later { color: var(--later); }
+  .status.part { color: #8a5a00; }
+
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  ul { padding-left: 20px; margin: 0 0 12px; }
+  li { margin-bottom: 6px; }
+  .quiet { color: var(--ink-soft); }
+
+  @media (max-width: 720px) {
+    .strip { grid-template-columns: repeat(4, 1fr); }
+    .loop, .flow, .two { grid-template-columns: 1fr; }
+    h1 { font-size: 30px; }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .stage.gap { transition: box-shadow 200ms; }
+  }
+</style>
+</head>
+<body>
+<main>
+
+  <h1>ACU progress</h1>
+  <p class="lede">The hands work, and now the eyes do too. Milestone 1 shipped the launcher, the prelude, and the tests; the jiggle test put a number on the central design bet; the screenshot script lets the agent see one display, one window, or one rectangle. The skill file, which teaches an agent the whole loop, is next.</p>
+  <p class="meta">Started 2026-10-08, updated 2026-10-09. Issues #1, #2, and #3 closed.</p>
+
+  <ol class="strip" aria-label="Milestones in order">
+    <li class="done"><strong>Brainstorm</strong><span>design record, research</span></li>
+    <li class="done"><strong>Milestone 1</strong><span>launcher, prelude, tests</span></li>
+    <li class="done"><strong>Jiggle test</strong><span>hit rate measured</span></li>
+    <li class="done"><strong>Screenshot</strong><span>the agent's eyes</span></li>
+    <li class="next"><strong>Skill file</strong><span>teaches the loop</span></li>
+    <li><strong>Milestone 2</strong><span>accessibility tree</span></li>
+    <li><strong>ADRs, glossary</strong><span>record decisions</span></li>
+  </ol>
+  <p class="strip-note">Four of seven steps done. Green is done, blue is the step in front of us.</p>
+
+  <h2>What an agent needs to use a computer</h2>
+  <p>Every computer-use loop has the same three stages. ACU's pieces map onto them. Each stage now has something built; the skill file is what ties them into a loop an agent can follow.</p>
+
+  <div class="loop">
+    <section class="stage" aria-label="See stage">
+      <h3>See</h3>
+      <p class="verb">Find out what is on the screen</p>
+      <div class="chips">
+        <div class="chip done">Screenshot script <small>7 tests</small></div>
+        <div class="chip">Accessibility tree, UIA-v2 <small>milestone 2</small></div>
+      </div>
+    </section>
+    <section class="stage" aria-label="Act stage">
+      <h3>Act</h3>
+      <p class="verb">Click, type, drive windows</p>
+      <div class="chips">
+        <div class="chip done">Launcher <small>8 tests</small></div>
+        <div class="chip done">Prelude <small>12 tests</small></div>
+      </div>
+    </section>
+    <section class="stage gap" aria-label="Check stage">
+      <h3>Check</h3>
+      <p class="verb">Confirm the action took effect</p>
+      <div class="chips">
+        <div class="chip done">WinWaitActive in scripts <small>prelude supports it</small></div>
+        <div class="chip next">Skill file <small>tells the agent when to look again</small></div>
+      </div>
+    </section>
+  </div>
+  <p class="legend"><span class="l-done">built and tested</span><span class="l-next">next</span><span class="l-later">later</span></p>
+
+  <div class="answer">
+    <h2>The screenshot script, explained</h2>
+    <p>Before it, ACU could act but not see. The launcher and prelude let an agent click, type, and drive windows, but the agent only knew what was on screen when it already knew the window by title or a control by name. For anything else it has to look.</p>
+    <p>The screenshot script is the way to look. It captures one display, one window, or one rectangle to a PNG file, then prints the image size, the screen rectangle it came from, and the scale between image pixels and screen pixels. The agent reads the PNG as an image, decides where to click, converts those image coordinates to screen coordinates with the printed origin and scale, and writes a script that clicks there. Built 2026-10-09 with the three actions chosen on 2026-10-08: fullscreen, app, and custom.</p>
+    <div class="flow">
+      <div><b>1. Look</b>Take a screenshot, read it as an image</div>
+      <div><b>2. Act</b>Write a short script, run it through the launcher</div>
+      <div><b>3. Check</b>Screenshot again, or wait for the expected window</div>
+    </div>
+    <p>It is step 3 of the perception ladder from the brainstorm: named element first, element bounds second, screenshot third. Until the accessibility-tree binding arrives in milestone 2, it is the only perception step available, which is why it came before the skill file. A skill file that says "look, then act" needs a way to look.</p>
+    <h3>Why it prints an origin and a scale</h3>
+    <p>The primary display is 3840 by 2160 pixels. A full-size capture is more than a vision model needs and slower to read, so the script downscales to 1280 on the longest side by default. Printing the source rectangle and the scale with every capture keeps the coordinate conversion mechanical: origin plus image pixel times scale equals screen pixel. The origin matters because fullscreen captures one display, and the second display starts at x equals 3840. The prelude already works in physical screen pixels with per-monitor DPI awareness, so no second conversion is hidden anywhere. This is the one idea borrowed from the cua survey: coordinates in screenshot space, scale returned.</p>
+    <h3>Why custom takes a rectangle</h3>
+    <p>A small rectangle comes back at full resolution, which is a close look at a small area. That is what Anthropic's computer-use toolset exposes as its zoom tool. ACU gets zoom for free from the same script.</p>
+    <h3>Why app renders the window instead of copying the screen</h3>
+    <p>The window draws itself into the image, so a covered window still shows its own content and the foreground never changes. A screenshot that stole focus would undo the restore rules the prelude works to keep. The image is cropped to the visible frame, without the invisible resize border.</p>
+    <h3>How it was built</h3>
+    <p>An AutoHotkey script that captures through GDI+ with DllCall, so the core stays AutoHotkey, run through the same launcher as everything else. The launcher gained argument forwarding after a double dash so the agent passes the action and options on the command line. One trap found on the way: AutoHotkey loads and frees a DLL named inline on every call, which breaks GDI+ between calls. Pinning the library for the duration of the save fixed a hard crash.</p>
+    <h3>What it is not</h3>
+    <p>It does not find buttons; that is the accessibility tree's job in milestone 2. It does not replace waiting for a window to appear as the way to check an action; a screenshot is the check when nothing else can tell. And it is not a server or a daemon. It is one more script the agent runs.</p>
+  </div>
+
+  <h2>What is built</h2>
+  <table>
+    <thead><tr><th>Piece</th><th>Where</th><th>Does</th><th>Proof</th></tr></thead>
+    <tbody>
+      <tr><td><span class="status done">Launcher</span></td><td><span class="path">acu/run.py</span></td><td>Runs a script under the prelude, merges its output, adds one trailer line, passes the exit code through or returns 124 on timeout. Asks the script to close before killing it. Writes a run log and crash reports.</td><td>8 tests</td></tr>
+      <tr><td><span class="status done">Prelude</span></td><td><span class="path">acu/prelude.ahk</span></td><td>Screen coordinates, per-monitor DPI, no injected delays, errors printed with file and line instead of a dialog, foreground and cursor restored at exit unless the user took over.</td><td>12 tests</td></tr>
+      <tr><td><span class="status done">Jiggle rig</span></td><td><span class="path">experiments/jiggle/</span></td><td>Measures the click hit rate while the cursor keeps moving. Not part of the test suite.</td><td>5 runs below</td></tr>
+      <tr><td><span class="status done">Screenshot script</span></td><td><span class="path">acu/screenshot.ahk</span></td><td>Captures one display, one window without activating it, or one rectangle. Prints the saved path, image size, source rectangle, and scale.</td><td>7 tests</td></tr>
+      <tr><td><span class="status next">Skill file</span></td><td class="quiet">to be decided</td><td>Tells the agent the loop, the perception ladder, and the shape of a good script.</td><td class="quiet">none yet</td></tr>
+      <tr><td><span class="status later">Accessibility tree</span></td><td class="quiet">milestone 2</td><td>UIA-v2 binding so the agent can find elements by name and act on them without the pointer.</td><td class="quiet">none yet</td></tr>
+    </tbody>
+  </table>
+  <p>Twenty-eight tests, all through the real launcher, about fifteen seconds, and they need hands off the mouse. Run with <code>python -m pytest</code>.</p>
+
+  <h2>Measured: clicks while the cursor keeps moving</h2>
+  <p>Two hundred clicks per run at a 24 by 24 pixel button, one launcher process per click, while a second script moved the cursor to random points on the primary monitor.</p>
+  <table>
+    <thead><tr><th>Condition</th><th>Send mode in effect</th><th class="num">Cursor moves per second</th><th class="num">Hits</th></tr></thead>
+    <tbody>
+      <tr><td>master.ahk running, holds the mouse hook</td><td>SendEvent fallback</td><td class="num">61</td><td class="num">399 of 400</td></tr>
+      <tr><td>master.ahk running</td><td>SendEvent fallback</td><td class="num">380</td><td class="num">198 of 200</td></tr>
+      <tr><td>master.ahk stopped</td><td>SendInput</td><td class="num">371 to 387</td><td class="num">393 of 400</td></tr>
+    </tbody>
+  </table>
+  <p>About 99 percent in both modes, with no launcher failures. The difference between the modes is noise at this sample size, which confirms the decision to optimize for short scripts rather than for injection mode. Two surprises are recorded in the README: one atomic input batch does not guarantee a Win32 button registers the click, and one cursor move per millisecond is out of reach on this input path.</p>
+
+  <h2>Brainstorm decisions, checked against code</h2>
+  <table>
+    <thead><tr><th>Decision</th><th>Status</th><th>Evidence</th></tr></thead>
+    <tbody>
+      <tr><td>Optimize for short scripts, not injection atomicity</td><td><span class="status done">confirmed</span></td><td>Jiggle test, both modes about 99 percent</td></tr>
+      <tr><td>No injected mouse delay in the prelude</td><td><span class="status done">confirmed</span></td><td>Prelude settings test; cursor speed 0 added for the same reason</td></tr>
+      <tr><td>One script equals one logical action chain</td><td><span class="status part">holds, unproven</span></td><td>Needs the skill file and a real task</td></tr>
+      <tr><td>Activate by handle, verify, report failure rather than click blind</td><td><span class="status part">supported, not yet taught</span></td><td>Works in the test scripts; guidance belongs in the skill file</td></tr>
+      <tr><td>Restore foreground and cursor at end of script, conditionally</td><td><span class="status done">built, refined</span></td><td>4 restore tests. When an unrelated window is left in front, the cursor is still put back</td></tr>
+      <tr><td>Detect takeover by cursor position and foreground, no hook</td><td><span class="status done">built</span></td><td>The prelude shadows the mouse functions to know where it put the cursor. Keyboard-only takeover stays undetectable by design</td></tr>
+      <tr><td>Per-monitor DPI awareness and screen coordinate mode</td><td><span class="status done">confirmed</span></td><td>Settings test; click lands on both monitors</td></tr>
+      <tr><td>No server in the first version</td><td><span class="status done">holds</span></td><td>Shell and files only</td></tr>
+      <tr><td>Watchdog default 30 seconds</td><td><span class="status done">built</span></td><td>Close request first, kill after one second; two timeout tests</td></tr>
+      <tr><td>Persistent logs and crash reports</td><td><span class="status done">built</span></td><td><span class="path">%LOCALAPPDATA%\ACU\logs</span> and <span class="path">crashes</span>, three tests</td></tr>
+      <tr><td>UIA-v2 as the accessibility binding, in milestone 2</td><td><span class="status later">pending</span></td><td>Unchanged</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Open items from the brainstorm</h2>
+  <div class="two">
+    <div>
+      <h3>Closed</h3>
+      <ul>
+        <li>Jiggle test: run, recorded.</li>
+        <li>Screenshot script: built with the three actions, tested on both displays.</li>
+        <li>Takeover detection prototype: built, hook-free, four scenarios tested.</li>
+        <li>Second-monitor click regression test: in the suite.</li>
+        <li>Agent interface: shell-invoked scripts, no server. Not revisited and nothing argues for a server yet.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Still open</h3>
+      <ul>
+        <li>The skill file.</li>
+        <li>Tree dump format and budget, with UIA-v2 in milestone 2.</li>
+        <li>Mixed-DPI verification. Both displays here run at 200 percent, so a 100 percent monitor has never been tried.</li>
+        <li>Elevated windows. Your master.ahk runs elevated from a scheduled task, which the jiggle test had to work around. The UIAccess build is installed and would let ACU drive elevated windows. Deferred to its own decision.</li>
+        <li>ADRs and a glossary. The confirmed decisions above are ready to be written down as records.</li>
+        <li>License review before any code is copied. UIA-v2 is MIT.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>Discovered along the way</h2>
+  <ul>
+    <li>A program launched by a script inherits the launcher's output pipe. The launcher now waits for the AutoHotkey process, not for end-of-file, with a test that pins it. Without this, opening Notepad from a script would have stalled the launcher until Notepad closed.</li>
+    <li>AutoHotkey honors a close request even inside a loop that never sleeps. Only a thread blocked outside AutoHotkey needs the hard kill.</li>
+    <li>In AutoHotkey v2 a script can define functions named like the built-in mouse functions. That is what makes hook-free takeover tracking possible.</li>
+    <li>Windows 11 ignores timer-resolution requests from a windowless background process. A high-resolution waitable timer works regardless.</li>
+    <li>AutoHotkey's DllCall loads and frees a DLL named inline on every call. GDI+ keeps state between calls and crashes when the library goes away between them. Pin it with LoadLibrary for the duration.</li>
+  </ul>
+
+  <h2>Recommended next step</h2>
+  <p>Write the skill file. It can now describe a complete loop: look with the screenshot script, act with a short script through the launcher, check by waiting for the expected window or looking again. It should also carry the perception ladder, the shape of a good script, and the restore rules an agent must not fight.</p>
+
+  <h2>Where things are</h2>
+  <ul>
+    <li>Design record: <span class="path">docs/design/acu-brainstorm-2026-10-08.md</span></li>
+    <li>Usage and restore rules: <span class="path">README.md</span></li>
+    <li>Run log: <span class="path">%LOCALAPPDATA%\ACU\logs\runs.jsonl</span>; crash reports: <span class="path">%LOCALAPPDATA%\ACU\crashes\</span>; screenshots: <span class="path">%LOCALAPPDATA%\ACU\shots\</span></li>
+    <li>Run a script: <code>python acu/run.py script.ahk --timeout 30</code></li>
+    <li>Take a screenshot: <code>python acu/run.py acu/screenshot.ahk -- fullscreen 1</code></li>
+  </ul>
+
+</main>
+</body>
+</html>
