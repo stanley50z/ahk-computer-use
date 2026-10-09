@@ -1,3 +1,5 @@
 /openwiki/
-/.pi/
+!/.pi/
+/.pi/*
+!/.pi/extensions/
 __pycache__/

@@ -20,6 +20,8 @@ Run the tests with `python -m pytest`, about fifteen seconds. They open small wi
 
 `acu/` doubles as the agent skill directory: `acu/SKILL.md` is what other harnesses load, and `install_skill.py` links the directory into their skill roots. Keep the skill under about 120 lines; longer material belongs in `README.md`.
 
+Inside this repository `acu` is the computer-use skill and the user-level `cua-driver` skill is switched off: by `skillOverrides` in `.claude/settings.json` for Claude Code, by `permission.skill` in `opencode.json` for OpenCode, and by `.pi/extensions/acu-only.ts` for Pi. Codex has no per-project switch, so in Codex use `acu` for desktop work and leave `cua-driver` alone.
+
 ## Wiki maintenance
 
 Read `docs/openwiki-sync.md` when installing the post-commit hook, investigating Wiki sync failures, or retrying publication. Project commit and push operations finish without waiting for or repairing the background Wiki job.
