@@ -1,0 +1,74 @@
+# ACU
+
+A minimal computer-use tool for AI agents, built on AutoHotkey v2. The agent writes a plain AutoHotkey v2 script for each logical action chain; ACU runs it with the right defaults, a watchdog, and captured output. The agent supplies the intelligence, ACU supplies the hands.
+
+Design record: `docs/design/acu-brainstorm-2026-10-08.md`. Research notes: `docs/research/`.
+
+## Requirements
+
+- Windows with AutoHotkey v2 installed at `C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe`, or set `ACU_AHK` to the executable.
+- Python 3.12 or newer. The launcher uses only the standard library.
+
+## Usage
+
+```
+python acu/run.py script.ahk [--timeout 30]
+```
+
+The output is the script's stdout and stderr, merged in order, followed by one trailer line:
+
+```
+[acu] ok 213ms
+[acu] exit 1 185ms
+[acu] timeout 30s: closed on request
+[acu] timeout 30s: killed
+```
+
+The exit code is the script's own, or 124 when the watchdog fired. At the timeout the script is first asked to close so its exit handler runs, and killed one second later if it has not exited.
+
+The trailer is always the last line. The prelude's own notes, such as an error report or a restore decision, also start with `[acu]` but appear in the body, so the agent can tell them from the script's output.
+
+## What every script gets
+
+`acu/prelude.ahk` is included ahead of the script, so the script contains no boilerplate.
+
+- Mouse and pixel coordinates are screen coordinates, and the thread is per-monitor-v2 DPI aware. A pixel position in a screenshot is a click position.
+- No injected delays: `SetMouseDelay -1` and `SetDefaultMouseSpeed 0`. Clicks and moves are single jumps even when AutoHotkey falls back from SendInput to SendEvent, which it does whenever another AutoHotkey script on the machine has a keyboard or mouse hook.
+- Runtime errors are printed with their message, file, line, and stack, and the script exits with code 1. No dialog ever appears. Load-time syntax errors are printed the same way by AutoHotkey itself.
+- No tray icon, and several scripts may run at once.
+- The foreground window and cursor position from the start of the script are restored when it ends, including on errors and on the watchdog's close request. See the rules below.
+
+## Restore rules
+
+The prelude restores the entry foreground window and cursor at exit, with two exceptions:
+
+1. If the cursor is not where ACU last placed it, someone else moved it. The user has taken over, so nothing is restored and the prelude prints `[acu] restore skipped: cursor moved by someone else`.
+2. If ACU clicked at least once and the foreground window belongs to a process ACU never clicked, an unrelated window came forward. The foreground is left alone, the cursor is restored, and the prelude prints `[acu] foreground left on <process> (ACU never clicked it)`.
+
+To know where it placed the cursor without installing a hook, the prelude shadows `Click`, `MouseMove`, `MouseClick`, and `MouseClickDrag`. Each delegates to `Send "{Click ...}"`, which shares the built-in option parser, so the documented syntax works unchanged. Two consequences:
+
+- The `speed` argument of the mouse functions is ignored. Moves are instant by policy.
+- A `{Click}` written directly inside `Send`, and any `WinActivate`, are not tracked. A script that only activates a window and types relies on the cursor check alone.
+
+Scripts should end at a stable state. There is no opt-out flag for restore yet.
+
+## Debugging artifacts
+
+| Artifact | Location |
+| --- | --- |
+| Run log, one JSON line per run | `%LOCALAPPDATA%\ACU\logs\runs.jsonl` |
+| Crash reports for errors and timeouts, with the full output | `%LOCALAPPDATA%\ACU\crashes\<timestamp>-<script hash>.json` |
+
+Set `ACU_HOME` to move both. Script text is never logged, only its SHA-256, because scripts can contain secrets. A crash report does quote the run's output, and an error message can cite fragments of the failing line, so treat crash reports as sensitive too.
+
+## Tests
+
+```
+python -m pytest
+```
+
+About ten seconds. The tests open small windows on each attached monitor, click in them, and move the cursor, because they run real scripts through the real launcher. Several assert cursor positions, so keep hands off the mouse and keyboard during the run. A run with a human moving the mouse fails those assertions while the clicks themselves still land.
+
+## Status
+
+Milestone 1: launcher, prelude, and a click that lands on both monitors. Not built yet: the screenshot script, the agent skill file, the accessibility-tree binding (UIA-v2), and the jiggle test that measures the click hit rate under physical cursor movement (issue #2).

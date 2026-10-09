@@ -14,6 +14,10 @@ Use the five canonical triage labels. Read `docs/agents/triage-labels.md` when t
 
 Use a single-context layout with root `CONTEXT.md` and `docs/adr/`. Read `docs/agents/domain.md` before exploring domain terminology or architectural decisions.
 
+## Development
+
+Run the tests with `python -m pytest`, about ten seconds. They open small windows and move the cursor, and several assert cursor positions, so keep hands off the mouse and keyboard during a run. Launcher usage, prelude behavior, and debugging artifact paths are in `README.md`.
+
 ## Wiki maintenance
 
 Read `docs/openwiki-sync.md` when installing the post-commit hook, investigating Wiki sync failures, or retrying publication. Project commit and push operations finish without waiting for or repairing the background Wiki job.
