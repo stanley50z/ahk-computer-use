@@ -27,6 +27,6 @@ This repository has a generated `openwiki/` evidence index. It is optional just-
 - Treat source code and tests as authoritative. A brief's unknowns and review items are verification gaps, not automatic requirements.
 - Prefer the narrowest quiet validation that proves the changed behavior. Preserve complete failure output.
 
-Generate locally with `OPENWIKI_PROVIDER=openai-chatgpt` and `OPENWIKI_MODEL_ID=gpt-5.6-luna`. Publish pages from the separate `openwiki/` GitHub Wiki clone. For Wiki generation or publication, read the `openwiki` skill. Regenerate page content through OpenWiki unless the user requests manual edits.
+Generate locally with `OPENWIKI_PROVIDER=openai-chatgpt` and `OPENWIKI_MODEL_ID=gpt-6.1-sol`, using the saved ChatGPT subscription login. The local post-commit hook publishes to the separate `openwiki/` GitHub Wiki clone; this project has no scheduled OpenWiki GitHub Actions workflow. For generation or publication, read the `openwiki` skill and `docs/openwiki-sync.md`. Regenerate page content through OpenWiki unless manual edits are explicitly requested.
 
 <!-- OPENWIKI:END -->

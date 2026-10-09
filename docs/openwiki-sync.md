@@ -1,6 +1,6 @@
 # Automatic Wiki synchronization
 
-The project uses a separate native GitHub Wiki clone at `openwiki/`. The main repository ignores that folder. Generation runs locally with the saved ChatGPT login, provider `openai-chatgpt`, and model `gpt-5.6-luna`.
+The project uses a separate native GitHub Wiki clone at `openwiki/`. The main repository ignores that folder. Generation runs locally with the saved ChatGPT login, provider `openai-chatgpt`, and model `gpt-6.1-sol`. This replaces the previous Luna default while retaining local execution and subscription authentication.
 
 ## Hook installation
 
@@ -12,7 +12,7 @@ This checkout uses `core.hooksPath=.githooks`. After cloning the main repository
 git config --local core.hooksPath .githooks
 ```
 
-Each project commit returns without waiting for the Wiki job. The worker pulls the Wiki with `--ff-only`, runs `openwiki code --update --print` from the project root, normalizes and validates pages, commits changed pages, and pushes the Wiki's remote default branch. It does not commit, amend, or push the main project. Generated `AGENTS.md` or `CLAUDE.md` changes remain uncommitted for later review. Newly generated OpenWiki CI workflows are removed; unrelated workflows are preserved.
+Each project commit returns without waiting for the Wiki job. The worker pulls the Wiki with `--ff-only`, runs `openwiki code --update --print` from the project root, normalizes and validates pages, commits changed pages, and pushes the Wiki's remote default branch. It does not commit, amend, or push the main project. Existing `OPENWIKI` managed blocks in `AGENTS.md` and `CLAUDE.md` are preserved after generation, including on failure or timeout. OpenWiki's default template claims scheduled GitHub Actions even though this project uses local generation; preserving the blocks prevents that wording from returning. Generated edits outside those blocks remain uncommitted for later review. Malformed markers stop publication. Newly generated OpenWiki CI workflows are removed; unrelated workflows are preserved.
 
 Dirty working trees, divergence, unexpected changes, invalid links, and credential errors stop publication without changing the completed project commit. No force pushes run. A per-Wiki lock prevents overlapping workers. Generation has a 30-minute timeout, with child-process cleanup. Workers and their subprocesses do not open Windows console windows.
 
@@ -25,7 +25,9 @@ Persistent diagnostics are private to the Wiki's Git directory:
 - `openwiki/.git/openwiki-setup-generation.log` records initial setup generation, including the resolved expired-token failure.
 - `openwiki/.git/openwiki-auth-refresh.log` records the successful saved-login refresh without token values.
 
-For this checkout, the log directory is `C:\Users\13982\ahk-computer-use\openwiki\.git\`. Native crash dumps are not configured for these scripts; uncaught Python worker exceptions are captured with tracebacks in the background log. Handled failures and generator crash output appear in the logs above.
+For this checkout, the log directory is `C:\Users\13982\ahk-computer-use\openwiki\.git\`. Hook regression-test output, including the initial failing checks, is retained in `.git/openwiki-fix-tests.log`. Model smoke-test diagnostics are retained in `.git/openwiki-model-check.log`; treat them as private.
+
+Native crash dumps are not configured for these scripts; uncaught Python worker exceptions are captured with tracebacks in the background log. Handled failures and generator crash output appear in the logs above.
 
 After resolving a failure and reviewing pending changes, retry synchronously from the project root:
 

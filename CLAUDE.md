@@ -2,6 +2,6 @@
 
 ## OpenWiki
 
-See [AGENTS.md](AGENTS.md) for OpenWiki agent instructions and the separate `openwiki/` GitHub Wiki clone.
+See [AGENTS.md](AGENTS.md) for local OpenWiki generation and publication instructions.
 
 <!-- OPENWIKI:END -->

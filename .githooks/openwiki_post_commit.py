@@ -20,8 +20,9 @@ from urllib.parse import quote, unquote, urlsplit
 
 
 PROVIDER = 'openai-chatgpt'
-MODEL = 'gpt-5.6-luna'
+MODEL = 'gpt-6.1-sol'
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+INSTRUCTION_BLOCK = re.compile(r'<!-- OPENWIKI:START -->.*?<!-- OPENWIKI:END -->', re.DOTALL)
 
 
 class SyncError(Exception):
@@ -284,6 +285,28 @@ def sync(root, generation_timeout):
         lock.rmdir()
 
 
+def read_instruction_block(path):
+    """Read one managed block for preservation, rejecting ambiguous marker layouts."""
+    text = path.read_bytes().decode('utf-8')
+    start, end = '<!-- OPENWIKI:START -->', '<!-- OPENWIKI:END -->'
+    if start not in text and end not in text:
+        return text, None
+    match = INSTRUCTION_BLOCK.search(text)
+    if text.count(start) != 1 or text.count(end) != 1 or not match:
+        raise SyncError(f'Malformed OpenWiki instruction markers in {path.name}; inspect before retrying.')
+    return text, match[0]
+
+
+def restore_instruction_blocks(blocks):
+    """Restore local managed blocks after generation, keeping unrelated edits for review."""
+    for path, original in blocks.items():
+        text, current = read_instruction_block(path)
+        if current is None:
+            raise SyncError(f'OpenWiki removed instruction markers in {path.name}; inspect before retrying.')
+        if current != original:
+            path.write_bytes(text.replace(current, original, 1).encode('utf-8'))
+
+
 def publish(root, wiki, git_dir, project, env, generation_timeout):
     """Run the pull-to-push sequence while holding the Wiki clone's exclusive lock."""
     log = git_dir / 'openwiki-sync.log'
@@ -313,6 +336,15 @@ def publish(root, wiki, git_dir, project, env, generation_timeout):
     generation_env.pop('OPENWIKI_DEBUG', None)
     workflows = [root / '.github/workflows' / name for name in ['openwiki-update.yml', 'openwiki-update.yaml']]
     created_workflows = [path for path in workflows if not path.exists()]
+    instruction_blocks = {}
+    for name in ['AGENTS.md', 'CLAUDE.md']:
+        path = root / name
+        if path.is_symlink():
+            raise SyncError(f'Symlinked {name} is unsupported for automatic instruction preservation.')
+        if path.exists():
+            _, block = read_instruction_block(path)
+            if block is not None:
+                instruction_blocks[path] = block
     try:
         result = generate(executable, root, generation_env, generation_timeout)
         save_diagnostics(log, result.stdout + result.stderr)
@@ -323,6 +355,7 @@ def publish(root, wiki, git_dir, project, env, generation_timeout):
         for path in created_workflows:
             if path.is_file() and path.resolve().is_relative_to(root):
                 path.unlink()
+        restore_instruction_blocks(instruction_blocks)
     if result.returncode:
         raise SyncError(f'OpenWiki generation failed (exit {result.returncode}); see {log}.')
     if git(root, 'rev-parse', 'HEAD', env=env) != project_head or git(wiki, 'rev-parse', 'HEAD', env=env) != wiki_head:
