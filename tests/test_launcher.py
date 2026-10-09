@@ -21,6 +21,13 @@ def test_prints_script_output_and_exits_zero():
     assert "hello from ahk 你好" in result.stdout
 
 
+def test_scripts_run_with_ui_access_so_elevated_windows_are_reachable():
+    result = run_acu("uiaccess.ahk")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "uiaccess=1" in result.stdout.splitlines()
+
+
 def test_forwards_arguments_after_double_dash_to_the_script():
     result = run_acu("echo_args.ahk", "--timeout", "5", "--", "alpha", "beta gamma", "--max", "0")
 

@@ -6,6 +6,10 @@
 ;   - the user's foreground window and cursor restored when the script ends, unless the user took over
 ;     or the script called AcuKeepForeground() because its job was to leave a window showing
 ;   - UI Automation through the UIA class, so a script can find a control by name and act on it
+; Scripts run under AutoHotkey's UI Access build, which can see and drive elevated windows. Windows starts such a
+; program only through ShellExecute, with no standard output and without the launcher's environment, so the launcher
+; passes an output file and ACU_HOME as leading arguments: the prelude sends stdout and stderr to the file, sets
+; ACU_HOME, and strips both. Load-time errors are caught by the launcher's validate pass.
 #Requires AutoHotkey v2.0
 #NoTrayIcon
 #SingleInstance Off
@@ -17,6 +21,17 @@
 #Warn LocalSameAsGlobal, Off
 
 FileEncoding "UTF-8-RAW"
+
+while (A_Args.Length && SubStr(A_Args[1], 1, 6) = "--acu-") {
+    if (SubStr(A_Args[1], 1, 10) = "--acu-out=")
+        AcuRedirectOutput(SubStr(A_Args[1], 11))
+    else if (SubStr(A_Args[1], 1, 11) = "--acu-home=")
+        EnvSet "ACU_HOME", SubStr(A_Args[1], 12)
+    A_Args.RemoveAt(1)
+}
+; The launcher's close request comes from a process with a lower integrity level than a UI Access program, which
+; Windows would otherwise filter out. Let WM_CLOSE through so the timeout still runs the exit handler.
+DllCall("ChangeWindowMessageFilterEx", "ptr", A_ScriptHwnd, "uint", 0x10, "uint", 1, "ptr", 0)
 
 ; Coordinates mean screen pixels everywhere, so the agent can use what a screenshot shows.
 ; Per-monitor-v2 DPI awareness keeps that true on mixed-DPI setups; AutoHotkey v2.0 is only system-aware by default.
@@ -54,6 +69,17 @@ AcuReportError(thrown, mode) {
 ; One line of prelude output on stderr, prefixed so the agent can tell it from the script's own output.
 AcuNote(text) {
     FileAppend "[acu] " text "`n", "**"
+}
+
+; Sends everything written to "*" and "**" into the launcher's output file, in order. A program the script starts
+; inherits the handle, so the file is shared for deletion too; the launcher must not wait on that program. Without
+; an output there is nowhere to report a failure here, so the exit code has to say it.
+AcuRedirectOutput(path) {
+    handle := DllCall("CreateFileW", "wstr", path, "uint", 0x40000000, "uint", 7, "ptr", 0, "uint", 4, "uint", 0x80, "ptr", 0, "ptr")
+    if (handle = -1)
+        ExitApp 3
+    DllCall("SetStdHandle", "int", -11, "ptr", handle)
+    DllCall("SetStdHandle", "int", -12, "ptr", handle)
 }
 
 ; ---------------------------------------------------------------------------------------------------

@@ -30,6 +30,10 @@ _Avoid_: header, bootstrap, runtime
 The program that runs one script under the prelude, captures its output, enforces its time limit, and records the run.
 _Avoid_: runner, wrapper, executor
 
+**UI Access**:
+The Windows privilege a script runs with, which lets it see and drive elevated windows without being elevated itself. The UAC consent prompt is outside it.
+_Avoid_: elevation, admin mode, run as administrator
+
 ### A script's life
 
 **Script**:

@@ -27,12 +27,11 @@ def test_prelude_sets():
 
 
 @pytest.mark.parametrize("monitor", [1, 2])
-def test_click_by_screen_coordinate_lands_on_own_button(monitor, monkeypatch):
+def test_click_by_screen_coordinate_lands_on_own_button(monitor):
     if monitor > monitor_count():
         pytest.skip(f"monitor {monitor} is not attached")
-    monkeypatch.setenv("ACU_TEST_MONITOR", str(monitor))
 
-    result = run_acu("click_own_button.ahk", "--timeout", "10")
+    result = run_acu("click_own_button.ahk", "--timeout", "10", "--", str(monitor))
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert reported(result.stdout, "hits") == "1"

@@ -15,7 +15,7 @@ LAUNCHER = REPO / "acu" / "run.py"
 SCRIPTS = Path(__file__).resolve().parent / "scripts"
 
 sys.path.insert(0, str(REPO))
-from acu.run import ahk_exe  # noqa: E402
+from acu.run import plain_ahk_exe  # noqa: E402
 
 user32 = ctypes.windll.user32
 # Per-monitor-v2 awareness so cursor and window coordinates read here match what the prelude sees.
@@ -121,6 +121,26 @@ def monitor_rects():
     return rects
 
 
+def monitor_dpis():
+    """Each attached monitor's effective DPI, in the same order as monitor_rects()."""
+    dpis = []
+    callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(wintypes.RECT), ctypes.c_void_p)
+
+    def visit(monitor, _dc, _rect, _data):
+        x, y = wintypes.UINT(), wintypes.UINT()
+        ctypes.windll.shcore.GetDpiForMonitor(ctypes.c_void_p(monitor), 0, ctypes.byref(x), ctypes.byref(y))
+        dpis.append(x.value)
+        return True
+
+    user32.EnumDisplayMonitors(None, None, callback_type(visit), None)
+    return dpis
+
+
+def system_dpi():
+    """The DPI an application that is not per-monitor aware draws at."""
+    return user32.GetDpiForSystem()
+
+
 def visible_frame(hwnd):
     """A window's visible frame as (x, y, width, height), excluding the invisible resize border."""
     rect = wintypes.RECT()
@@ -134,6 +154,8 @@ def open_window():
 
     Runs tests/scripts/helper_window.ahk unless `script` names another fixture script; extra keyword
     arguments become environment variables for it. Every window it opened is killed when the test ends.
+    Uses the plain build: these stand in for a user's ordinary applications, and a UI Access program
+    cannot be started with Popen anyway.
     """
     procs = []
 
@@ -141,7 +163,7 @@ def open_window():
         env = {**os.environ, "ACU_TEST_TITLE": title, "ACU_TEST_X": str(x), "ACU_TEST_Y": str(y), "ACU_TEST_BACKCOLOR": backcolor, **extra_env}
         procs.append(
             subprocess.Popen(
-                [str(ahk_exe()), str(SCRIPTS / script)],
+                [str(plain_ahk_exe()), str(SCRIPTS / script)],
                 env=env,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,

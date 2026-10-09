@@ -12,22 +12,19 @@ pytestmark = pytest.mark.desktop
 ENTRY_CURSOR = (50, 50)
 
 
-def arrange(open_window, monkeypatch, mode):
-    """Open a bystander window, then the user's window on top, park the cursor, and select the probe mode."""
+def arrange(open_window, mode):
+    """Open a bystander window, then the user's window on top, park the cursor, and run the probe in the given mode."""
     bystander = open_window(f"ACU bystander {os.getpid()}", 100, 400)
     user_window = open_window(f"ACU user window {os.getpid()}", 100, 100)
     wait_until(lambda: foreground() == user_window, 2, "precondition: the user's window must be in the foreground")
     set_cursor(*ENTRY_CURSOR)
     assert cursor() == ENTRY_CURSOR, "precondition: the cursor must be parked"
-    monkeypatch.setenv("ACU_TEST_MODE", mode)
-    monkeypatch.setenv("ACU_TEST_OTHER_HWND", str(bystander))
-    return user_window, bystander
+    result = run_acu("restore_probe.ahk", "--timeout", "10", "--", mode, str(bystander))
+    return user_window, bystander, result
 
 
-def test_restores_foreground_and_cursor_after_a_click(open_window, monkeypatch):
-    user_window, _ = arrange(open_window, monkeypatch, "click_own")
-
-    result = run_acu("restore_probe.ahk", "--timeout", "10")
+def test_restores_foreground_and_cursor_after_a_click(open_window):
+    user_window, _, result = arrange(open_window, "click_own")
     landed = cursor()
     time.sleep(0.2)
 
@@ -37,10 +34,8 @@ def test_restores_foreground_and_cursor_after_a_click(open_window, monkeypatch):
     assert landed == ENTRY_CURSOR
 
 
-def test_restores_foreground_after_clicking_another_process(open_window, monkeypatch):
-    user_window, _ = arrange(open_window, monkeypatch, "click_other")
-
-    result = run_acu("restore_probe.ahk", "--timeout", "10")
+def test_restores_foreground_after_clicking_another_process(open_window):
+    user_window, _, result = arrange(open_window, "click_other")
     landed = cursor()
     time.sleep(0.2)
 
@@ -50,10 +45,8 @@ def test_restores_foreground_after_clicking_another_process(open_window, monkeyp
     assert "[acu] foreground left on" not in result.stdout
 
 
-def test_keep_foreground_leaves_the_clicked_window_in_front_and_still_restores_the_cursor(open_window, monkeypatch):
-    _, bystander = arrange(open_window, monkeypatch, "keep_other")
-
-    result = run_acu("restore_probe.ahk", "--timeout", "10")
+def test_keep_foreground_leaves_the_clicked_window_in_front_and_still_restores_the_cursor(open_window):
+    _, bystander, result = arrange(open_window, "keep_other")
     landed = cursor()
     time.sleep(0.2)
 
@@ -63,10 +56,8 @@ def test_keep_foreground_leaves_the_clicked_window_in_front_and_still_restores_t
     assert "[acu]" not in result.stdout.replace("[acu] ok", ""), "an opt-out the script asked for needs no note"
 
 
-def test_leaves_cursor_alone_when_someone_else_moved_it(open_window, monkeypatch):
-    arrange(open_window, monkeypatch, "move_cursor")
-
-    result = run_acu("restore_probe.ahk", "--timeout", "10")
+def test_leaves_cursor_alone_when_someone_else_moved_it(open_window):
+    _, _, result = arrange(open_window, "move_cursor")
     landed = cursor()
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -75,10 +66,8 @@ def test_leaves_cursor_alone_when_someone_else_moved_it(open_window, monkeypatch
     assert "[acu] restore skipped: cursor moved" in result.stdout
 
 
-def test_leaves_foreground_on_a_window_it_never_clicked(open_window, monkeypatch):
-    _, bystander = arrange(open_window, monkeypatch, "activate_other")
-
-    result = run_acu("restore_probe.ahk", "--timeout", "10")
+def test_leaves_foreground_on_a_window_it_never_clicked(open_window):
+    _, bystander, result = arrange(open_window, "activate_other")
     landed = cursor()
     time.sleep(0.2)
 

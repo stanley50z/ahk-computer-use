@@ -1,10 +1,12 @@
-; Exercises the prelude's end-of-script restore. ACU_TEST_MODE selects the scenario:
+; Exercises the prelude's end-of-script restore. The first argument selects the scenario, the second is the
+; handle of another process's window:
 ;   click_own       click a button in the script's own window, then exit
 ;   move_cursor     same, then move the cursor with SetCursorPos the way a user would, then exit
-;   activate_other  same, then activate window ACU_TEST_OTHER_HWND as if an unrelated window had appeared
-;   click_other     same, then click the center of window ACU_TEST_OTHER_HWND, another process's window
+;   activate_other  same, then activate the other window as if an unrelated window had appeared
+;   click_other     same, then click the center of the other window
 ;   keep_other      click_other, then call AcuKeepForeground() so the other window stays in front at exit
-mode := EnvGet("ACU_TEST_MODE")
+mode := A_Args[1]
+other := Integer(A_Args[2])
 
 state := {hits: 0}
 win := Gui("+AlwaysOnTop", "ACU restore probe")
@@ -25,12 +27,10 @@ if (mode = "move_cursor") {
     MouseGetPos &movedX, &movedY
     FileAppend "moved=" movedX "," movedY "`n", "*"
 } else if (mode = "activate_other") {
-    other := Integer(EnvGet("ACU_TEST_OTHER_HWND"))
     WinActivate other
     if !WinWaitActive(other, , 2)
         throw Error("other window never became active")
 } else if (mode = "click_other" || mode = "keep_other") {
-    other := Integer(EnvGet("ACU_TEST_OTHER_HWND"))
     WinGetPos &ox, &oy, &ow, &oh, other
     Click ox + ow // 2, oy + oh // 2
     if !WinWaitActive(other, , 2)

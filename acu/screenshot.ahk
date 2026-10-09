@@ -101,9 +101,36 @@ CaptureScreen(x, y, w, h) {
 
 ; Asks a window to render itself into a new HBITMAP, so covered windows still show their own content
 ; and nothing is activated. PW_RENDERFULLCONTENT covers windows composed by DWM, such as browsers.
+; A window that is not per-monitor DPI aware draws at the size it believes it has and Windows scales that on
+; screen, so it is rendered at its own size here and scaled to its on-screen size, which is what w and h are.
 CaptureWindow(hwnd, w, h) {
-    return CaptureToBitmap(w, h, "The window did not render (PrintWindow failed).", (memory, *) =>
-        DllCall("PrintWindow", "ptr", hwnd, "ptr", memory, "uint", 2))
+    render := (memory, *) => DllCall("PrintWindow", "ptr", hwnd, "ptr", memory, "uint", 2)
+    failure := "The window did not render (PrintWindow failed)."
+    ; The window's size as seen from its own DPI awareness context is the size PrintWindow renders.
+    previous := DllCall("SetThreadDpiAwarenessContext", "ptr", DllCall("GetWindowDpiAwarenessContext", "ptr", hwnd, "ptr"), "ptr")
+    own := Buffer(16)
+    DllCall("GetWindowRect", "ptr", hwnd, "ptr", own)
+    DllCall("SetThreadDpiAwarenessContext", "ptr", previous, "ptr")
+    renderedW := NumGet(own, 8, "int") - NumGet(own, 0, "int"), renderedH := NumGet(own, 12, "int") - NumGet(own, 4, "int")
+    if (renderedW = w && renderedH = h)
+        return CaptureToBitmap(w, h, failure, render)
+    rendered := CaptureToBitmap(renderedW, renderedH, failure, render)
+    try
+        return CaptureToBitmap(w, h, "Scaling the rendered window failed (StretchBlt).", (memory, screen) =>
+            StretchFrom(memory, screen, rendered, renderedW, renderedH, w, h))
+    finally
+        DllCall("DeleteObject", "ptr", rendered)
+}
+
+; Draws the whole source bitmap into the memory DC at w by h, with pixel averaging rather than dropping.
+StretchFrom(memory, screen, source, sourceW, sourceH, w, h) {
+    sourceDC := DllCall("CreateCompatibleDC", "ptr", screen, "ptr")
+    previous := DllCall("SelectObject", "ptr", sourceDC, "ptr", source, "ptr")
+    DllCall("SetStretchBltMode", "ptr", memory, "int", 4)  ; HALFTONE
+    drawn := DllCall("StretchBlt", "ptr", memory, "int", 0, "int", 0, "int", w, "int", h, "ptr", sourceDC, "int", 0, "int", 0, "int", sourceW, "int", sourceH, "uint", 0x00CC0020)
+    DllCall("SelectObject", "ptr", sourceDC, "ptr", previous, "ptr")
+    DllCall("DeleteDC", "ptr", sourceDC)
+    return drawn
 }
 
 ; Creates a screen-compatible HBITMAP of the given size and lets draw(memoryDC, screenDC) fill it.

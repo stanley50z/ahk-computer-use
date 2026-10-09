@@ -58,7 +58,7 @@ Script shape:
 - Name the target window with WinTitle criteria: a title fragment, `ahk_exe notepad.exe`, or `ahk_id` with a handle. Matching is case sensitive, so copy the title a dump printed or use the handle. Before any pointer click or keystroke: `WinActivate`, then `WinWaitActive(target, , 2)`, and throw when it returns 0. A click aimed at a window that is not in front is a click into the wrong application.
 - Wait with `WinWait` and `WinWaitActive` and timeouts of about 2 seconds. `Sleep` only when nothing observable marks the moment. A script should finish in well under the 30 second watchdog.
 - Type text with `SendText`, which sends every character literally. Use `Send` only for keys and chords, such as `{Enter}` or `^s`.
-- Variable names share one namespace with functions. `edit`, `click`, `send`, and `run` are taken; use `field`, `target`, `box`.
+- Variable names share one namespace with functions and classes. `edit`, `click`, `send`, `run`, `menu`, and `gui` are taken; use `field`, `target`, `box`, `bar`.
 - Print what you observe with `FileAppend "title=" WinGetTitle("A") "`n", "*"` so the check happens inside the script and reaches you in the output.
 - Normally end at a stable state: no open menu, no half-typed field. The prelude restores the user's foreground window and cursor when the script exits. When the task is to leave an application showing, call `AcuKeepForeground()` anywhere in the script; the cursor still goes back. It also keeps transient state alive for the next look: an opened menu, an address bar switched to edit mode.
 
@@ -72,6 +72,7 @@ The last line of the output is the launcher's verdict; the exit code matches it.
 | --- | --- | --- |
 | `[acu] ok` | 0 | The script ran. Your printed facts say whether it worked. |
 | `[acu] exit 1` after `[acu] error: ... at file:line` | 1 | A runtime error. Fix the script at that line. |
+| `[acu] exit 2` after `file (line) : ==> message` | 2 | The script did not parse. Nothing ran. |
 | `[acu] timeout` | 124 | A wait never ended. Look again before acting. |
 
 Two prelude notes can appear in the body:
@@ -81,9 +82,9 @@ Two prelude notes can appear in the body:
 
 ## Facts the environment does not confess
 
-- Clicks on elevated windows, such as a UAC prompt or an installer running as administrator, are dropped silently by Windows. Report it; retrying changes nothing.
+- Elevated windows, such as an installer running as administrator, are in the tree and accept input: scripts run with UI Access. The UAC consent prompt itself is on a separate desktop that nothing reaches, so when one appears, tell the user and wait.
 - The launcher waits for the script, not for programs the script starts. `Run "notepad.exe"` returns at once; a store app takes seconds to appear and may restore previous documents, so `WinWait` for up to 10 seconds, `WinActivate`, `WinWaitActive`, then check the content before typing.
-- In a file dialog the address bar is a toolbar until `Send "!d"` turns it into an Edit named `Address`; set its value, `Send "{Enter}"`, then set `File name:` and invoke `Save`.
+- In a file dialog, set `File name:` to the full path and invoke `Save`; the address bar is only for browsing, and it is a toolbar until `Send "!d"` turns it into an Edit named `Address`. The dialog closing is not the save: poll for the file, or for the window title to show the new name, before reading it back.
 - A tree dump fetches the whole window before applying its budget. A large browser page costs about a second; a desktop application tens of milliseconds.
 - Scripts run concurrently. Two of yours at the same time share one cursor and one keyboard focus, so run one at a time.
 - Artifacts: run log `%LOCALAPPDATA%\ACU\logs\runs.jsonl`, crash reports with full output in `%LOCALAPPDATA%\ACU\crashes\`, screenshots taken without `--out` in `%LOCALAPPDATA%\ACU\shots\` with only the newest 30 kept. Script text is never logged.

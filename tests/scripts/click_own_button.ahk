@@ -1,9 +1,7 @@
 ; Creates its own window with one button, clicks the button's center by screen coordinate, and reports
 ; how many times the button's handler fired plus where the cursor ended up.
-; ACU_TEST_MONITOR picks the monitor the window appears on (default 1).
-monitor := EnvGet("ACU_TEST_MONITOR")
-if (monitor = "")
-    monitor := 1
+; The first script argument picks the monitor the window appears on (default 1).
+monitor := A_Args.Length ? Integer(A_Args[1]) : 1
 MonitorGet monitor, &left, &top
 
 state := {hits: 0}

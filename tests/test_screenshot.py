@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from conftest import REPO, foreground, monitor_rects, reported, run_launcher, visible_frame, wait_until
+from conftest import REPO, foreground, monitor_dpis, monitor_rects, reported, run_launcher, system_dpi, visible_frame, wait_until
 
 pytestmark = pytest.mark.desktop
 
@@ -131,6 +131,30 @@ def test_app_captures_a_covered_window_without_activating_it(open_window, tmp_pa
         assert img.size == (w, h)
         pixel = img.convert("RGB").getpixel((w - 10, h - 10))
         assert all(abs(got - want) <= 8 for got, want in zip(pixel, (0x2E, 0x8B, 0x57))), f"expected the window's own background, got {pixel}"
+
+
+def test_app_capture_of_a_window_windows_scales_matches_what_is_on_screen(open_window, tmp_path):
+    """An application that is not per-monitor DPI aware draws at the system DPI and Windows scales it on a monitor
+    with another DPI. The capture must show it at its on-screen size, not its own rendering cropped."""
+    monitor = next((i for i, dpi in enumerate(monitor_dpis(), 1) if dpi != system_dpi()), None)
+    if monitor is None:
+        pytest.skip("every monitor runs at the system DPI; set one monitor's scale differently to run this")
+    title = f"ACU scaled target {os.getpid()}"
+    target = open_window(title, 100, 100, backcolor="2E8B57", ACU_TEST_DPI_AWARENESS="system", ACU_TEST_MONITOR=str(monitor))
+    wait_until(lambda: foreground() == target, 2, "precondition: the target window must be in front")
+    x, y, w, h = visible_frame(target)
+
+    rendered = shoot("app", title, "--max", "0", "--out", str(tmp_path / "app.png"))
+    on_screen = shoot("custom", str(x), str(y), str(x + w), str(y + h), "--max", "0", "--out", str(tmp_path / "screen.png"))
+
+    assert rendered.returncode == 0, rendered.stdout + rendered.stderr
+    assert on_screen.returncode == 0, on_screen.stdout + on_screen.stderr
+    assert source_rect(rendered.stdout) == (x, y, w, h)
+    with Image.open(tmp_path / "app.png") as app, Image.open(tmp_path / "screen.png") as screen:
+        assert app.size == screen.size == (w, h)
+        pairs = zip(app.convert("RGB").getdata(), screen.convert("RGB").getdata())
+        difference = sum(abs(a - b) for p, q in pairs for a, b in zip(p, q)) / (w * h * 3)
+    assert difference < 6, f"the rendered window differs from the screen by {difference:.1f} per channel on average"
 
 
 def test_app_reports_a_missing_window(tmp_path):

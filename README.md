@@ -6,7 +6,7 @@ Vocabulary: `CONTEXT.md`. Decisions and why: `docs/adr/`. Design record: `docs/d
 
 ## Requirements
 
-- Windows with AutoHotkey v2 installed at `C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe`, or set `ACU_AHK` to the executable.
+- Windows with AutoHotkey v2 installed with its UI Access option, so that `C:\Program Files\AutoHotkey\v2\AutoHotkey64_UIA.exe` exists beside `AutoHotkey64.exe`. Or set `ACU_AHK` to the UI Access executable; the plain build must sit beside it. Windows grants UI Access only to a signed program under Program Files, so a copy elsewhere will not do.
 - Python 3.12 or newer. The launcher uses only the standard library.
 
 ## Install the skill
@@ -27,7 +27,7 @@ To make the skill available from every directory on the machine, `python install
 python acu/run.py script.ahk [--timeout 30] [-- arguments for the script]
 ```
 
-Arguments after `--` reach the script in `A_Args`. The output is the script's stdout and stderr, merged in order, followed by one trailer line:
+Arguments after `--` reach the script in `A_Args`. They are the only way to pass a script something: it does not inherit the launcher's environment, because Windows starts the UI Access build through ShellExecute (see below). `ACU_HOME` is the one variable the launcher passes through. The output is the script's stdout and stderr, merged in order, followed by one trailer line:
 
 ```
 [acu] ok 213ms
@@ -50,6 +50,7 @@ The trailer is always the last line. The prelude's own notes, such as an error r
 - The `UIA` class from Descolada's UIA-v2 library, so a script can find a control by name and act on it without the pointer. See below.
 - No tray icon, and several scripts may run at once.
 - The foreground window and cursor position from the start of the script are restored when it ends, including on errors and on the watchdog's close request. See the rules below.
+- UI Access. The script runs under AutoHotkey's signed UI Access build, so an elevated window, such as an installer running as administrator, is in the tree and accepts input, without the script being elevated and without a UAC prompt. The UAC consent prompt itself is on a separate desktop and stays out of reach. Windows starts a UI Access program only through ShellExecute, which gives it no standard output, so the launcher names an output file in a leading argument that the prelude strips and redirects stdout and stderr into. Load-time errors and warnings happen before the prelude runs, so the launcher first loads the script without running it under the plain build, which has a pipe; a syntax error ends there with exit code 2.
 
 ## Seeing the screen
 
@@ -62,7 +63,7 @@ python acu/run.py acu/screenshot.ahk -- custom <x1> <y1> <x2> <y2>
 ```
 
 - `fullscreen` captures one display, by AutoHotkey monitor number, default 1.
-- `app` captures one window by any WinTitle, such as `ahk_exe notepad.exe` or a title fragment. The window renders itself into the image, so it shows its own content even when another window covers it, and the foreground never changes. The image is cropped to the visible frame. A minimized window is an error; restore or activate it first.
+- `app` captures one window by any WinTitle, such as `ahk_exe notepad.exe` or a title fragment. The window renders itself into the image, so it shows its own content even when another window covers it, and the foreground never changes. The image is cropped to the visible frame. An application that is not per-monitor DPI aware renders at the size it believes it has, and Windows scales that on a monitor with another DPI; the capture is scaled the same way, so it matches the screen and `source` stays a click position. A minimized window is an error; restore or activate it first.
 - `custom` captures the screen rectangle from (x1, y1) to (x2, y2), exclusive, in screen pixels. This is the zoom: a small rectangle comes back at full resolution.
 
 Options for every action: `--out <path.png>` and `--max <pixels>`, the longest side of the saved image, default 1280, 0 to keep full size.
