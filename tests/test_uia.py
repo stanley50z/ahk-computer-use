@@ -9,6 +9,8 @@ import pytest
 
 from conftest import REPO, reported, run_launcher, visible_frame, wait_until
 
+pytestmark = pytest.mark.desktop
+
 TREE = REPO / "acu" / "tree.ahk"
 # A name, id, or value as the dump prints it: AutoHotkey string contents between double quotes.
 QUOTED = r'"(?:[^"`]|`.)*"'
@@ -80,6 +82,12 @@ def test_tree_lists_each_control_with_path_name_id_bounds_and_actions(uia_window
     city, street = by_name["City"], by_name["Street"]
     assert (city["type"], city["value"]) == ("Edit", "Boston") and "value" in city["flags"]
     assert (street["type"], street["value"]) == ("Edit", "Main St")
+    notes, memo = by_name["Notes"], by_name["Memo"]
+    assert notes["value"] == "read only" and "value" not in notes["flags"], "value means writable"
+    assert memo["type"] == "Document"
+    assert memo["value"] == "0" * 100, "Document values must print in full"
+    tabs = {e["name"]: e for e in found if e["type"] == "TabItem"}
+    assert "selected" in tabs["One"]["flags"] and "selected" not in tabs["Two"]["flags"]
     fx, fy, fw, fh = visible_frame(uia_window.hwnd)
     for e in (button, check, city, street):
         x, y, w, h = (int(e[k]) for k in "xywh")
@@ -111,7 +119,7 @@ def test_tree_honours_max_and_says_so(uia_window):
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert len(elements(result.stdout)) == 2
-    assert reported(result.stdout, "truncated") == "yes"
+    assert reported(result.stdout, "truncated") == "max"
 
 
 def test_tree_reports_a_depth_cut_as_truncation(uia_window):
@@ -120,7 +128,22 @@ def test_tree_reports_a_depth_cut_as_truncation(uia_window):
     assert result.returncode == 0, result.stdout + result.stderr
     found = elements(result.stdout)
     assert found and all("," not in e["path"] for e in found)
-    assert reported(result.stdout, "truncated") == "yes", "the title bar's buttons were cut off"
+    assert reported(result.stdout, "truncated") == "depth", "the title bar's buttons were cut off"
+
+
+def test_tree_find_and_type_narrow_the_dump(uia_window):
+    by_text = dump(uia_window.title, "--find", "AGREE")
+    by_type = dump(uia_window.title, "--type", "Edit")
+
+    assert by_text.returncode == 0, by_text.stdout + by_text.stderr
+    assert [e["type"] for e in elements(by_text.stdout)] == ["CheckBox"]
+    assert reported(by_text.stdout, "elements") == "1"
+    assert by_type.returncode == 0, by_type.stdout + by_type.stderr
+    assert sorted(e["name"] for e in elements(by_type.stdout)) == ["City", "Notes", "Street"]
+    documents = dump(uia_window.title, "--type", "Document", "--find", "memo", "--max", "1")
+    assert documents.returncode == 0, documents.stdout + documents.stderr
+    assert [(e["name"], e["value"]) for e in elements(documents.stdout)] == [("Memo", "0" * 100)]
+    assert reported(documents.stdout, "truncated") == "no"
 
 
 def test_tree_rejects_an_empty_budget(uia_window):

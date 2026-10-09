@@ -16,7 +16,7 @@ Look, act, check. Repeat until the user's postcondition is observed. The task is
 Skip this when you already know the window and the control. Otherwise list the window's elements first:
 
 ```
-python run.py tree.ahk -- "<WinTitle>" [--depth 25] [--max 300]
+python run.py tree.ahk -- "<WinTitle>" [--find <text>] [--type <Type>] [--depth 25] [--max 300]
 ```
 
 One line per element, depth first:
@@ -26,7 +26,7 @@ One line per element, depth first:
 2,2,2,2 Text "Display is 0" id="CalculatorResults" @1700,1300 400x80
 ```
 
-Path, type, name, id, value, screen bounds, then the actions the element supports (`invoke toggle value select expand scroll`), which make it a control, and its state (`disabled offscreen focused`). A name or id is what you put in the script; the path is for a control that has neither. Quoted fields are printed as AutoHotkey string contents, so paste them between quotes exactly as shown. `elements=` and `truncated=` close the dump; when truncated, raise `--max` or lower `--depth`.
+Path, type, name, id, value in full, screen bounds, then the actions the element supports (`invoke toggle value select expand scroll`), which make it a control, and its state (`disabled offscreen focused selected`). `value` means writable. A name or id is what you put in the script; the path is for a control that has neither. Quoted fields are printed as AutoHotkey string contents, so paste them between quotes exactly as shown. `--find` keeps elements whose name or id contains the text and `--type` keeps one type; use them when a dialog is mostly file lists. `elements=` and `truncated=` close the dump: `truncated=max` means raise `--max` or narrow the dump, `truncated=depth` means raise `--depth`; `max+depth` reports both limits.
 
 Take a screenshot when the tree is empty or nameless, as in canvas apps, games, and icon-only toolbars, or when you need to see rather than list:
 
@@ -48,19 +48,19 @@ python run.py <script.ahk> [--timeout 30]
 
 Reach for the control in this order:
 
-1. **By name, no pointer.** `root := UIA.ElementFromHandle("<WinTitle>")`, then `root.FindElement({Type:"Button", Name:"Six"}).Invoke()`. Use `{AutomationId:"num6Button"}` when the dump shows an id, and `root.ElementFromPath("2,2,2,5,3")` for a nameless control. `.Value := "text"` sets a control flagged `value`; `.Toggle()` flips a `toggle`; `.Select()` picks a `select`; `.Expand()` opens an `expand`. None of these move the pointer or change the foreground.
+1. **By name, no pointer.** `root := UIA.ElementFromHandle("<WinTitle>")`, then `root.FindElement({Type:"Button", Name:"Six"}).Invoke()`. Use `{AutomationId:"num6Button"}` when the dump shows an id, and `root.ElementFromPath("2,2,2,5,3")` for a nameless control. `.Value := "text"` sets a control flagged `value`; `.Toggle()` flips a `toggle`; `.Select()` picks a `select`; `.Expand()` opens an `expand`. These use semantic actions rather than pointer input; the application may still change focus or open a window. Ids repeat inside a window, so combine type, name, and id, or find a parent first and search within it: `tab := root.FindElement({Type:"TabItem", Name:"notes.txt. Unmodified."})`, then `tab.FindElement({Type:"Button", Name:"Close Tab"}).Invoke()`. That is also how you close only what you opened.
 2. **By bounds.** `.Click()` on an element from the tree clicks its center. Activate the window first.
 3. **By screenshot coordinates.** `Click x, y` with the screen point you computed. Activate the window first.
 
 Script shape:
 
 - Plain AutoHotkey v2, no boilerplate. The prelude already set screen coordinates, per-monitor DPI awareness, zero mouse delay, an error handler, end-of-script restore, and the `UIA` class.
-- Name the target window with WinTitle criteria: a title fragment, `ahk_exe notepad.exe`, or `ahk_id` with a handle. Before any pointer click or keystroke: `WinActivate`, then `WinWaitActive(target, , 2)`, and throw when it returns 0. A click aimed at a window that is not in front is a click into the wrong application.
+- Name the target window with WinTitle criteria: a title fragment, `ahk_exe notepad.exe`, or `ahk_id` with a handle. Matching is case sensitive, so copy the title a dump printed or use the handle. Before any pointer click or keystroke: `WinActivate`, then `WinWaitActive(target, , 2)`, and throw when it returns 0. A click aimed at a window that is not in front is a click into the wrong application.
 - Wait with `WinWait` and `WinWaitActive` and timeouts of about 2 seconds. `Sleep` only when nothing observable marks the moment. A script should finish in well under the 30 second watchdog.
 - Type text with `SendText`, which sends every character literally. Use `Send` only for keys and chords, such as `{Enter}` or `^s`.
 - Variable names share one namespace with functions. `edit`, `click`, `send`, and `run` are taken; use `field`, `target`, `box`.
 - Print what you observe with `FileAppend "title=" WinGetTitle("A") "`n", "*"` so the check happens inside the script and reaches you in the output.
-- End at a stable state: no open menu, no half-typed field. The prelude restores the user's foreground window and cursor when the script exits. When the task is to leave an application showing, call `AcuKeepForeground()` anywhere in the script; the cursor still goes back.
+- Normally end at a stable state: no open menu, no half-typed field. The prelude restores the user's foreground window and cursor when the script exits. When the task is to leave an application showing, call `AcuKeepForeground()` anywhere in the script; the cursor still goes back. It also keeps transient state alive for the next look: an opened menu, an address bar switched to edit mode.
 
 ### 3. Check
 
@@ -82,7 +82,8 @@ Two prelude notes can appear in the body:
 ## Facts the environment does not confess
 
 - Clicks on elevated windows, such as a UAC prompt or an installer running as administrator, are dropped silently by Windows. Report it; retrying changes nothing.
-- The launcher waits for the script, not for programs the script starts. `Run "notepad.exe"` returns at once; follow it with `WinWaitActive "ahk_exe notepad.exe", , 5`.
+- The launcher waits for the script, not for programs the script starts. `Run "notepad.exe"` returns at once; a store app takes seconds to appear and may restore previous documents, so `WinWait` for up to 10 seconds, `WinActivate`, `WinWaitActive`, then check the content before typing.
+- In a file dialog the address bar is a toolbar until `Send "!d"` turns it into an Edit named `Address`; set its value, `Send "{Enter}"`, then set `File name:` and invoke `Save`.
 - A tree dump fetches the whole window before applying its budget. A large browser page costs about a second; a desktop application tens of milliseconds.
 - Scripts run concurrently. Two of yours at the same time share one cursor and one keyboard focus, so run one at a time.
 - Artifacts: run log `%LOCALAPPDATA%\ACU\logs\runs.jsonl`, crash reports with full output in `%LOCALAPPDATA%\ACU\crashes\`, screenshots taken without `--out` in `%LOCALAPPDATA%\ACU\shots\` with only the newest 30 kept. Script text is never logged.

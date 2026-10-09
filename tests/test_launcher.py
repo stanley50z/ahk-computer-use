@@ -3,7 +3,11 @@
 import json
 import time
 
+import pytest
+
 from conftest import SCRIPTS, cursor, run_acu, set_cursor
+
+pytestmark = pytest.mark.desktop
 
 
 def log_lines(acu_home):

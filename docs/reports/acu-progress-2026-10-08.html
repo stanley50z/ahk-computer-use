@@ -151,7 +151,7 @@
       <h3>See</h3>
       <p class="verb">Find out what is on the screen</p>
       <div class="chips">
-        <div class="chip done">Accessibility tree, UIA-v2 <small>9 tests</small></div>
+        <div class="chip done">Accessibility tree, UIA-v2 <small>10 opt-in tests</small></div>
         <div class="chip done">Screenshot script <small>8 tests</small></div>
       </div>
     </section>
@@ -159,8 +159,8 @@
       <h3>Act</h3>
       <p class="verb">Click, type, drive windows</p>
       <div class="chips">
-        <div class="chip done">Launcher <small>8 tests</small></div>
-        <div class="chip done">Prelude <small>12 tests</small></div>
+        <div class="chip done">Launcher <small>11 opt-in tests</small></div>
+        <div class="chip done">Prelude <small>8 opt-in tests</small></div>
       </div>
     </section>
     <section class="stage" aria-label="Check stage">
@@ -200,15 +200,15 @@
   <table>
     <thead><tr><th>Piece</th><th>Where</th><th>Does</th><th>Proof</th></tr></thead>
     <tbody>
-      <tr><td><span class="status done">Launcher</span></td><td><span class="path">acu/run.py</span></td><td>Runs a script under the prelude, merges its output, adds one trailer line, passes the exit code through or returns 124 on timeout. Asks the script to close before killing it. Writes a run log and crash reports.</td><td>8 tests</td></tr>
-      <tr><td><span class="status done">Prelude</span></td><td><span class="path">acu/prelude.ahk</span></td><td>Screen coordinates, per-monitor DPI, no injected delays, errors printed with file and line instead of a dialog, foreground and cursor restored at exit unless the user took over.</td><td>12 tests</td></tr>
+      <tr><td><span class="status done">Launcher</span></td><td><span class="path">acu/run.py</span></td><td>Runs a script under the prelude, merges its output, adds one trailer line, passes the exit code through or returns 124 on timeout. Asks the script to close before killing it. Writes a run log and crash reports.</td><td>11 opt-in tests</td></tr>
+      <tr><td><span class="status done">Prelude</span></td><td><span class="path">acu/prelude.ahk</span></td><td>Screen coordinates, per-monitor DPI, no injected delays, errors printed with file and line instead of a dialog, foreground and cursor restored at exit unless the user took over.</td><td>8 opt-in tests</td></tr>
       <tr><td><span class="status done">Jiggle rig</span></td><td><span class="path">experiments/jiggle/</span></td><td>Measures the click hit rate while the cursor keeps moving. Not part of the test suite.</td><td>5 runs below</td></tr>
-      <tr><td><span class="status done">Screenshot script</span></td><td><span class="path">acu/screenshot.ahk</span></td><td>Captures one display, one window without activating it, or one rectangle. Prints the saved path, image size, source rectangle, and scale.</td><td>7 tests</td></tr>
-      <tr><td><span class="status done">Skill</span></td><td><span class="path">acu/SKILL.md</span>, <span class="path">install_skill.py</span></td><td>Teaches the loop, the script shape, and how to read the output. The installer links the skill directory into this repository's own skill paths, so Pi, Codex, Claude Code, and OpenCode see it only in sessions started here while it is under test.</td><td>4 tests, plus a live check in each harness</td></tr>
-      <tr><td><span class="status done">Accessibility tree</span></td><td><span class="path">acu/tree.ahk</span>, <span class="path">acu/lib/UIA.ahk</span></td><td>Lists a window's controls with name, id, bounds, and supported actions; every script has the UIA class, so it finds a control by name and invokes it without the pointer. Vendored UIA-v2 library, MIT, one marked patch.</td><td>9 tests, including Calculator by path and by name</td></tr>
+      <tr><td><span class="status done">Screenshot script</span></td><td><span class="path">acu/screenshot.ahk</span></td><td>Captures one display, one window without activating it, or one rectangle. Prints the saved path, image size, source rectangle, and scale.</td><td>8 opt-in tests</td></tr>
+      <tr><td><span class="status done">Skill</span></td><td><span class="path">acu/SKILL.md</span>, <span class="path">install_skill.py</span></td><td>Teaches the loop, the script shape, and how to read the output. The installer links the skill directory into this repository's own skill paths, so Pi, Codex, Claude Code, and OpenCode see it only in sessions started here while it is under test.</td><td>5 default checks, plus discovery verified in each harness</td></tr>
+      <tr><td><span class="status done">Accessibility tree</span></td><td><span class="path">acu/tree.ahk</span>, <span class="path">acu/lib/UIA.ahk</span></td><td>Lists a window's controls with name, id, bounds, and supported actions; every script has the UIA class, so it finds a control by name and invokes it without the pointer. Vendored UIA-v2 library, MIT, one marked patch.</td><td>10 opt-in tests, including Calculator by path and by name</td></tr>
     </tbody>
   </table>
-  <p>Forty-six tests, about twenty seconds, and they need hands off the mouse. Run with <code>python -m pytest</code>.</p>
+  <p>Run only checks relevant to a change. <code>python -m pytest -q</code> runs five skill/installer checks with no AutoHotkey execution. Thirty-seven desktop integration cases require an explicit <code>--desktop</code>; do not routinely run them while the user works. The six settings checks now share one process. The latest focused tree/skill run passed 15 checks; broader desktop runs had unresolved cursor/foreground failures, preserved in <code>.pi/logs/issue-7-*.log</code>.</p>
 
   <h2>Measured: clicks while the cursor keeps moving</h2>
   <p>Two hundred clicks per run at a 24 by 24 pixel button, one launcher process per click, while a second script moved the cursor to random points on the primary monitor.</p>
@@ -282,7 +282,7 @@
   </ul>
 
   <h2>Recommended next step</h2>
-  <p>Run the skill on a second live task from a fresh session, one where the tree is the natural route, such as filling a form in a settings dialog or changing an option in a store app. The coordinate path earned its fixes from the Calculator run; the tree path has only been exercised by its author. After that, the open items that remain are verification on a mixed-DPI setup and the question of elevated windows.</p>
+  <p>The second live task saved a file through a Save As dialog using the tree and verified its bytes. Its findings added name/type filters, explicit truncation reasons, selected-state reporting, writable-value flags, and scoped-selector guidance. Values remain complete, including document text, by the owner’s decision. Future editor trials use Notepad++ or Markpad, not Windows Notepad. Further live tests require approval; remaining engineering questions include mixed-DPI verification, elevated windows, and the intermittent restore-test failures.</p>
 
   <h2>Where things are</h2>
   <ul>

@@ -28,6 +28,20 @@ dwmapi = ctypes.windll.dwmapi
 dwmapi.DwmGetWindowAttribute.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_uint]
 
 
+# Registers explicit permission to execute the desktop integration tests.
+def pytest_addoption(parser):
+    parser.addoption("--desktop", action="store_true", help="include desktop integration tests (may take over mouse and focus)")
+
+
+# Keep desktop tests out of normal runs, even when their files are selected explicitly.
+def pytest_collection_modifyitems(config, items):
+    if config.getoption("--desktop"):
+        return
+    excluded = [item for item in items if item.get_closest_marker("desktop")]
+    items[:] = [item for item in items if not item.get_closest_marker("desktop")]
+    config.hook.pytest_deselected(items=excluded)
+
+
 @pytest.fixture(autouse=True)
 def acu_home(tmp_path, monkeypatch):
     """Point the launcher's logs at a temp dir so tests never write to %LOCALAPPDATA%\\ACU."""

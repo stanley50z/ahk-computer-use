@@ -83,7 +83,7 @@ scale=3
 `acu/tree.ahk` lists a window's controls from its accessibility tree, the same tree a screen reader uses. Modern applications draw their own buttons inside one blank window, so this is the only programmatic way to find them.
 
 ```
-python acu/run.py acu/tree.ahk -- "<WinTitle>" [--depth 25] [--max 300]
+python acu/run.py acu/tree.ahk -- "<WinTitle>" [--find <text>] [--type <Type>] [--depth 25] [--max 300]
 ```
 
 The first line is `window=<hwnd> "<title>" <exe>`. Then one line per element of the control view, depth first:
@@ -93,7 +93,9 @@ The first line is `window=<hwnd> "<title>" <exe>`. Then one line per element of 
 2,2,2,2 Text "Display is 0" id="CalculatorResults" @1700,1300 400x80
 ```
 
-Path, type, name when present, `id=` when present, `value=` when present, screen bounds, then the actions the element supports (`invoke toggle value select expand scroll`) and its state (`disabled offscreen focused`). Quoted fields are printed as AutoHotkey string contents, with quotes, backticks, and line breaks escaped the way a script would write them, so a name can be pasted into `FindElement` as it is. Paths number the control view, which is the view `ElementFromPath` walks; a raw-view numbering was tried and does not resolve on Calculator. The dump ends with `elements=N` and `truncated=yes|no`; a depth cut that hides children counts as truncation.
+Path, type, name when present, `id=` when present, `value=` when present and in full, screen bounds, then the actions the element supports (`invoke toggle value select expand scroll`) and its state (`disabled offscreen focused selected`). `value` means the element's value is writable; a read-only value is still printed. Values are never cut or withheld, document text included: the owner's call is that the agent sees everything the window publishes. Quoted fields are printed as AutoHotkey string contents, with quotes, backticks, and line breaks escaped the way a script would write them, so a name can be pasted into `FindElement` as it is. Paths number the control view, which is the view `ElementFromPath` walks; a raw-view numbering was tried and does not resolve on Calculator.
+
+`--find` keeps elements whose name or id contains the text, and `--type` keeps one control type; the element budget counts printed lines, so a narrowed dump of a file dialog fits where the full one did not. The dump ends with `elements=N` and `truncated=no|max|depth|max+depth`, naming the limit that cut it.
 
 Every script has the `UIA` class, so acting needs no include:
 
@@ -137,11 +139,19 @@ Set `ACU_HOME` to move both. Script text is never logged, only its SHA-256, beca
 
 ## Tests
 
+Run checks relevant to the change. The default is the skill/installer checks, with no AutoHotkey execution:
+
 ```
-python -m pytest
+python -m pytest -q
 ```
 
-About twenty seconds. The tests open small windows on each attached monitor, click in them, move the cursor, take screenshots, and launch and close Windows Calculator once, because they run real scripts through the real launcher. Several assert cursor positions, so keep hands off the mouse and keyboard during the run. A run with a human moving the mouse fails those assertions while the clicks themselves still land. The screenshot tests read PNGs with Pillow, the only test dependency: `pip install pillow`.
+All AutoHotkey integration tests carry the `desktop` marker and are deselected unless `--desktop` is supplied, even if their file is explicitly selected. With approval for desktop use, run a focused check, for example:
+
+```
+python -m pytest --desktop tests/test_uia.py -k tree_find_and_type -q
+```
+
+These tests can open windows, move the cursor, and change focus. Do not run the full desktop suite after every change. Keep useful regressions available, consolidate repetitive checks, and remove redundant tests. A full run (`python -m pytest --desktop`) is reserved for deliberate validation on an idle desktop. Tests require pytest; screenshot tests also require Pillow.
 
 ## Measured: clicks while the cursor keeps moving
 
@@ -159,4 +169,4 @@ Reading: about 99 percent in both modes, and the difference between them is with
 
 ## Status
 
-Milestone 1: launcher, prelude, a click that lands on both monitors, the jiggle measurement above, the screenshot script, and the skill. Milestone 2: the accessibility tree, so an agent finds controls by name before it reads a screenshot. The decisions the code confirmed are recorded in `docs/adr/` and the vocabulary in `CONTEXT.md`. Next: a second live task through the skill, this time one that uses the tree.
+Milestone 1: launcher, prelude, a click that lands on both monitors, the jiggle measurement above, the screenshot script, and the skill. Milestone 2: the accessibility tree, so an agent finds controls by name before it reads a screenshot. The decisions the code confirmed are recorded in `docs/adr/` and the vocabulary in `CONTEXT.md`. The second live task completed a Save As workflow using the tree; its findings added filtered dumps, explicit truncation reasons, and selection/writability flags.

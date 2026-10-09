@@ -3,7 +3,11 @@
 import os
 import time
 
+import pytest
+
 from conftest import cursor, foreground, run_acu, set_cursor, wait_until
+
+pytestmark = pytest.mark.desktop
 
 ENTRY_CURSOR = (50, 50)
 

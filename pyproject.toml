@@ -1,2 +1,5 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "desktop: runs AutoHotkey or interacts with the Windows desktop; requires --desktop",
+]

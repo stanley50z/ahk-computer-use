@@ -16,7 +16,9 @@ Use a single-context layout with root `CONTEXT.md` and `docs/adr/`. Read `docs/a
 
 ## Development
 
-Run the tests with `python -m pytest`, about twenty seconds. They open small windows, move the cursor, take screenshots, and launch and close Windows Calculator once, and several assert cursor positions, so keep hands off the mouse and keyboard during a run. The screenshot tests need Pillow. Launcher usage, prelude behavior, and debugging artifact paths are in `README.md`.
+Live tasks that need a text editor use Notepad++ or Markpad, not Windows Notepad, which restores the owner's previous documents. Locate an existing installation before testing; ask before installing an editor. Tree dumps print every value in full, document text included, by the owner's decision.
+
+Run only the focused checks relevant to the change. `python -m pytest` excludes desktop integration tests by default. Any test that runs AutoHotkey or interacts with the desktop must carry the `desktop` marker. Run a focused desktop check with `--desktop` only after explicit approval for that run; do not use the full desktop suite as a routine completion gate. Consolidate repeated setup checks and remove redundant coverage rather than growing the suite with every task. The screenshot tests need Pillow. Launcher usage, prelude behavior, and debugging artifact paths are in `README.md`.
 
 `acu/lib/UIA.ahk` is vendored third-party code (see README, Third-party code). Do not edit it beyond the one line marked `; ACU patch:`; update it by copying the upstream file and re-applying that line.
 

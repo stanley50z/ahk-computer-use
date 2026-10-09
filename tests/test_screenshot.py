@@ -11,6 +11,8 @@ from PIL import Image
 
 from conftest import REPO, foreground, monitor_rects, reported, run_launcher, visible_frame, wait_until
 
+pytestmark = pytest.mark.desktop
+
 SCREENSHOT = REPO / "acu" / "screenshot.ahk"
 
 

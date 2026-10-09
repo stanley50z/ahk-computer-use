@@ -1,6 +1,7 @@
-; A stand-in window whose controls publish an accessibility tree: a button, two labelled edits, and a check
-; box whose name contains quotes. Not run through the launcher. Each click on the button writes the running
-; count to ACU_TEST_COUNT_FILE; each change to an edit writes "<label>=<text>" to ACU_TEST_EDIT_FILE.
+; A stand-in window whose controls publish an accessibility tree: a button, two labelled edits, a read-only
+; edit, an edit with a long value, a check box whose name contains quotes, and a two-page tab control. Not run through the launcher.
+; Each click on the button writes the running count to ACU_TEST_COUNT_FILE; each change to an edit writes
+; "<label>=<text>" to ACU_TEST_EDIT_FILE.
 #NoTrayIcon
 #SingleInstance Off
 DllCall("SetThreadDpiAwarenessContext", "ptr", -4, "ptr")
@@ -16,7 +17,12 @@ for pair in [["City", "Boston"], ["Street", "Main St"]] {
     field := win.AddEdit("w240", pair[2])
     field.OnEvent("Change", ((label, ctrl, *) => FileOpen(editFile, "w").Write(label "=" ctrl.Value)).Bind(pair[1]))
 }
+win.AddText("xm", "Notes")
+win.AddEdit("w240 ReadOnly", "read only")
+win.AddText("xm", "Memo")
+win.AddEdit("w240", Format("{:0100}", 0))  ; one hundred zeros
 win.AddCheckbox("xm", 'agree "fully"')
+win.AddTab3("xm w240 h60", ["One", "Two"])
 win.OnEvent("Close", (*) => ExitApp())
 win.Show("x" EnvGet("ACU_TEST_X") " y" EnvGet("ACU_TEST_Y"))
 WinActivate win.Hwnd
