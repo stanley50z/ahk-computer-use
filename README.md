@@ -2,7 +2,7 @@
 
 A minimal computer-use tool for AI agents, built on AutoHotkey v2. The agent writes a plain AutoHotkey v2 script for each logical action chain; ACU runs it with the right defaults, a watchdog, and captured output. The agent supplies the intelligence, ACU supplies the hands.
 
-Design record: `docs/design/acu-brainstorm-2026-10-08.md`. Research notes: `docs/research/`.
+Vocabulary: `CONTEXT.md`. Decisions and why: `docs/adr/`. Design record: `docs/design/acu-brainstorm-2026-10-08.md`. Research notes: `docs/research/`.
 
 ## Requirements
 
@@ -159,4 +159,4 @@ Reading: about 99 percent in both modes, and the difference between them is with
 
 ## Status
 
-Milestone 1: launcher, prelude, a click that lands on both monitors, the jiggle measurement above, the screenshot script, and the skill. Milestone 2: the accessibility tree, so an agent finds controls by name before it reads a screenshot. Next: architecture decision records and a glossary for the decisions the code has confirmed.
+Milestone 1: launcher, prelude, a click that lands on both monitors, the jiggle measurement above, the screenshot script, and the skill. Milestone 2: the accessibility tree, so an agent finds controls by name before it reads a screenshot. The decisions the code confirmed are recorded in `docs/adr/` and the vocabulary in `CONTEXT.md`. Next: a second live task through the skill, this time one that uses the tree.

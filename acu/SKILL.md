@@ -13,20 +13,20 @@ Look, act, check. Repeat until the user's postcondition is observed. The task is
 
 ### 1. Look
 
-Skip this when you already know the window and the control. Otherwise list the window's controls first:
+Skip this when you already know the window and the control. Otherwise list the window's elements first:
 
 ```
 python run.py tree.ahk -- "<WinTitle>" [--depth 25] [--max 300]
 ```
 
-One line per control, depth first:
+One line per element, depth first:
 
 ```
 2,2,2,5,3 Button "Six" id="num6Button" @2073,1917 157x71 invoke
 2,2,2,2 Text "Display is 0" id="CalculatorResults" @1700,1300 400x80
 ```
 
-Path, type, name, id, value, screen bounds, then the actions the control supports (`invoke toggle value select expand scroll`) and its state (`disabled offscreen focused`). A name or id is what you put in the script; the path is for a control that has neither. Quoted fields are printed as AutoHotkey string contents, so paste them between quotes exactly as shown. `elements=` and `truncated=` close the dump; when truncated, raise `--max` or lower `--depth`.
+Path, type, name, id, value, screen bounds, then the actions the element supports (`invoke toggle value select expand scroll`), which make it a control, and its state (`disabled offscreen focused`). A name or id is what you put in the script; the path is for a control that has neither. Quoted fields are printed as AutoHotkey string contents, so paste them between quotes exactly as shown. `elements=` and `truncated=` close the dump; when truncated, raise `--max` or lower `--depth`.
 
 Take a screenshot when the tree is empty or nameless, as in canvas apps, games, and icon-only toolbars, or when you need to see rather than list:
 

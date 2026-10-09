@@ -129,7 +129,7 @@
 <main>
 
   <h1>ACU progress</h1>
-  <p class="lede">Hands, eyes, the manual, and now names. Milestone 1 shipped the launcher, the prelude, and the tests; the jiggle test put a number on the central design bet; the screenshot script lets the agent see; the skill teaches four coding harnesses the loop; milestone 2 lets the agent list a window's controls and press a button by its name, with no pointer. What remains is writing the decisions down.</p>
+  <p class="lede">Hands, eyes, the manual, and now names. Milestone 1 shipped the launcher, the prelude, and the tests; the jiggle test put a number on the central design bet; the screenshot script lets the agent see; the skill teaches four coding harnesses the loop; milestone 2 lets the agent list a window's elements and press a button by its name, with no pointer; the decisions are now written down as seven records and a glossary. The plan from the brainstorm is complete.</p>
   <p class="meta">Started 2026-10-08, updated 2026-10-09. Issues #1 through #6 closed.</p>
 
   <ol class="strip" aria-label="Milestones in order">
@@ -139,9 +139,9 @@
     <li class="done"><strong>Screenshot</strong><span>the agent's eyes</span></li>
     <li class="done"><strong>Skill file</strong><span>teaches the loop</span></li>
     <li class="done"><strong>Milestone 2</strong><span>accessibility tree</span></li>
-    <li class="next"><strong>ADRs, glossary</strong><span>record decisions</span></li>
+    <li class="done"><strong>ADRs, glossary</strong><span>record decisions</span></li>
   </ol>
-  <p class="strip-note">Six of seven steps done. Green is done, blue is the step in front of us.</p>
+  <p class="strip-note">All seven steps done.</p>
 
   <h2>What an agent needs to use a computer</h2>
   <p>Every computer-use loop has the same three stages. ACU's pieces map onto them, and the skill ties them into a loop an agent can follow. Each stage is now built and tested; the agent finds a control by name first and reads a screenshot only when the tree has nothing to say.</p>
@@ -250,7 +250,8 @@
         <li>Screenshot script: built with the three actions, tested on both displays.</li>
         <li>Skill file: written, installed into four harnesses by one command.</li>
         <li>First live task: a fresh Pi session found the skill on its own, launched Calculator, pressed 6 × 7 = on screen, and proved 42 with a screenshot. Two skill defects it reported are fixed.</li>
-        <li>Tree dump format and budget: one line per control with path, type, name, id, value, bounds, and actions; 300 elements and depth 25 by default. The path round-trips through the library.</li>
+        <li>Tree dump format and budget: one line per element with path, type, name, id, value, bounds, and actions; 300 elements and depth 25 by default. The path round-trips through the library.</li>
+        <li>ADRs and a glossary: seven records under docs/adr for the decisions that are hard to reverse and surprising without context, and CONTEXT.md for the vocabulary.</li>
         <li>Takeover detection prototype: built, hook-free, four scenarios tested.</li>
         <li>Second-monitor click regression test: in the suite.</li>
         <li>Agent interface: shell-invoked scripts, no server. Not revisited and nothing argues for a server yet.</li>
@@ -262,7 +263,6 @@
         <li>Large trees pay the full fetch before the budget applies: a Chrome window took 0.8 s. A depth-bounded live walk is the fix if it matters.</li>
         <li>Mixed-DPI verification. Both displays here run at 200 percent, so a 100 percent monitor has never been tried.</li>
         <li>Elevated windows. Your master.ahk runs elevated from a scheduled task, which the jiggle test had to work around. The UIAccess build is installed and would let ACU drive elevated windows. Deferred to its own decision.</li>
-        <li>ADRs and a glossary. The confirmed decisions above are ready to be written down as records.</li>
         <li>License review before any code is copied. UIA-v2 is MIT.</li>
       </ul>
     </div>
@@ -282,10 +282,11 @@
   </ul>
 
   <h2>Recommended next step</h2>
-  <p>Write the decisions down: architecture decision records under docs/adr for the choices the code has now confirmed, and a root CONTEXT.md glossary for the terms that recur: prelude, launcher, script, restore, takeover, tree, path. Then run the skill on a second live task that uses the tree, so the new ladder gets the same scrutiny the coordinate path got.</p>
+  <p>Run the skill on a second live task from a fresh session, one where the tree is the natural route, such as filling a form in a settings dialog or changing an option in a store app. The coordinate path earned its fixes from the Calculator run; the tree path has only been exercised by its author. After that, the open items that remain are verification on a mixed-DPI setup and the question of elevated windows.</p>
 
   <h2>Where things are</h2>
   <ul>
+    <li>Vocabulary: <span class="path">CONTEXT.md</span>. Decisions: <span class="path">docs/adr/</span></li>
     <li>Design record: <span class="path">docs/design/acu-brainstorm-2026-10-08.md</span></li>
     <li>Usage and restore rules: <span class="path">README.md</span></li>
     <li>Run log: <span class="path">%LOCALAPPDATA%\ACU\logs\runs.jsonl</span>; crash reports: <span class="path">%LOCALAPPDATA%\ACU\crashes\</span>; screenshots: <span class="path">%LOCALAPPDATA%\ACU\shots\</span></li>
