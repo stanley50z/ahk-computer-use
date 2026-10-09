@@ -46,6 +46,19 @@ def test_restores_foreground_after_clicking_another_process(open_window, monkeyp
     assert "[acu] foreground left on" not in result.stdout
 
 
+def test_keep_foreground_leaves_the_clicked_window_in_front_and_still_restores_the_cursor(open_window, monkeypatch):
+    _, bystander = arrange(open_window, monkeypatch, "keep_other")
+
+    result = run_acu("restore_probe.ahk", "--timeout", "10")
+    landed = cursor()
+    time.sleep(0.2)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert foreground() == bystander
+    assert landed == ENTRY_CURSOR
+    assert "[acu]" not in result.stdout.replace("[acu] ok", ""), "an opt-out the script asked for needs no note"
+
+
 def test_leaves_cursor_alone_when_someone_else_moved_it(open_window, monkeypatch):
     arrange(open_window, monkeypatch, "move_cursor")
 

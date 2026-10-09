@@ -2,11 +2,15 @@
 ; so the agent writes plain AutoHotkey v2 and never sees this boilerplate. It provides:
 ;   - screen coordinates and per-monitor-v2 DPI awareness, so screenshot pixels are click coordinates
 ;   - no injected delays, so a script occupies the desktop for as short a time as possible
-;   - runtime errors printed to stderr with exit code 1 instead of a dialog
+;   - runtime errors printed to stderr with exit code 1, and load-time warnings printed to stdout, never a dialog
 ;   - the user's foreground window and cursor restored when the script ends, unless the user took over
+;     or the script called AcuKeepForeground() because its job was to leave a window showing
 #Requires AutoHotkey v2.0
 #NoTrayIcon
 #SingleInstance Off
+; A load-time warning, such as a call to a function that does not exist, is a modal dialog by default. It
+; appears before the script has a main window, so the launcher's close request cannot reach it. Print it instead.
+#Warn All, StdOut
 
 FileEncoding "UTF-8-RAW"
 
@@ -59,6 +63,13 @@ class AcuState {
     static placedX := ""     ; where ACU last put the cursor; "" until the first mouse action
     static placedY := ""
     static touched := Map()  ; process ids of the windows ACU clicked, plus the script's own
+    static keepForeground := false  ; set by AcuKeepForeground(): leave the foreground where the script put it
+}
+
+; For a script whose purpose is to leave an application showing. Call it anywhere; at exit the foreground
+; window is left alone and only the cursor goes back.
+AcuKeepForeground() {
+    AcuState.keepForeground := true
 }
 
 ; Records the foreground window and cursor as they were before the script ran. Called once, at load.
@@ -80,6 +91,14 @@ AcuRestore(reason, code) {
         AcuNote("restore skipped: cursor moved by someone else")
         return 0
     }
+    if !AcuState.keepForeground
+        AcuRestoreForeground()
+    MouseMove AcuState.entryX, AcuState.entryY
+    return 0
+}
+
+; Puts the entry window back in front, unless an unrelated window came forward on its own.
+AcuRestoreForeground() {
     try {
         current := WinExist("A")
         if (current && current != AcuState.entryWindow) {
@@ -91,8 +110,6 @@ AcuRestore(reason, code) {
     } catch as failure {
         AcuNote("restore failed: " failure.Message)
     }
-    MouseMove AcuState.entryX, AcuState.entryY
-    return 0
 }
 
 ; Where the cursor is if nobody but ACU has touched it: the last place ACU put it, else where it was at entry.

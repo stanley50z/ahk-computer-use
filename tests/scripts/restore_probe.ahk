@@ -3,6 +3,7 @@
 ;   move_cursor     same, then move the cursor with SetCursorPos the way a user would, then exit
 ;   activate_other  same, then activate window ACU_TEST_OTHER_HWND as if an unrelated window had appeared
 ;   click_other     same, then click the center of window ACU_TEST_OTHER_HWND, another process's window
+;   keep_other      click_other, then call AcuKeepForeground() so the other window stays in front at exit
 mode := EnvGet("ACU_TEST_MODE")
 
 state := {hits: 0}
@@ -28,11 +29,13 @@ if (mode = "move_cursor") {
     WinActivate other
     if !WinWaitActive(other, , 2)
         throw Error("other window never became active")
-} else if (mode = "click_other") {
+} else if (mode = "click_other" || mode = "keep_other") {
     other := Integer(EnvGet("ACU_TEST_OTHER_HWND"))
     WinGetPos &ox, &oy, &ow, &oh, other
     Click ox + ow // 2, oy + oh // 2
     if !WinWaitActive(other, , 2)
         throw Error("other window never became active after the click")
+    if (mode = "keep_other")
+        AcuKeepForeground()
 }
 ExitApp

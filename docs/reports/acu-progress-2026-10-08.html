@@ -230,7 +230,7 @@
       <tr><td>No injected mouse delay in the prelude</td><td><span class="status done">confirmed</span></td><td>Prelude settings test; cursor speed 0 added for the same reason</td></tr>
       <tr><td>One script equals one logical action chain</td><td><span class="status part">holds, unproven</span></td><td>Needs the skill file and a real task</td></tr>
       <tr><td>Activate by handle, verify, report failure rather than click blind</td><td><span class="status part">supported, not yet taught</span></td><td>Works in the test scripts; guidance belongs in the skill file</td></tr>
-      <tr><td>Restore foreground and cursor at end of script, conditionally</td><td><span class="status done">built, refined</span></td><td>4 restore tests. When an unrelated window is left in front, the cursor is still put back</td></tr>
+      <tr><td>Restore foreground and cursor at end of script, conditionally</td><td><span class="status done">built, refined</span></td><td>5 restore tests. When an unrelated window is left in front, the cursor is still put back. The first live task needed the opt-out the design record had deferred; a script now calls <span class="path">AcuKeepForeground()</span> to leave its window showing</td></tr>
       <tr><td>Detect takeover by cursor position and foreground, no hook</td><td><span class="status done">built</span></td><td>The prelude shadows the mouse functions to know where it put the cursor. Keyboard-only takeover stays undetectable by design</td></tr>
       <tr><td>Per-monitor DPI awareness and screen coordinate mode</td><td><span class="status done">confirmed</span></td><td>Settings test; click lands on both monitors</td></tr>
       <tr><td>No server in the first version</td><td><span class="status done">holds</span></td><td>Shell and files only</td></tr>
@@ -248,6 +248,7 @@
         <li>Jiggle test: run, recorded.</li>
         <li>Screenshot script: built with the three actions, tested on both displays.</li>
         <li>Skill file: written, installed into four harnesses by one command.</li>
+        <li>First live task: a fresh Pi session found the skill on its own, launched Calculator, pressed 6 × 7 = on screen, and proved 42 with a screenshot. Two skill defects it reported are fixed.</li>
         <li>Takeover detection prototype: built, hook-free, four scenarios tested.</li>
         <li>Second-monitor click regression test: in the suite.</li>
         <li>Agent interface: shell-invoked scripts, no server. Not revisited and nothing argues for a server yet.</li>
@@ -272,10 +273,11 @@
     <li>In AutoHotkey v2 a script can define functions named like the built-in mouse functions. That is what makes hook-free takeover tracking possible.</li>
     <li>Windows 11 ignores timer-resolution requests from a windowless background process. A high-resolution waitable timer works regardless.</li>
     <li>AutoHotkey's DllCall loads and frees a DLL named inline on every call. GDI+ keeps state between calls and crashes when the library goes away between them. Pin it with LoadLibrary for the duration.</li>
+    <li>An agent reading the skill took the words literally twice: it treated "restores the foreground" as an unbreakable rule and unregistered the prelude's exit handler by name, and it read "windows that expose no controls" as a ban on coordinate clicks for Calculator, which lists four container controls and no buttons. Both sentences now say what was meant.</li>
   </ul>
 
   <h2>Recommended next step</h2>
-  <p>Use the skill on one real task from another harness before building milestone 2. A single run of an agent opening an application, changing something, and reporting the result will show whether the skill's loop and script-shape rules hold up, and that is the cheapest place to iterate. Then the accessibility tree, which fills the one remaining gap: finding a control by name instead of by eye.</p>
+  <p>Milestone 2, the accessibility tree. The live Calculator task showed the loop works end to end with coordinates alone, and also where coordinates cost the most: the agent spent its effort reading button positions off a screenshot that UI Automation would have handed over by name. UIA-v2 fills that gap, and the tree dump format and budget are the open design questions to settle first.</p>
 
   <h2>Where things are</h2>
   <ul>

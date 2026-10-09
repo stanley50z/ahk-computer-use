@@ -36,10 +36,10 @@ Script shape:
 - Plain AutoHotkey v2, no boilerplate. The prelude already set screen coordinates, per-monitor DPI awareness, zero mouse delay, an error handler, and end-of-script restore.
 - Name the target window with WinTitle criteria: a title fragment, `ahk_exe notepad.exe`, or `ahk_id` with a handle. `WinActivate`, then `WinWaitActive(target, , 2)`, and throw when it returns 0. A click aimed at a window that is not in front is a click into the wrong application.
 - Wait with `WinWait` and `WinWaitActive` and timeouts of about 2 seconds. `Sleep` only when nothing observable marks the moment. A script should finish in well under the 30 second watchdog.
-- Reach for classic controls first: `ControlClick`, `ControlSetText`, `ControlGetText` with a ClassNN from `WinGetControls`. They need no pointer movement and no foreground change. Coordinate clicks are for windows that expose no controls, which is most modern applications.
+- Reach for classic controls first: `ControlClick`, `ControlSetText`, `ControlGetText` with a ClassNN from `WinGetControls`. They need no pointer movement and no foreground change. Coordinate clicks are for windows with no usable classic control for the action, which is most modern applications: a container such as `Windows.UI.Core.CoreWindow1` is listed but is not a button.
 - Type text with `SendText`, which sends every character literally. Use `Send` only for keys and chords, such as `{Enter}` or `^s`.
 - Print what you observe with `FileAppend "title=" WinGetTitle("A") "`n", "*"` so the check happens inside the script and reaches you in the output.
-- End at a stable state: no open menu, no half-typed field. The prelude restores the user's foreground window and cursor when the script exits.
+- End at a stable state: no open menu, no half-typed field. The prelude restores the user's foreground window and cursor when the script exits. When the task is to leave an application showing, call `AcuKeepForeground()` anywhere in the script; the cursor still goes back.
 
 ### 3. Check
 

@@ -47,6 +47,17 @@ def test_runtime_error_is_printed_with_location_and_exits_nonzero():
     assert elapsed < 2.5, f"took {elapsed:.1f}s, which means a dialog blocked until the watchdog fired"
 
 
+def test_call_to_missing_function_is_printed_and_exits_nonzero():
+    started = time.monotonic()
+    result = run_acu("undefined_function.ahk", "--timeout", "3")
+    elapsed = time.monotonic() - started
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "NoSuchFunctionACU" in result.stdout
+    assert "after" not in result.stdout
+    assert elapsed < 2.5, f"took {elapsed:.1f}s, which means a dialog blocked until the watchdog fired"
+
+
 def test_syntax_error_is_printed_and_exits_nonzero():
     result = run_acu("syntax_error.ahk", "--timeout", "3")
 
