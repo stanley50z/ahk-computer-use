@@ -1,18 +1,20 @@
 # Computer-use test bench
 
+**Testbench 1 means the Calculator task as a whole, across all three configurations below.** An individual configuration is an arm, not "Testbench 1" by itself. A request to run Testbench 1 means fresh sequential trials of all three arms unless the user explicitly selects a subset.
+
 Compare three fresh agent configurations, not a knowledgeable parent agent solving the task:
 
 | Arm | Harness | Only computer-use skill/runtime | Status |
 | --- | --- | --- | --- |
-| `pi-acu` | Pi | Project ACU skill and launcher | Latest task passed under the user's clarified UI-button rule |
-| `pi-cua` | Pi | Installed `cua-driver` skill and CLI | Task and isolation passed, 111.61 s |
-| `codex-computer-use` | Codex CLI | Installed `computer-use` skill, native `@oai/sky` through `node_repl` | Corrected setup passed task/isolation, 234.25 s; cursor cleanup incident followed the comparison |
+| `pi-acu` | Pi | Project ACU skill and CLI | Latest complete Testbench 1: task/isolation/recorded cleanup passed, 51.14 s |
+| `pi-cua` | Pi | Installed `cua-driver` skill and CLI | Latest complete Testbench 1 passed, 127.99 s; named lifecycle ended separately |
+| `codex-computer-use` | Codex CLI | Installed `computer-use` skill, native `@oai/sky` through `node_repl` | Latest complete Testbench 1 passed, 225.48 s |
 
 Every actor uses **GPT-6.1 (`gpt-6.1-sol`) at low reasoning**. Pi uses the `openai` provider. This supersedes the earlier GPT-6 Astra acceptance-test choice for this bench only. No automatic provider/model fallback, parent coaching, or retry after a blocked trial. Each further desktop trial needs explicit approval.
 
-Specification: [issue #8](https://github.com/stanley50z/ahk-computer-use/issues/8). History: [first Calculator trials](../docs/reports/bench-calculator-2026-10-09.md). Latest: [three-arm comparison and cursor incident](../docs/reports/computer-use-comparison-2026-10-09.md).
+Specification: [issue #8](https://github.com/stanley50z/ahk-computer-use/issues/8). History: [first Calculator trials](../docs/reports/bench-calculator-2026-10-09.md). Comparison: [three-arm pilot and cursor incident](../docs/reports/computer-use-comparison-2026-10-09.md). Earlier ACU-only result: [CLI-only trial](../docs/reports/acu-cli-bench-2026-10-10.md). Latest complete benchmark: [Testbench 1, all three configurations](../docs/reports/testbench-1-2026-10-10.md). Time attribution and the subsequent overall-deadline removal: [latency analysis](../docs/reports/testbench-1-latency-2026-10-10.md).
 
-Desktop cleanup must be validated before further trials: the user reported an invisible cursor after the comparison. Recovery succeeded; automatic scheme restoration and truthful cleanup markers were added with quiet coverage, but no new live run has validated that integration.
+The user reported an invisible cursor after the earlier comparison. The latest complete Testbench 1 exercised identity-checked window/process cleanup and saved cursor-scheme restoration after all three arms. CUA's task-specific named CLI lifecycle was additionally ended explicitly outside timing; the shared daemon was preserved. The cursor check remains an OS showing-flag check, not pixel-level visibility proof, and the earlier incident's precise cause is still unproven.
 
 ## Isolation
 
@@ -25,7 +27,7 @@ Each run gets a new workspace, config directory, session and evidence folder und
 
 Installed versions at initial setup: Pi 1.1.0; Codex CLI 0.162.0; cua-driver 0.34.0; native computer-use skill build 26.901.51231. ACU source was `eae5264`. Plans save the exact selected skill path, skill SHA-256, scenario SHA-256, launch command and configuration paths.
 
-## First scenario
+## Testbench 1: Calculator
 
 `scenarios/calculator.md` asks the actor to open its own Calculator, calculate `128+465*12387/138473-12343` with normal precedence, and observe the result.
 
@@ -33,7 +35,7 @@ UI button activation only. The user clarified that semantic clicks/Invoke are al
 
 The actor writes `ownership.json` before clicks and `result.json` after completion or blockage. Scripts remain in its workspace. The independent observer runs **outside agent timing**, reads the claimed window, captures it, and checks the display against a fixed reference. It uses the same observer for every arm; it is not an extra tool available to the actor.
 
-Cleanup protects every pre-existing top-level handle, including hidden windows, and checks the independently observed native PID again before closing, and validates an actor-provided PID when present. It never kills a shared frame host. Unclaimed or ambiguous windows cause an explicit cleanup failure; they are not automatically closed. Windows agent descendants are contained in a job object before execution and terminated/verified even if their parent exits first. Broker-launched application windows are handled separately. `finished.json` distinguishes worker exit from successful cleanup. After owned controllers/windows stop, cleanup reloads the saved Windows cursor scheme and checks the OS showing flag. Cursor-restoration evidence is required; a cleanup exception also clears an overall-pass summary. This is a mitigation validated by user-confirmed emergency recovery and quiet checks, not a visual guarantee or another live cleanup trial.
+Cleanup protects every pre-existing top-level handle, including hidden windows, and checks the independently observed native PID again before closing, and validates an actor-provided PID when present. It never kills a shared frame host. Unclaimed or ambiguous windows cause an explicit cleanup failure; they are not automatically closed. Windows agent descendants are contained in a job object before execution and terminated/verified even if their parent exits first. Broker-launched application windows are handled separately. `finished.json` distinguishes worker exit from successful cleanup. After owned controllers/windows stop, cleanup reloads the saved Windows cursor scheme and checks the OS showing flag. Cursor-restoration evidence is required; a cleanup exception also clears an overall-pass summary. The mitigation passed user-confirmed emergency recovery, quiet checks, and the latest complete Testbench 1. After a CUA arm, also end only its newly created named CLI lifecycle outside actor timing, checking the public result; the worker does not automatically end daemon-backed CLI sessions. Never stop a shared service. These cleanup checks are not a visual guarantee.
 
 Both initial trials used scenario **v1**. Ownership tightening gave **v2**. The user's clarification gave **v3**, allowing semantic UI button activation; native/CUA actors can provide returned window IDs, with PID bound by the independent observer when the tool does not expose it. The recorded successful ACU v2 trial was reassessed under the intended rule, not rerun with v3. Preserve original verdicts and prompt hashes; this pilot is not an exact-prompt statistical comparison.
 
@@ -53,7 +55,7 @@ After approval for that specific trial, start in the background without opening 
 python bench/start.py --arm pi-acu --desktop-approved
 ```
 
-Replace the arm only when the corresponding run is authorized. `start.py` prints the run directory and worker PID. Default actor timeout is 240 seconds; each ACU script retains its own watchdog. A run directory is never reused for another trial.
+Replace the arm only when the corresponding run is authorized. `start.py` prints the run directory and worker PID. There is no overall actor time limit. Stop a stalled or unwanted run explicitly with `stop.py`; per-script watchdogs and backend request/startup timeouts remain separate protections. A run directory is never reused for another trial.
 
 Stop only that run, allowing its worker to terminate owned processes and perform cleanup:
 

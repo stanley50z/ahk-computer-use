@@ -106,5 +106,9 @@ _Avoid_: zoom factor, ratio
 
 ### Measuring
 
+**Testbench 1**:
+The Calculator UI-task benchmark across all three configurations: Pi plus ACU, Pi plus CUA, and Codex plus native computer use. One configuration's trial is one arm, not the complete benchmark.
+_Avoid_: using Testbench 1 to mean the ACU arm alone
+
 **Jiggle test**:
 The experiment that measures how often a scripted click lands while something keeps moving the cursor. It settled the question of injection atomicity with a number.

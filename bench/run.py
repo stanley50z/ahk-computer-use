@@ -327,8 +327,8 @@ def executable_command(command):
     return [executable, *command[1:]]
 
 
-# Capture raw JSONL and monotonic receipt timestamps, including failed or cancelled attempts.
-def capture(command, cwd, environment, run_dir, timeout_s):
+# Capture raw JSONL until normal exit or explicit cancellation; there is no overall elapsed-time deadline.
+def capture(command, cwd, environment, run_dir):
     from bench.processes import OwnedProcessTree
 
     records = []
@@ -366,8 +366,6 @@ def capture(command, cwd, environment, run_dir, timeout_s):
                     raise RuntimeError(reader_errors[0])
                 if (run_dir / 'cancel.request').exists():
                     raise InterruptedError('bench stop requested')
-                if time.perf_counter() - started > timeout_s:
-                    raise TimeoutError(f'agent exceeded {timeout_s}s')
                 time.sleep(0.1)
             reader.join(timeout=2)
             if reader.is_alive():
@@ -487,8 +485,8 @@ def verify_calculator(run_dir, before):
             'script_audit': {'forbidden_input_scripts': forbidden, 'note': 'Static screening plus transcript review; not a security boundary.'}}
 
 
-# Run a single authorized desktop trial with fresh configuration and no parent coaching.
-def run_trial(plan, timeout_s=240, reference_tps=None):
+# Run one authorized trial without an overall time limit; individual runtime/watchdog waits still apply.
+def run_trial(plan, reference_tps=None):
     run_dir = Path(plan['run_dir'])
     arm = plan['arm']
     credential = Path.home() / ('.pi/agent/auth.json' if arm.startswith('pi-') else '.codex/auth.json')
@@ -501,7 +499,7 @@ def run_trial(plan, timeout_s=240, reference_tps=None):
     before = acu_observer(run_dir, ROOT / 'bench/probe.ahk', suffix='-before')
     shutil.copyfile(credential, private_auth)
     try:
-        records, wall, exit_code = capture(executable_command(plan['command']), plan['workspace'], environment, run_dir, timeout_s)
+        records, wall, exit_code = capture(executable_command(plan['command']), plan['workspace'], environment, run_dir)
         if arm.startswith('pi-'):
             measurements = analyse_pi(records, wall, reference_tps)
             session_path = run_dir / 'session.jsonl'
@@ -554,7 +552,7 @@ def run_trial(plan, timeout_s=240, reference_tps=None):
 
 
 # Enforce one bench controller at a time and preserve a traceback even for setup/cleanup failures.
-def run(plan, timeout_s=240, reference_tps=None):
+def run(plan, reference_tps=None):
     run_dir = Path(plan['run_dir'])
     control_dir = ROOT / '.pi/bench'
     control_dir.mkdir(parents=True, exist_ok=True)
@@ -565,7 +563,7 @@ def run(plan, timeout_s=240, reference_tps=None):
         attempt = run_dir / 'run-attempt.json'
         with attempt.open('x', encoding='utf-8') as handle:
             json.dump({'worker_pid': os.getpid(), 'started_at': datetime.now(timezone.utc).isoformat()}, handle)
-        value = run_trial(plan, timeout_s, reference_tps)
+        value = run_trial(plan, reference_tps)
         cleanup = load_actor_json(run_dir / 'cleanup.json')
         value['cleanup_passed'] = cleanup.get('passed') is True and cleanup.get('cursor_scheme_restored') is True
         value['passed'] = value['passed'] and value['cleanup_passed']
@@ -613,7 +611,6 @@ def main():
     parser.add_argument('--arm', choices=ARMS, default='pi-acu')
     parser.add_argument('--run-dir', type=Path)
     parser.add_argument('--desktop-approved', action='store_true')
-    parser.add_argument('--timeout', type=float, default=240)
     parser.add_argument('--reference-tps', type=float)
     args = parser.parse_args()
     if args.action == 'run' and not args.desktop_approved:
@@ -633,7 +630,7 @@ def main():
                 parser.error('a run directory cannot be reused; prepare a fresh trial')
         else:
             plan = prepare(args.arm, directory)
-        value = run(plan, args.timeout, args.reference_tps) if args.action == 'run' else plan
+        value = run(plan, args.reference_tps) if args.action == 'run' else plan
     print(json.dumps(value, ensure_ascii=False, indent=2))
     if args.action == 'run' and not value['passed']:
         raise SystemExit(1)
