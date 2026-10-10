@@ -1,79 +1,47 @@
 # ACU
 
-A script-first computer-use tool for AI agents, available through a JSON CLI and MCP. The agent executes a plain AutoHotkey v2 script for each logical action chain, or discovers a maintained script and runs it with parameters. ACU manages execution with the right defaults, a watchdog, and captured output. The agent supplies the intelligence, ACU supplies the hands. AHK is the first and currently only execution engine.
+A script-first computer-use tool for AI agents, available through the `acu` CLI. The agent writes a plain AutoHotkey v2 script for each logical action chain and passes its file path to the single `run` operation. ACU manages execution with the right defaults, a watchdog, and captured output. The agent supplies the intelligence, ACU supplies the hands. Execution is through AutoHotkey v2.
 
 Vocabulary: `CONTEXT.md`. Decisions and why: `docs/adr/`. Design record: `docs/design/acu-brainstorm-2026-10-08.md`. Research notes: `docs/research/`.
 
 ## Requirements
 
 - Windows with AutoHotkey v2 installed with its UI Access option, so that `C:\Program Files\AutoHotkey\v2\AutoHotkey64_UIA.exe` exists beside `AutoHotkey64.exe`. Or set `ACU_AHK` to the UI Access executable; the plain build must sit beside it. Windows grants UI Access only to a signed program under Program Files, so a copy elsewhere will not do.
-- Python 3.12 or newer. The low-level launcher uses only the standard library; the tool uses `jsonschema` and the official Python MCP SDK.
-- [uv](https://docs.astral.sh/uv/) for the checkout commands below. An installed wheel also provides the standalone `acu` console command.
+- Python 3.12 or newer. The CLI and launcher use only the standard library.
+- [uv](https://docs.astral.sh/uv/) for the installation/development commands below, or another Python package installer that provides console commands.
 
-## Install the tool
+## Install the CLI
+
+From this checkout:
 
 ```
-uv sync
-uv run python -m acu --help
+uv tool install --editable .
+acu --help
 ```
 
-Use `uv run python -m acu` inside the checkout. From another directory, use `uv run --project "<absolute checkout path>" python -m acu`. This also avoids `uv run acu` mistaking this checkout's `acu/` directory for a Python script. `uv build` creates an installable wheel containing the launcher, scripts, vendored UIA library, skill, and capability guides.
+This installs the `acu` command in uv's user-level tools bin directory, with its own Python environment. That directory must be on `PATH`; `uv tool dir --bin` reports its location. Editable installation follows changes in this checkout. It does not install the agent skill globally or modify harness settings.
+
+Normal use is `acu run ...`, not a Python/package-manager wrapper. Python is the implementation language; the installed console launcher starts its interpreter internally. **uv is an installer/development tool, not part of the runtime command.** ACU has no Python runtime package dependencies; it uses the standard library and the existing AutoHotkey installation.
+
+For development, `uv sync` installs the quiet-test dependencies, `uv run pytest ...` runs focused checks, and `uv build` creates an installable wheel containing the launcher, scripts, vendored UIA library, skill, and static guides. These are setup/build commands, not the agent-facing interface. Uninstall the CLI with `uv tool uninstall acu-desktop`.
 
 ## Agent interface
 
-Scripting is the primary interface: one call executes a predictable action chain, not one tool call per button. The CLI and MCP tools share the same implementation.
-
-| CLI operation / MCP tool | Purpose |
-| --- | --- |
-| `discover` | Find compact capability summaries, with a `runnable` flag |
-| `describe` | Load one capability's instructions and JSON parameter contract |
-| `run` | Execute its maintained implementation with validated parameters |
-| `execute` | Execute agent-written code or an existing script under the launcher |
-| `tree` | Inspect an observed window's controls |
-| `screenshot` | Capture a display, window, or rectangle; MCP also returns the image |
-
-Bundled capabilities are `windows.list`, `uia.tree`, `screen.capture`, and the instructions-only `ahk.action-chain`. The agent remains responsible for choosing actions and writing code. ACU never generates code or silently substitutes an implementation when a capability fails. Only bundled capabilities are loaded; no third-party capability installation or plugin framework is implemented.
+ACU is CLI-only and exposes one operation: run an existing AutoHotkey v2 script file. The agent writes one predictable action chain, calls the CLI through its shell tool, and reads observed facts back. The file stays under the caller's ownership; ACU neither creates nor deletes action scripts.
 
 ```
-uv run python -m acu discover window
-uv run python -m acu describe ahk.action-chain
-uv run python -m acu run windows.list
-uv run python -m acu run uia.tree --params '{"target":"ahk_id 12345","find":"Save"}'
-uv run python -m acu execute --file action.ahk --timeout 30 --args "literal argument"
-uv run python -m acu tree "ahk_id 12345" --find Save
-uv run python -m acu screenshot --mode app --target "ahk_id 12345"
+acu run action.ahk [--timeout 30] [-- arguments for the script]
+acu run "C:/absolute/path/acu/tree.ahk" -- "ahk_id 12345" --find Save
+acu run "C:/absolute/path/acu/screenshot.ahk" -- app "ahk_id 12345"
 ```
 
-Inline scripts can use ``execute --code 'FileAppend "hello`n", "*"'``. For multiline code or sensitive text, use `execute --file -` and supply UTF-8 code on stdin: command-line strings can be visible to other processes. MCP `execute` accepts exactly one of `code` or `file`, plus `engine` (currently `ahk` only), `args`, and `timeout`. ACU removes its own inline-script temporary directory on success, script error, timeout, or tool error; existing caller-owned scripts are preserved. If file sharing prevents cleanup, `cleanup_error` and `artifacts.leftover_script` report the leftover without replacing the actual execution outcome; inspect rather than repeat an already-completed chain. An abruptly killed Python process may also leave a temporary script under `ACU_HOME/tmp`. ACU is not a sandbox or an access-control boundary.
+Use absolute paths from an agent session. Arguments after `--` are literal strings passed to `A_Args`. `tree.ahk` and `screenshot.ahk` are ordinary scripts passed to the same command, not separate operations. A screenshot script prints its saved PNG path and coordinate mapping in `output`; read the PNG separately. Authoring and inspection guidance is in `acu/guides/`.
 
-CLI stdout is one JSON result. Execution results contain `engine`, `outcome`, `exit_code`, `output`, `trailer`, `duration_ms`, and `artifacts` paths; screenshot results also contain `screenshot` with `saved`, `image`, `source`, and `scale`. CLI exit codes preserve the script's exit code (124 for timeout); invalid requests exit 2 and tool infrastructure failures exit 1. MCP returns matching `structuredContent` and text, sets `isError` for failed execution or invalid requests, and includes PNG image content for screenshots. Execution success never claims the task's effect was verified.
+There is no server or MCP integration, inline-code input, engine selector, maintained-script-ID registry, discovery, or description operation. Other operations require a separate design decision before implementation.
 
-Tool execution timeouts must be finite and greater than zero, at most 300 seconds. Across CLI/MCP processes, a Windows session-local mutex rejects overlapping executions with a `busy` error; actions are not queued against potentially stale state. The existing low-level launcher does not take this tool-level lease. Discovery and description do not operate the desktop or confer permission to do so.
+CLI stdout is one JSON result containing `engine` (always `ahk`), `outcome`, `exit_code`, `output`, `trailer`, `duration_ms`, and `artifacts` paths. Exit codes preserve the script's exit code (124 for timeout); invalid requests exit 2 and tool infrastructure failures exit 1. This uses the same prelude and launcher as before. Successful execution alone does not verify the task's effect.
 
-### Connect MCP
-
-The stdio server is launched by the calling harness, which owns its lifetime:
-
-```
-uv run --project "<absolute checkout path>" python -m acu mcp
-```
-
-There is no independent daemon, localhost listener, or persistent desktop-control session. Each action chain still runs in a short-lived AHK process. This checkout includes `.pi/mcp.json`, enabling direct ACU tool exposure only inside this trusted project. Run `/reload` in Pi after changing configuration; tools are named `mcp__acu__execute`, `mcp__acu__discover`, etc. The current session's already-declared tools do not change until the harness reloads.
-
-For another MCP harness, use its stdio configuration with this command and arguments (replace the checkout path):
-
-```json
-{
-  "mcpServers": {
-    "acu": {
-      "command": "uv",
-      "args": ["run", "--frozen", "--project", "C:/path/to/ahk-computer-use", "python", "-m", "acu", "mcp"]
-    }
-  }
-}
-```
-
-Set the harness's request timeout above the script timeout plus startup/close grace. The Pi configuration allows 360 seconds for the maximum 300-second execution. MCP discovery and tree tools have read-only annotations; arbitrary execution, maintained-script `run`, and `screenshot` are conservatively marked potentially destructive. Screenshot capture can overwrite an explicitly selected `out` file; choose only an authorized path. Harness permission checks still apply. No machine-wide harness configuration is changed by installation.
+Timeouts must be finite and greater than zero, at most 300 seconds. A Windows session-local mutex rejects overlapping CLI runs with a `busy` error; actions are not queued against stale state. The low-level launcher remains available and does not take this tool-level lease. ACU is not a sandbox or an access-control boundary. There is no persistent desktop-control session, background server, or localhost listener.
 
 ## Install the skill
 
@@ -89,7 +57,7 @@ To make the skill available from every directory on the machine, `python install
 
 ## Low-level launcher usage
 
-Agents normally use the CLI or MCP interface above. The existing launcher remains the implementation and development entry point:
+Agents normally use the `acu run` CLI above. The existing launcher remains the implementation and development entry point:
 
 ```
 python acu/run.py script.ahk [--timeout 30] [-- arguments for the script]
@@ -203,8 +171,6 @@ Scripts should end at a stable state. A script whose purpose is to leave an appl
 | Run log, one JSON line per run | `%LOCALAPPDATA%\ACU\logs\runs.jsonl` |
 | Crash reports for errors and timeouts, with the full output | `%LOCALAPPDATA%\ACU\crashes\<timestamp>-<script hash>.json` |
 | Tool infrastructure failures with Python stack traces | `%LOCALAPPDATA%\ACU\crashes\<timestamp>-tool.json` |
-| MCP server diagnostics | `%LOCALAPPDATA%\ACU\logs\mcp.log` |
-| Inline scripts, removed when an execution returns | `%LOCALAPPDATA%\ACU\tmp\script-*\action.ahk` |
 | Screenshots taken without `--out`, newest 30 kept | `%LOCALAPPDATA%\ACU\shots\<timestamp>-<action>.png` |
 
 Set `ACU_HOME` to move these locations. ACU does not log script text, only its SHA-256, because scripts can contain secrets. A harness may independently record tool-call arguments. A crash report does quote the run's output, and an error message can cite fragments of the failing line, so treat crash reports as sensitive too. If tool crash-report persistence itself fails, the original error remains in the JSON response together with an explicit `diagnostic_error`.

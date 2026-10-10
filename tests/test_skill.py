@@ -35,15 +35,17 @@ def test_frontmatter_follows_the_agent_skills_specification():
 def test_skill_teaches_window_discovery_before_control_lookup():
     """Guard the launch recipe against the process-only assumption seen in the Calculator trial."""
     text = SKILL_FILE.read_text(encoding="utf-8")
-    discovery = text.split("### 1. Look", 1)[1].split('acu tree "', 1)[0]
+    discovery = text.split("### 1. Look", 1)[1].split('acu run ', 1)[0]
 
     for required in ("WinGetList()", "WinGetTitle", "WinGetClass", "WinGetProcessName", "ahk_id",
                      "CalculatorApp.exe", "ApplicationFrameHost.exe"):
         assert required in discovery, f"window discovery must explain {required} before tree lookup"
     assert "new matching handle" in discovery, "new-window tasks must preserve pre-existing windows"
     assert "observed" in discovery, "window identity must be observed rather than guessed"
-    for required in ("mcp__acu__", "ahk.action-chain", "acu execute --file -", "whole scripted action chain"):
+    for required in ("guides/scripting.md", 'acu run "<script.ahk>"', "whole scripted action chain"):
         assert required in text, f"skill must teach the script-first tool interface: {required}"
+    assert "`discover`" not in text and "`describe`" not in text
+    assert "MCP" not in text and "uv run" not in text and "python -m acu" not in text
     assert len(text.splitlines()) <= 120, "keep the skill compact; longer material belongs in README"
 
 

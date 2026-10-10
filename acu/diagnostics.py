@@ -1,7 +1,6 @@
-"""Persist transport failures without recording request arguments or script text."""
+"""Persist CLI failures without recording request arguments or script text."""
 
 import json
-import logging
 import traceback
 from datetime import datetime
 
@@ -22,13 +21,3 @@ def failure(error: Exception) -> dict:
     except OSError as diagnostic_error:
         return {"error": str(error), "diagnostic_error": f"could not persist crash report at {report}: {diagnostic_error}"}
     return {"error": str(error), "artifacts": {"crash_report": str(report)}}
-
-
-def configure_mcp_logging() -> None:
-    """Keep SDK server diagnostics in a file as well as stderr; stdio stdout stays protocol-only."""
-    logs = acu_home() / "logs"
-    logs.mkdir(parents=True, exist_ok=True)
-    handler = logging.FileHandler(logs / "mcp.log", encoding="utf-8")
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
-    handler.setLevel(logging.INFO)
-    logging.getLogger("mcp").addHandler(handler)

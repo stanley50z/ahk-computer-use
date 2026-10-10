@@ -2,7 +2,6 @@
 !/.pi/
 /.pi/*
 !/.pi/extensions/
-!/.pi/mcp.json
 /.agents/
 /.claude/skills/
 __pycache__/

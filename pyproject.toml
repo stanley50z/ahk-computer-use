@@ -5,9 +5,9 @@ build-backend = "hatchling.build"
 [project]
 name = "acu-desktop"
 version = "0.1.0"
-description = "Script-first computer use through CLI and MCP"
+description = "Run AutoHotkey v2 script files through the acu CLI"
 requires-python = ">=3.12"
-dependencies = ["mcp>=1.26,<2", "jsonschema>=4.26,<5"]
+dependencies = []
 
 [project.scripts]
 acu = "acu.cli:main"

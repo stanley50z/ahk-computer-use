@@ -1,1 +1,1 @@
-"""ACU: script-first computer use through a CLI or MCP tools."""
+"""ACU: script-first computer use through the acu CLI."""

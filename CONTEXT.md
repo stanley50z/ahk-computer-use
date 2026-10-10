@@ -19,12 +19,8 @@ A coding-agent product that hosts the agent and loads the skill: Claude Code, Pi
 _Avoid_: client, IDE, agent
 
 **Skill**:
-The document a harness loads that teaches the agent the tool interface, the loop, and when to load capability guidance.
+The document a harness loads that teaches the agent how to write and run scripts, the loop, and the perception ladder.
 _Avoid_: prompt, manual, instructions
-
-**Capability**:
-A discoverable ACU entry containing guidance, a parameter contract, and optionally a maintained script. Instructions-only capabilities guide the agent's own script; runnable capabilities have an implementation ACU can execute.
-_Avoid_: skill (reserved for the harness-loaded document), plugin, macro
 
 **Prelude**:
 The code ACU places ahead of every script so that coordinates, DPI, errors, restore, and the accessibility tree are already taken care of.

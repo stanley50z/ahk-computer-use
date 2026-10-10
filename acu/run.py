@@ -175,7 +175,7 @@ def run_script(script: Path, timeout: float, args: Sequence[str] = ()) -> Run:
 
 
 def record(script: Path, run: Run, timeout: float) -> Path | None:
-    """Append the run log; return the failure report's path so CLI/MCP callers can expose it."""
+    """Append the run log; return the failure report's path so CLI callers can expose it."""
     home = acu_home()
     stamp = datetime.now().astimezone()
     digest = hashlib.sha256(script.read_bytes()).hexdigest()
