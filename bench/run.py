@@ -1,4 +1,4 @@
-"""Run fresh GPT-6.1/low computer-use sessions and measure their JSON event streams.
+"""Run fresh, isolated computer-use sessions and measure their JSON event streams.
 
 Desktop runs require --desktop-approved. Raw evidence stays in .pi/bench/<run-id>/.
 The bench isolates configuration, not filesystem permissions or the shared desktop.
@@ -16,19 +16,37 @@ import threading
 import time
 import tomllib
 import traceback
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 MODEL = 'gpt-6.1-sol'
+REASONING = 'low'
 TOOLS = ['read', 'bash', 'edit', 'write']
-ARMS = ('pi-acu', 'pi-cua', 'codex-computer-use')
+CLAUDE_TOOLS = ['Read', 'Write', 'Edit', 'Bash']
+ARMS = ('pi-acu', 'claude-acu', 'pi-cua', 'codex-computer-use')
+# Claude Code runs only Claude models, so its ACU arm is the one exception to the GPT-6.1/low rule.
+ARM_MODELS = {'claude-acu': ('claude-opus-5-5', 'low')}
 EXPRESSION = '128+465*12387/138473-12343'
 SKILLS = {
     'pi-acu': ROOT / 'acu',
+    'claude-acu': ROOT / 'acu',
     'pi-cua': Path.home() / '.agents/skills/cua-driver',
 }
+# What a computer-use call looks like in each arm's tool arguments, or in a workspace script those arguments run.
+COMPUTER_USE_PATTERNS = {'pi-acu': r'\bacu run\b', 'claude-acu': r'\bacu run\b', 'pi-cua': r'cua-driver', 'codex-computer-use': r'\bsky\.'}
+# Saved login per harness: the source under the home directory and the private copy's name under agent-home.
+CREDENTIALS = {'pi': ('.pi/agent/auth.json', 'auth.json'), 'claude': ('.claude/.credentials.json', '.credentials.json'), 'codex': ('.codex/auth.json', 'auth.json')}
+
+
+def harness(arm):
+    return arm.split('-', 1)[0]
+
+
+def arm_model(arm):
+    return ARM_MODELS.get(arm, (MODEL, REASONING))
 
 
 # The CLI is a public seam: only one explicitly selected skill and the four ordinary file/shell tools.
@@ -38,6 +56,26 @@ def pi_command(run_dir, skill, prompt):
             '--model', f'openai/{MODEL}', '--thinking', 'low', '--offline',
             '--approve', '--session', str(run_dir / 'session.jsonl'),
             '--mode', 'json', '--print', prompt]
+
+
+# Claude Code is a public seam too: safe mode drops CLAUDE.md, skills, hooks and plugins; the selected skill is
+# declared by path, like the Codex arm, and only the four ordinary file/shell tools exist.
+def claude_command(skill, prompt, session_id):
+    model, effort = ARM_MODELS['claude-acu']
+    declaration = (f'The only enabled skill is acu. Read {Path(skill) / "SKILL.md"} before desktop interaction. '
+                   'No other skill or desktop automation route is enabled.')
+    return ['claude', '-p', '--safe-mode', '--disable-slash-commands', '--strict-mcp-config',
+            '--setting-sources', 'user', '--tools', ','.join(CLAUDE_TOOLS),
+            '--permission-mode', 'bypassPermissions', '--model', model, '--effort', effort,
+            '--session-id', session_id, '--output-format', 'stream-json', '--verbose',
+            '--include-partial-messages', '--append-system-prompt', declaration, prompt]
+
+
+# Tool arguments as raw text, so a route pattern sees real line breaks rather than JSON-escaped ones.
+def argument_text(arguments):
+    if isinstance(arguments, dict):
+        return '\n'.join(str(value) for value in arguments.values() if value is not None)
+    return '' if arguments is None else str(arguments)
 
 
 # Merge tool intervals instead of summing their durations when calls overlap.
@@ -99,17 +137,17 @@ def analyse_pi(records, wall_s, reference_tps=None):
                 errors.append(message.get('errorMessage', message['stopReason']))
             current = None
         elif kind == 'tool_execution_start':
-            starts[event['toolCallId']] = (elapsed, event['toolName'])
+            starts[event['toolCallId']] = (elapsed, event['toolName'], argument_text(event.get('args')))
         elif kind == 'tool_execution_end':
-            start, name = starts.pop(event['toolCallId'])
+            start, name, text = starts.pop(event['toolCallId'])
             intervals.append((start, elapsed))
-            tools.append({'id': event['toolCallId'], 'name': name, 'duration_s': elapsed - start,
-                          'is_error': event['isError'], 'reported_duration_ms': event.get('durationMs')})
+            tools.append({'id': event['toolCallId'], 'name': name, 'start_s': start, 'end_s': elapsed, 'duration_s': elapsed - start,
+                          'is_error': event['isError'], 'reported_duration_ms': event.get('durationMs'), 'text': text})
         elif kind == 'agent_settled':
             agent_end = elapsed
             completed = not event['aborted'] and not errors
     model_s = sum(turn['duration_s'] for turn in turns) if all(turn['duration_s'] is not None for turn in turns) else None
-    result = {'wall_s': wall_s, 'agent_elapsed_s': agent_end - agent_start if agent_start is not None and agent_end is not None else None,
+    result = {'wall_s': wall_s, 'agent_start_s': agent_start, 'agent_elapsed_s': agent_end - agent_start if agent_start is not None and agent_end is not None else None,
               'model_response_s': model_s, 'tool_busy_s': busy_seconds(intervals),
               'tokens': tokens, 'effective_output_tps': tokens['output_including_reasoning'] / model_s if model_s is not None and model_s > 0 else None,
               'end_to_end_output_tps': tokens['output_including_reasoning'] / wall_s if wall_s > 0 else None,
@@ -206,6 +244,183 @@ def audit_codex_session(entries):
             'problems': problems, 'evidence_kind': 'persisted native turn context and developer skill declaration'}
 
 
+# Claude Code stream-json carries no server-side response duration: a response is timed from the request status
+# event to message_stop receipt. Token totals come from the final result; per-message usage is deduplicated by id.
+def analyse_claude(records, wall_s, reference_tps=None):
+    tokens = dict(input_uncached=0, cache_read=0, cache_write=0,
+                  output_including_reasoning=0, reasoning_subset=None, total=0)
+    turns, tools, intervals, errors = [], [], [], []
+    usage_by_message, tool_starts = {}, {}
+    agent_start = agent_end = request_start = None
+    current = None
+    final = None
+    for record in records:
+        elapsed, event = record['elapsed_s'], record['event']
+        kind = event.get('type')
+        if kind == 'system':
+            if event.get('subtype') == 'init' and agent_start is None:
+                agent_start = elapsed
+            elif event.get('subtype') == 'status' and event.get('status') == 'requesting':
+                request_start = elapsed
+        elif kind == 'stream_event':
+            inner = event['event']
+            if inner['type'] == 'message_start':
+                current = {'start_s': request_start if request_start is not None else elapsed, 'first_visible_delta_s': None,
+                           'message_id': inner['message'].get('id'), 'model': inner['message'].get('model'), 'delta_usage': None}
+            elif current is None:
+                continue
+            elif inner['type'] == 'content_block_delta' and current['first_visible_delta_s'] is None:
+                current['first_visible_delta_s'] = elapsed - current['start_s']
+            elif inner['type'] == 'message_delta':
+                current['delta_usage'] = inner.get('usage')
+            elif inner['type'] == 'message_stop':
+                usage = current.pop('delta_usage') or usage_by_message.get(current['message_id'], {})
+                output = usage.get('output_tokens', 0)
+                duration = elapsed - current['start_s']
+                turns.append({**current, 'duration_s': duration, 'output_tokens': output,
+                              'effective_output_tps': output / duration if duration > 0 else None, 'usage': usage})
+                current = request_start = None
+        elif kind == 'assistant':
+            message = event['message']
+            usage_by_message[message.get('id')] = message.get('usage', {})
+            for block in message.get('content', []):
+                if block.get('type') == 'tool_use':
+                    tool_starts[block['id']] = (elapsed, block.get('name'), argument_text(block.get('input')))
+        elif kind == 'user':
+            content = event.get('message', {}).get('content')
+            for block in content if isinstance(content, list) else []:
+                if block.get('type') == 'tool_result' and block.get('tool_use_id') in tool_starts:
+                    start, name, text = tool_starts.pop(block['tool_use_id'])
+                    intervals.append((start, elapsed))
+                    tools.append({'id': block['tool_use_id'], 'name': name, 'start_s': start, 'end_s': elapsed,
+                                  'duration_s': elapsed - start, 'is_error': bool(block.get('is_error')), 'text': text})
+        elif kind == 'result':
+            agent_end = elapsed
+            final = event
+            if event.get('is_error') or event.get('subtype') != 'success':
+                errors.append(str(event.get('result') or event.get('subtype')))
+    if final is not None and final.get('usage'):
+        usage = final['usage']
+        tokens.update(input_uncached=usage.get('input_tokens', 0), cache_read=usage.get('cache_read_input_tokens', 0),
+                      cache_write=usage.get('cache_creation_input_tokens', 0), output_including_reasoning=usage.get('output_tokens', 0),
+                      reasoning_subset=(usage.get('output_tokens_details') or {}).get('thinking_tokens'))
+    else:
+        for usage in usage_by_message.values():
+            tokens['input_uncached'] += usage.get('input_tokens', 0)
+            tokens['cache_read'] += usage.get('cache_read_input_tokens', 0)
+            tokens['cache_write'] += usage.get('cache_creation_input_tokens', 0)
+            tokens['output_including_reasoning'] += usage.get('output_tokens', 0)
+    tokens['total'] = tokens['input_uncached'] + tokens['cache_read'] + tokens['cache_write'] + tokens['output_including_reasoning']
+    model_s = sum(turn['duration_s'] for turn in turns) if turns else None
+    completed = final is not None and not errors
+    result = {'wall_s': wall_s, 'agent_start_s': agent_start,
+              'agent_elapsed_s': agent_end - agent_start if agent_start is not None and agent_end is not None else None,
+              'model_response_s': model_s, 'tool_busy_s': busy_seconds(intervals), 'tokens': tokens,
+              'effective_output_tps': tokens['output_including_reasoning'] / model_s if model_s else None,
+              'end_to_end_output_tps': tokens['output_including_reasoning'] / wall_s if wall_s > 0 else None,
+              'reported_api_duration_s': final['duration_api_ms'] / 1000 if final and 'duration_api_ms' in final else None,
+              'model_turns': turns, 'tools': tools, 'model_errors': errors, 'agent_completed': completed,
+              'unfinished_tools': list(tool_starts), 'token_counts_complete': final is not None and bool(final.get('usage')),
+              'timing_basis': 'Receipt intervals from the request status event to message_stop; Claude Code exposes no per-response server duration.'}
+    if reference_tps is not None:
+        if reference_tps <= 0:
+            raise ValueError('reference throughput must be positive')
+        result['reference_tps'] = reference_tps
+        result['estimated_wall_at_reference_tps_s'] = wall_s - model_s + tokens['output_including_reasoning'] / reference_tps if model_s is not None else None
+        result['normalization_method'] = 'Whole-response effective-rate counterfactual, including prefill/queueing; not pure decoding speed.'
+    return result
+
+
+# Audit the stream's init event and the persisted transcript; absent evidence fails rather than passing by default.
+def audit_claude_session(records, entries, expected_skill_dir):
+    model, effort = ARM_MODELS['claude-acu']
+    problems = []
+    inits = [r['event'] for r in records if r['event'].get('type') == 'system' and r['event'].get('subtype') == 'init']
+    if not inits:
+        problems.append('no init evidence in the stream')
+    for init in inits:
+        if init.get('model') != model:
+            problems.append('wrong model in init')
+        if sorted(init.get('tools', [])) != sorted(CLAUDE_TOOLS):
+            problems.append(f"unexpected tools: {init.get('tools')}")
+        if init.get('mcp_servers'):
+            problems.append('unexpected MCP servers')
+        if init.get('skills') or init.get('slash_commands'):
+            problems.append(f"unexpected skills: {init.get('skills') or init.get('slash_commands')}")
+    assistants = [entry for entry in entries if entry.get('type') == 'assistant']
+    if not assistants:
+        problems.append('no persisted assistant evidence')
+    expected = str(expected_skill_dir).replace('\\', '/').casefold().rstrip('/') + '/'
+    for entry in assistants:
+        if entry.get('effort') != effort:
+            problems.append(f'effort is not {effort}')
+        if entry.get('requestedModel', entry.get('message', {}).get('model')) != model:
+            problems.append('assistant used wrong model')
+        for block in entry.get('message', {}).get('content', []):
+            if isinstance(block, dict) and block.get('type') == 'tool_use' and block.get('name') == 'Read':
+                path = str(block.get('input', {}).get('file_path', '')).replace('\\', '/')
+                if path.endswith('/SKILL.md') and not path.casefold().startswith(expected):
+                    problems.append(f'other skill read: {path}')
+    return {'passed': not problems, 'skills': ['acu'], 'problems': sorted(set(problems)),
+            'evidence_kind': 'stream init event (model, tools, MCP, skills) and persisted transcript (effort, model, reads)',
+            'limitation': 'Safe mode disables CLAUDE.md, hooks and plugins by flag; the stream lists no memory files, so that part is not independently evidenced.'}
+
+
+# The primary measurement: from the actor's session start, when it holds the skill, to the end of its last
+# computer-use call. Evidence files and the final answer come after and are not part of the task.
+def task_time(agent_start_s, tools, pattern, workspace):
+    helpers = set()  # names a computer-use call defined; a persistent REPL lets later calls reach the route through them
+
+    def uses_computer(text):
+        if re.search(pattern, text) or any(re.search(rf'\b{re.escape(name)}\s*\(', text) for name in helpers):
+            return True
+        for name in set(re.findall(r'[\w.-]+\.(?:py|ahk|js|mjs|ps1|sh)\b', text)):
+            script = Path(workspace) / name
+            if script.is_file() and re.search(pattern, script.read_text(encoding='utf-8-sig', errors='replace')):
+                return True
+        return False
+
+    uses = []
+    for tool in sorted(tools, key=lambda tool: tool['start_s']):
+        if str(tool.get('name', '')).casefold() in ('read', 'write', 'edit'):
+            continue
+        text = tool.get('text', '')
+        if uses_computer(text):
+            uses.append(tool)
+            helpers.update(name for pair in re.findall(r'globalThis\.(\w+)\s*=|\b(?:const|let|var|function|def)\s+(\w+)', text) for name in pair if name)
+    definition = 'Session start (skill received) to the end of the last computer-use tool call, by receipt timestamps. Result files and the final answer are excluded.'
+    if agent_start_s is None or not uses:
+        return {'task_s': None, 'computer_use_calls': len(uses), 'definition': definition,
+                'reason': 'no session start or no computer-use call was observed'}
+    last = max(tool['end_s'] for tool in uses)
+    return {'task_s': last - agent_start_s, 'start_s': agent_start_s, 'last_computer_use_end_s': last,
+            'computer_use_calls': len(uses), 'definition': definition}
+
+
+# The shared cua-driver daemon remembers ended session labels, and every fresh CUA actor named its first session after
+# the scenario, so each trial after the first paid a rejected call. By the user's decision (2026-10-10) the daemon is
+# restarted before every CUA trial, outside timing, so the actor meets the same empty state the first one did.
+def restart_cua_daemon(run_dir, driver='cua-driver', timeout_s=30):
+    def status():
+        return subprocess.run([driver, 'status'], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=30).stdout
+
+    record = {'driver': driver, 'before': status()}
+    record['stop'] = subprocess.run([driver, 'stop'], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=60).stdout
+    deadline = time.monotonic() + timeout_s
+    while 'is running' in status() and time.monotonic() < deadline:
+        time.sleep(0.5)
+    record['start'] = subprocess.run([driver, 'autostart', 'kick'], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=60).stdout
+    while 'is running' not in status() and time.monotonic() < deadline:
+        time.sleep(0.5)
+    record['after'] = status()
+    record['sessions'] = subprocess.run([driver, 'list_sessions', '{}'], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=60).stdout
+    record['passed'] = 'is running' in record['after'] and '"sessions": []' in record['sessions'].replace('\n', '').replace(' ', '').replace('"sessions":[]', '"sessions": []')
+    save_json(Path(run_dir) / 'daemon-restart.json', record)
+    if not record['passed']:
+        raise RuntimeError('cua-driver daemon did not come back empty; see daemon-restart.json')
+    return record
+
+
 # Read the actor's JSON as UTF-8, including the BOM that Windows PowerShell may emit.
 def load_actor_json(path):
     return json.loads(path.read_text(encoding='utf-8-sig'))
@@ -224,9 +439,11 @@ def save_json(path, value):
 
 
 # Prepare reproducible, offline profiles without credentials or a live desktop session.
-def prepare(arm, run_dir, *, skill=None, native_config=None, native_skill_roots=None, native_builtin_root=None):
+def prepare(arm, run_dir, *, skill=None, native_config=None, native_skill_roots=None, native_builtin_root=None, native_transport='sdk-helper'):
     if arm not in ARMS:
         raise ValueError(f'unknown arm: {arm}')
+    if native_transport not in ('sdk-helper', 'app-pipe'):
+        raise ValueError(f'unknown native transport: {native_transport}')
     run_dir = Path(run_dir).resolve()
     run_dir.mkdir(parents=True, exist_ok=False)
     workspace, home = run_dir / 'workspace', run_dir / 'agent-home'
@@ -235,7 +452,15 @@ def prepare(arm, run_dir, *, skill=None, native_config=None, native_skill_roots=
     scenario = (ROOT / 'bench/scenarios/calculator.md').read_text(encoding='utf-8')
     (run_dir / 'scenario.md').write_text(scenario, encoding='utf-8')
     prompt = scenario
-    if arm.startswith('pi-'):
+    model, reasoning = arm_model(arm)
+    session_id = None
+    if harness(arm) == 'claude':
+        skill = Path(skill) if skill is not None else SKILLS[arm]
+        session_id = str(uuid.uuid4())
+        command = claude_command(skill, prompt, session_id)
+        environment = {'CLAUDE_CONFIG_DIR': str(home), 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1'}
+        skill_name = 'acu'
+    elif harness(arm) == 'pi':
         skill = Path(skill) if skill is not None else SKILLS[arm]
         settings = {'packages': [], 'extensions': [], 'skills': [], 'prompts': [],
                     'cacheWarming': 'off', 'compaction': {'enabled': False},
@@ -262,8 +487,14 @@ def prepare(arm, run_dir, *, skill=None, native_config=None, native_skill_roots=
         skill_name = 'computer-use'
         native_env = dict(node_repl['env'])
         native_env['CODEX_HOME'] = str(home)
-        native_env['SKY_CUA_NATIVE_PIPE'] = '0'  # CLI uses the shipped SDK-owned helper, not an app-owned pipe.
-        native_env.pop('SKY_CUA_NATIVE_PIPE_DIRECTORY', None)
+        if native_transport == 'app-pipe':
+            # The Codex Desktop app's own helper, reached through its named pipe; the app must be running at trial time.
+            if not native_env.get('SKY_CUA_NATIVE_PIPE_DIRECTORY'):
+                raise ValueError('the user configuration names no app-owned native pipe')
+            native_env['SKY_CUA_NATIVE_PIPE'] = '1'
+        else:
+            native_env['SKY_CUA_NATIVE_PIPE'] = '0'  # CLI uses the shipped SDK-owned helper, not an app-owned pipe.
+            native_env.pop('SKY_CUA_NATIVE_PIPE_DIRECTORY', None)
         native_env['NODE_REPL_TRUSTED_SERVICES'] = json.dumps({'sky': '@oai/sky/service'})
         native_env['BROWSER_USE_AVAILABLE_BACKENDS'] = ''
         native_env['BROWSER_USE_TINYSKY_ENABLED'] = '0'
@@ -301,12 +532,18 @@ def prepare(arm, run_dir, *, skill=None, native_config=None, native_skill_roots=
     skill_file = skill / 'SKILL.md'
     if not skill_file.is_file():
         raise FileNotFoundError(skill_file)
-    plan = {'arm': arm, 'model': MODEL, 'reasoning': 'low', 'skill_names': [skill_name],
+    plan = {'arm': arm, 'model': model, 'reasoning': reasoning, 'skill_names': [skill_name],
             'skill_path': str(skill_file), 'skill_sha256': hashlib.sha256(skill_file.read_bytes()).hexdigest(),
             'scenario_sha256': hashlib.sha256(scenario.encode('utf-8')).hexdigest(),
             'workspace': str(workspace), 'run_dir': str(run_dir), 'command': command,
             'environment_overrides': environment, 'isolation': 'configuration/prompt, not OS sandbox',
             'runtime_validated': False}
+    if session_id is not None:
+        plan['session_id'] = session_id
+    if harness(arm) == 'codex':
+        plan['native_transport'] = native_transport
+        if native_transport == 'app-pipe':
+            plan['native_pipe'] = native_env['SKY_CUA_NATIVE_PIPE_DIRECTORY']
     save_json(run_dir / 'plan.json', plan)
     return plan
 
@@ -390,7 +627,9 @@ def capture(command, cwd, environment, run_dir):
     return records, wall, process.returncode
 
 
-# A claim never authorizes closing a pre-existing handle; current PID must also be checked by cleanup.ahk.
+# A claim never authorizes closing a pre-existing visible handle; current PID must also be checked by cleanup.ahk.
+# Hidden pre-existing handles (probe lines `hiddenwindow=`) are not protected: on 2026-10-10 the frame host gave a new
+# Calculator a hidden shell window it already owned, and the old rule refused to clean up the actor's own window.
 def owned_window(before, claim):
     hwnd = str(claim.get('hwnd', ''))
     pid = str(claim.get('pid', ''))
@@ -489,36 +728,51 @@ def verify_calculator(run_dir, before):
 def run_trial(plan, reference_tps=None):
     run_dir = Path(plan['run_dir'])
     arm = plan['arm']
-    credential = Path.home() / ('.pi/agent/auth.json' if arm.startswith('pi-') else '.codex/auth.json')
-    private_auth = run_dir / 'agent-home/auth.json'
+    source, private_name = CREDENTIALS[harness(arm)]
+    credential = Path.home() / source
+    private_auth = run_dir / 'agent-home' / private_name
     if not credential.is_file():
         raise FileNotFoundError(f'saved login not found: {credential}')
-    environment = {key: value for key, value in os.environ.items() if not key.startswith(('PI_', 'CODEX_', 'CUA_', 'SKY_', 'NODE_REPL_', 'BROWSER_USE_', 'BH_', 'BU_'))}
+    environment = {key: value for key, value in os.environ.items()
+                   if not key.startswith(('PI_', 'CODEX_', 'CUA_', 'SKY_', 'NODE_REPL_', 'BROWSER_USE_', 'BH_', 'BU_', 'CLAUDE_', 'ANTHROPIC_'))}
     environment.update(plan['environment_overrides'])
     environment['PYTHONUTF8'] = '1'
+    if harness(arm) == 'cua':
+        restart_cua_daemon(run_dir)
+    if plan.get('native_transport') == 'app-pipe':
+        pipe_name = plan['native_pipe'].rsplit('\\', 1)[-1]
+        if os.name == 'nt' and pipe_name not in os.listdir('\\\\.\\pipe\\'):
+            raise RuntimeError(f'the Codex Desktop app pipe {pipe_name} is not open; start the app before an app-pipe trial')
     before = acu_observer(run_dir, ROOT / 'bench/probe.ahk', suffix='-before')
     shutil.copyfile(credential, private_auth)
     try:
         records, wall, exit_code = capture(executable_command(plan['command']), plan['workspace'], environment, run_dir)
-        if arm.startswith('pi-'):
+        if harness(arm) == 'pi':
             measurements = analyse_pi(records, wall, reference_tps)
             session_path = run_dir / 'session.jsonl'
             entries = read_jsonl(session_path) if session_path.is_file() else []
             isolation = audit_pi_session(entries, plan['skill_names'][0])
+        elif harness(arm) == 'claude':
+            measurements = analyse_claude(records, wall, reference_tps)
+            transcripts = sorted((run_dir / 'agent-home/projects').rglob('*.jsonl')) if (run_dir / 'agent-home/projects').is_dir() else []
+            entries = [entry for path in transcripts for entry in read_jsonl(path)]
+            isolation = audit_claude_session(records, entries, Path(plan['skill_path']).parent)
         else:
             measurements = analyse_codex(records, wall)
             native_sessions = list((run_dir / 'agent-home/sessions').rglob('*.jsonl'))
             native_entries = [entry for path in native_sessions for entry in read_jsonl(path)]
             isolation = audit_codex_session(native_entries)
         measurements['capture'] = json.loads((run_dir / 'capture.json').read_text(encoding='utf-8'))
-        measurements['token_counts_complete'] = measurements.get('agent_completed', False)
+        measurements.setdefault('token_counts_complete', measurements.get('agent_completed', False))
+        measurements['task'] = task_time(measurements.get('agent_start_s'), measurements.get('tools', []), COMPUTER_USE_PATTERNS[arm], plan['workspace'])
         save_json(run_dir / 'metrics.json', measurements)
         save_json(run_dir / 'isolation.json', isolation)
         plan['runtime_validated'] = isolation['passed']
         save_json(run_dir / 'plan.json', plan)
         verification = verify_calculator(run_dir, before)
         save_json(run_dir / 'verification.json', verification)
-        summary = {'arm': arm, 'model': MODEL, 'reasoning': 'low', 'exit_code': exit_code,
+        summary = {'arm': arm, 'model': plan['model'], 'reasoning': plan['reasoning'], 'exit_code': exit_code,
+                   'task_s': measurements['task']['task_s'], 'wall_s': wall,
                    'isolation_passed': isolation['passed'], 'task_passed': verification['passed'],
                    'passed': exit_code == 0 and isolation['passed'] and verification['passed'] and measurements['capture']['passed'],
                    'metrics': measurements, 'evidence_dir': str(run_dir)}
@@ -578,7 +832,8 @@ def run(plan, reference_tps=None):
             save_json(summary_path, value)
         raise
     finally:
-        (run_dir / 'agent-home/auth.json').unlink(missing_ok=True)
+        for _, private_name in CREDENTIALS.values():
+            (run_dir / 'agent-home' / private_name).unlink(missing_ok=True)
         lock.unlink()
         cleanup_path = run_dir / 'cleanup.json'
         cleanup = json.loads(cleanup_path.read_text(encoding='utf-8')) if cleanup_path.is_file() else {'passed': False, 'error': 'cleanup was not recorded'}
@@ -588,9 +843,25 @@ def run(plan, reference_tps=None):
 # Codex exec exposes final aggregate usage; its stream does not expose a true decoding-rate denominator.
 def analyse_codex(records, wall_s):
     completed = [r for r in records if r['event']['type'] == 'turn.completed']
+    agent_start = next((r['elapsed_s'] for r in records if r['event']['type'] == 'thread.started'), None)
+    tools, intervals, starts = [], [], {}
+    for record in records:
+        elapsed, event = record['elapsed_s'], record['event']
+        item = event.get('item') if isinstance(event.get('item'), dict) else None
+        if item is None or item.get('type') not in ('command_execution', 'mcp_tool_call'):
+            continue
+        if event['type'] == 'item.started':
+            starts[item['id']] = elapsed
+        elif event['type'] == 'item.completed':
+            start = starts.pop(item['id'], elapsed)
+            text = item.get('command') if item['type'] == 'command_execution' else argument_text(item.get('arguments'))
+            intervals.append((start, elapsed))
+            tools.append({'id': item['id'], 'name': item['type'] if item['type'] == 'command_execution' else f"{item.get('server')}.{item.get('tool')}",
+                          'start_s': start, 'end_s': elapsed, 'duration_s': elapsed - start, 'text': text or ''})
+    timing = {'agent_start_s': agent_start, 'tool_busy_s': busy_seconds(intervals), 'tools': tools, 'unfinished_tools': list(starts)}
     if not completed:
         return {'wall_s': wall_s, 'tokens': None, 'model_response_s': None,
-                'effective_output_tps': None, 'end_to_end_output_tps': None,
+                'effective_output_tps': None, 'end_to_end_output_tps': None, **timing,
                 'agent_completed': False, 'timing_limitation': 'No final Codex usage was reported; token totals are unknown, not zero.'}
     if len(completed) != 1:
         raise ValueError('expected exactly one Codex turn.completed usage record')
@@ -599,7 +870,7 @@ def analyse_codex(records, wall_s):
             'cache_read': usage['cached_input_tokens'], 'output_including_reasoning': usage['output_tokens'],
             'total': usage['input_tokens'] + usage['output_tokens'], 'reasoning_subset': None},
             'model_response_s': None, 'effective_output_tps': None,
-            'end_to_end_output_tps': usage['output_tokens'] / wall_s,
+            'end_to_end_output_tps': usage['output_tokens'] / wall_s, **timing,
             'timing_limitation': 'Exec has no per-response model latency. End-to-end throughput includes tool time; do not treat it as decoding speed.',
             'agent_completed': True}
 
@@ -612,6 +883,8 @@ def main():
     parser.add_argument('--run-dir', type=Path)
     parser.add_argument('--desktop-approved', action='store_true')
     parser.add_argument('--reference-tps', type=float)
+    parser.add_argument('--native-transport', choices=('sdk-helper', 'app-pipe'), default='sdk-helper',
+                        help="codex arm only: the shipped SDK helper (default) or the running Codex Desktop app's pipe")
     args = parser.parse_args()
     if args.action == 'run' and not args.desktop_approved:
         parser.error('run requires approval for this specific desktop trial (--desktop-approved)')
@@ -619,7 +892,15 @@ def main():
         if not args.run_dir:
             parser.error('analyse requires --run-dir')
         prior = json.loads((args.run_dir / 'metrics.json').read_text(encoding='utf-8'))
-        value = analyse_pi(read_jsonl(args.run_dir / 'events.jsonl'), prior['wall_s'], args.reference_tps)
+        plan = json.loads((args.run_dir / 'plan.json').read_text(encoding='utf-8'))
+        records = read_jsonl(args.run_dir / 'events.jsonl')
+        if harness(plan['arm']) == 'pi':
+            value = analyse_pi(records, prior['wall_s'], args.reference_tps)
+        elif harness(plan['arm']) == 'claude':
+            value = analyse_claude(records, prior['wall_s'], args.reference_tps)
+        else:
+            value = analyse_codex(records, prior['wall_s'])
+        value['task'] = task_time(value.get('agent_start_s'), value.get('tools', []), COMPUTER_USE_PATTERNS[plan['arm']], plan['workspace'])
     else:
         directory = args.run_dir or ROOT / '.pi/bench' / f'{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{args.arm}'
         if args.action == 'run' and (directory / 'plan.json').is_file():
@@ -629,7 +910,7 @@ def main():
             if (directory / 'state.json').exists() or (directory / 'run-attempt.json').exists():
                 parser.error('a run directory cannot be reused; prepare a fresh trial')
         else:
-            plan = prepare(args.arm, directory)
+            plan = prepare(args.arm, directory, native_transport=args.native_transport)
         value = run(plan, args.reference_tps) if args.action == 'run' else plan
     print(json.dumps(value, ensure_ascii=False, indent=2))
     if args.action == 'run' and not value['passed']:

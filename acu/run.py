@@ -20,18 +20,14 @@ also write a crash report with the full output to <ACU_HOME>/crashes/. ACU_HOME 
 %LOCALAPPDATA%\\ACU. Script text is never logged; only its SHA-256.
 """
 
-import argparse
+# Modules a run does not always need are imported where they are used: the CLI starts once per action chain.
 import ctypes
-import hashlib
-import json
 import os
 import subprocess
 import sys
-import tempfile
 import time
 from ctypes import wintypes
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Literal, Sequence
 
@@ -145,6 +141,8 @@ def run_script(script: Path, timeout: float, args: Sequence[str] = ()) -> Run:
         duration_ms = round((time.monotonic() - started) * 1000)
         return Run(output, "error", loaded.returncode, duration_ms, f"[acu] exit {loaded.returncode} {duration_ms}ms")
 
+    import tempfile
+
     fd, out_path = tempfile.mkstemp(prefix="acu-", suffix=".out")
     os.close(fd)
     params = subprocess.list2cmdline(["/ErrorStdOut=UTF-8", "/include", str(PRELUDE), str(script), OUTPUT_ARG + out_path, HOME_ARG + str(acu_home()), *args])
@@ -176,6 +174,10 @@ def run_script(script: Path, timeout: float, args: Sequence[str] = ()) -> Run:
 
 def record(script: Path, run: Run, timeout: float) -> Path | None:
     """Append the run log; return the failure report's path so CLI callers can expose it."""
+    import hashlib
+    import json
+    from datetime import datetime
+
     home = acu_home()
     stamp = datetime.now().astimezone()
     digest = hashlib.sha256(script.read_bytes()).hexdigest()
@@ -203,6 +205,8 @@ def record(script: Path, run: Run, timeout: float) -> Path | None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    import argparse
+
     # Split at the first -- by hand: everything after it belongs to the script, whatever argparse version runs.
     launcher_args = list(sys.argv[1:] if argv is None else argv)
     script_args: list[str] = []

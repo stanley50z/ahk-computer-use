@@ -31,6 +31,29 @@ def test_prepare_pi_arms_share_scenario_and_do_not_inherit_user_configuration(tm
         assert (run_dir / 'workspace').is_dir()
 
 
+def test_prepare_claude_arm_runs_opus_low_in_safe_mode_with_only_four_tools(tmp_path):
+    plan = prepare('claude-acu', tmp_path / 'claude-run', skill=skill_fixture(tmp_path, 'acu'))
+    command = plan['command']
+    assert (plan['model'], plan['reasoning']) == ('claude-opus-5-5', 'low')
+    assert plan['skill_names'] == ['acu']
+    assert command[:2] == ['claude', '-p']
+    for flag in ('--safe-mode', '--disable-slash-commands', '--strict-mcp-config', '--include-partial-messages', '--verbose'):
+        assert flag in command
+    assert command[command.index('--model') + 1] == 'claude-opus-5-5'
+    assert command[command.index('--effort') + 1] == 'low'
+    assert command[command.index('--tools') + 1] == 'Read,Write,Edit,Bash'
+    assert command[command.index('--setting-sources') + 1] == 'user'
+    assert command[command.index('--output-format') + 1] == 'stream-json'
+    assert command[command.index('--session-id') + 1] == plan['session_id']
+    assert str(tmp_path / 'acu' / 'SKILL.md') in command[command.index('--append-system-prompt') + 1]
+    assert '--continue' not in command and '--resume' not in command
+    assert plan['environment_overrides']['CLAUDE_CONFIG_DIR'] == str(tmp_path / 'claude-run/agent-home')
+    assert not (tmp_path / 'claude-run/agent-home/.credentials.json').exists()
+    pi = prepare('pi-acu', tmp_path / 'acu-run', skill=skill_fixture(tmp_path, 'acu-pi'))
+    assert plan['scenario_sha256'] == pi['scenario_sha256']
+    assert (pi['model'], pi['reasoning']) == ('gpt-6.1-sol', 'low')
+
+
 def test_prepare_codex_selects_only_native_computer_runtime_and_corresponding_skill(tmp_path):
     source_config = {'mcp_servers': {'node_repl': {'command': str(tmp_path / 'native-node.exe'), 'env': {}}}}
     unrelated_root = tmp_path / 'unrelated-skills'

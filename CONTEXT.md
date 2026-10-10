@@ -107,8 +107,12 @@ _Avoid_: zoom factor, ratio
 ### Measuring
 
 **Testbench 1**:
-The Calculator UI-task benchmark across all three configurations: Pi plus ACU, Pi plus CUA, and Codex plus native computer use. One configuration's trial is one arm, not the complete benchmark.
+The Calculator UI-task benchmark across all four configurations: Pi plus ACU, Claude Code plus ACU, Pi plus CUA, and Codex plus native computer use. One configuration's trial is one arm, not the complete benchmark.
 _Avoid_: using Testbench 1 to mean the ACU arm alone
+
+**Task time**:
+The benchmark's primary measurement: from the actor's session start, when it holds the skill, to the end of its last computer-use call. Writing result evidence and the final answer come after it and are not part of the task.
+_Avoid_: wall time, which is the secondary process-level measurement and includes CLI startup, evidence writing, and the final answer
 
 **Jiggle test**:
 The experiment that measures how often a scripted click lands while something keeps moving the cursor. It settled the question of injection atomicity with a number.

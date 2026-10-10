@@ -6,6 +6,10 @@
 ;   - the user's foreground window and cursor restored when the script ends, unless the user took over
 ;     or the script called AcuKeepForeground() because its job was to leave a window showing
 ;   - UI Automation through the UIA class, so a script can find a control by name and act on it
+;   - AcuLaunch, which starts a program and returns the one new window it opened, and AcuWaitUntil, an observed
+;     wait that replaces a fixed Sleep
+;   - AcuTree and AcuScreenshot, the same dump and capture that tree.ahk and screenshot.ahk print, callable from
+;     inside an action chain so looking does not cost a separate run
 ; Scripts run under AutoHotkey's UI Access build, which can see and drive elevated windows. Windows starts such a
 ; program only through ShellExecute, with no standard output and without the launcher's environment, so the launcher
 ; passes an output file and ACU_HOME as leading arguments: the prelude sends stdout and stderr to the file, sets
@@ -229,8 +233,57 @@ AcuProcessAt(x, y) {
 }
 
 ; ---------------------------------------------------------------------------------------------------
+; Launch and wait
+
+; Starts a program and returns the one new top-level window matching winTitle, as an object with hwnd, pid, title,
+; class and process, so a script never guesses which window it opened. The windows that exist before the launch are
+; snapshotted and never selected. Throws when no new matching window appears within timeoutMs, or when several do.
+AcuLaunch(command, winTitle, timeoutMs := 10000) {
+    existing := Map()
+    for hwnd in WinGetList()
+        existing[hwnd] := true
+    Run command
+    deadline := A_TickCount + timeoutMs
+    found := []
+    loop {
+        found := []
+        for hwnd in WinGetList(winTitle)
+            if !existing.Has(hwnd)
+                found.Push(hwnd)
+        if (found.Length || A_TickCount >= deadline)
+            break
+        Sleep 50
+    }
+    if (found.Length = 0)
+        throw Error("no new window matching " winTitle " appeared within " timeoutMs " ms after: " command)
+    if (found.Length > 1)
+        throw Error(found.Length " new windows match " winTitle "; list the windows and select one by its observed title and class")
+    target := "ahk_id " found[1]
+    return {hwnd: found[1], pid: WinGetPID(target), title: WinGetTitle(target), class: WinGetClass(target), process: WinGetProcessName(target)}
+}
+
+; Polls predicate until it returns a true value, for at most timeoutMs, and returns that value, or 0 when the time
+; ran out. The observed wait that replaces a fixed Sleep: AcuWaitUntil(() => display.Name != before).
+AcuWaitUntil(predicate, timeoutMs := 2000, intervalMs := 25) {
+    deadline := A_TickCount + timeoutMs
+    loop {
+        value := predicate()
+        if value
+            return value
+        if (A_TickCount >= deadline)
+            return 0
+        Sleep intervalMs
+    }
+}
+
+; ---------------------------------------------------------------------------------------------------
 ; UI Automation
 
 ; Descolada's UIA-v2 library (MIT, see lib/UIA-LICENSE.txt). It costs about 30 ms per script and gives every
 ; script the accessibility tree: UIA.ElementFromHandle(target).FindElement({Type:"Button", Name:"Six"}).Invoke()
 #Include "%A_LineFile%\..\lib\UIA.ahk"
+
+; First-party: AcuTree (lib/dump.ahk) and AcuScreenshot (lib/capture.ahk). tree.ahk and screenshot.ahk are their
+; command-line wrappers, so a script can do in one run what the agent would otherwise spend a separate call on.
+#Include "%A_LineFile%\..\lib\dump.ahk"
+#Include "%A_LineFile%\..\lib\capture.ahk"

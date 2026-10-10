@@ -19,3 +19,11 @@ def test_preexisting_or_identity_mismatched_window_is_never_bound_for_cleanup():
         bind_owned_window('', {'hwnd': '100', 'pid': 8}, observed)
     with pytest.raises(ValueError, match='observed'):
         bind_owned_window('', {'window_id': '101'}, observed)
+
+
+def test_hidden_preexisting_frame_host_shell_reused_by_the_new_window_is_still_owned():
+    before = 'window=50 pid=9\nhiddenwindow=100 pid=8044\n'
+    observed = 'window=100 pid=8044\ncalculator=100\npid=8044\n'
+    assert bind_owned_window(before, {'window_id': '100'}, observed) == ('100', 8044)
+    with pytest.raises(ValueError, match='pre-existing'):
+        bind_owned_window('window=100 pid=8044\n', {'window_id': '100'}, observed)

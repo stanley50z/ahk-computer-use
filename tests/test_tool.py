@@ -25,7 +25,8 @@ def test_distributed_package_contains_the_launcher_and_ordinary_inspection_scrip
     assert result.returncode == 0, result.stdout + result.stderr
     with zipfile.ZipFile(next(tmp_path.glob("*.whl"))) as package:
         required = {"acu/__main__.py", "acu/cli.py", "acu/run.py", "acu/prelude.ahk",
-                    "acu/tree.ahk", "acu/screenshot.ahk", "acu/lib/UIA.ahk", "acu/lib/UIA-LICENSE.txt", "acu/SKILL.md"}
+                    "acu/tree.ahk", "acu/screenshot.ahk", "acu/lib/UIA.ahk", "acu/lib/UIA-LICENSE.txt",
+                    "acu/lib/dump.ahk", "acu/lib/capture.ahk", "acu/SKILL.md"}
         names = set(package.namelist())
         assert required <= names, required - names
         assert "acu/capabilities.json" not in names
@@ -57,6 +58,17 @@ def test_invalid_requests_fail_before_launching_ahk(args, message, acu_home):
     assert result.returncode == 2, result.stdout + result.stderr
     assert message in json.loads(result.stdout)["error"]
     assert not (acu_home / "logs" / "runs.jsonl").exists()
+
+
+def test_bundled_scripts_resolve_by_name_without_a_path(tmp_path, monkeypatch):
+    from acu.tool import resolve_script
+
+    monkeypatch.chdir(tmp_path)
+    assert resolve_script("tree.ahk") == REPO / "acu" / "tree.ahk"
+    assert resolve_script("screenshot.ahk") == REPO / "acu" / "screenshot.ahk"
+    assert resolve_script("missing.ahk") == tmp_path / "missing.ahk"
+    (tmp_path / "tree.ahk").write_text("", encoding="utf-8")
+    assert resolve_script("tree.ahk") == tmp_path / "tree.ahk", "a file of the same name in the current directory wins"
 
 
 def test_run_help_exposes_only_the_script_timeout_and_argument_separator():

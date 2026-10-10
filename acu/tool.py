@@ -7,6 +7,17 @@ from pathlib import Path
 
 from . import run as launcher
 
+HERE = Path(__file__).resolve().parent
+BUNDLED_SCRIPTS = ("tree.ahk", "screenshot.ahk")
+
+
+def resolve_script(script: str) -> Path:
+    """The script to run: the caller's path, or a bundled script named without a directory, so an agent need not know where ACU lives."""
+    path = Path(script).expanduser()
+    if path.name in BUNDLED_SCRIPTS and str(path.parent) == "." and not path.is_file():
+        return HERE / path.name
+    return path.resolve()
+
 
 @contextmanager
 def _desktop_lease():
@@ -41,7 +52,7 @@ def run(script: str, timeout: float = 30, args: list[str] | None = None) -> dict
         raise ValueError("script path must be non-empty")
     if not math.isfinite(timeout) or not 0 < timeout <= 300:
         raise ValueError("timeout must be finite and between 0 (exclusive) and 300 seconds")
-    path = Path(script).expanduser().resolve()
+    path = resolve_script(script)
     if not path.is_file():
         raise ValueError(f"script not found: {path}")
     arguments = [] if args is None else args

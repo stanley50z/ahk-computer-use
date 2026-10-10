@@ -56,7 +56,9 @@ The calculation tool call did not start until **37.230 seconds** into the run. T
 
 The action script also requests 27 sleeps of 90 ms plus a final 300 ms: **2.73 seconds of nominal fixed sleep requests**. Actual sleep time can differ because of timer granularity. This is a secondary opportunity, not an explanation of 50 seconds. Replace blind waits only with reliable observed-state waits; do not trade correctness for an unchecked burst of input.
 
-### What should change next—not implemented here
+### What should change next
+
+Implemented on 2026-10-10 after this analysis, in the working tree: the guides moved into the skill, the skill now asks for write-and-run in one shell call and for folding the first look into the launch script, the prelude gained `AcuLaunch` and `AcuWaitUntil`, and the bench measures task time up to the last computer-use call. Item 4 below was judged bench-specific and left out. None of this has been measured in a new trial yet.
 
 Keep the file-only `acu run` interface. Optimize how the calling agent uses it:
 

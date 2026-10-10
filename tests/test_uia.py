@@ -3,6 +3,7 @@
 import os
 import re
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -112,6 +113,42 @@ def test_tree_path_resolves_to_the_same_element(uia_window, tmp_path):
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert reported(result.stdout, "name") == "hit"
+
+
+def test_acu_tree_returns_the_same_dump_from_inside_a_script(uia_window, tmp_path):
+    result = run_script(tmp_path, f'FileAppend AcuTree("{uia_window.title}", {{type: "Button", find: "hit"}}), "*"\n')
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert reported(result.stdout, "window").startswith(f'{uia_window.hwnd} "{uia_window.title}"')
+    found = elements(result.stdout)
+    assert [e["name"] for e in found] == ["hit"] and "invoke" in found[0]["flags"]
+    assert reported(result.stdout, "truncated") == "no"
+
+
+def test_acu_tree_waits_for_a_fresh_chromium_window_to_answer(tmp_path):
+    """A Chromium window exists before its UI Automation provider is ready; the first dump used to fail with UIA_E_TIMEOUT."""
+    edge = next((p for p in (Path(os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)')) / 'Microsoft/Edge/Application/msedge.exe',
+                             Path(os.environ.get('ProgramFiles', r'C:\Program Files')) / 'Microsoft/Edge/Application/msedge.exe') if p.is_file()), None)
+    if edge is None:
+        pytest.skip('Microsoft Edge is not installed')
+    profile = tmp_path / 'edge-profile'
+    command = f'"{edge}" --user-data-dir="{profile}" --no-first-run --no-default-browser-check --new-window --app=about:blank'
+    body = (f"window := AcuLaunch('{command}', 'ahk_exe msedge.exe', 20000)\n"
+            'FileAppend "hwnd=" window.hwnd "`n", "*"\n'
+            'FileAppend AcuTree("ahk_id " window.hwnd, {type: "Document", max: 5}), "*"\n'
+            'WinClose "ahk_id " window.hwnd\n'
+            'WinWaitClose "ahk_id " window.hwnd, , 5\n')
+    try:
+        result = run_script(tmp_path, body)
+    finally:
+        # Only the Edge processes started with the throwaway profile; the user's own browser is never touched.
+        for proc in subprocess.run(["wmic", "process", "where", f"name='msedge.exe' and commandline like '%{profile.name}%'", "get", "processid"], capture_output=True, text=True).stdout.split():
+            if proc.isdigit():
+                subprocess.run(["taskkill", "/F", "/PID", proc], capture_output=True)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert reported(result.stdout, "window").startswith(reported(result.stdout, "hwnd"))
+    assert reported(result.stdout, "truncated") in ("no", "max")
 
 
 def test_tree_honours_max_and_says_so(uia_window):

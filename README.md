@@ -23,7 +23,7 @@ This installs the `acu` command in uv's user-level tools bin directory, with its
 
 Normal use is `acu run ...`, not a Python/package-manager wrapper. Python is the implementation language; the installed console launcher starts its interpreter internally. **uv is an installer/development tool, not part of the runtime command.** ACU has no Python runtime package dependencies; it uses the standard library and the existing AutoHotkey installation.
 
-For development, `uv sync` installs the quiet-test dependencies, `uv run pytest ...` runs focused checks, and `uv build` creates an installable wheel containing the launcher, scripts, vendored UIA library, skill, and static guides. These are setup/build commands, not the agent-facing interface. Uninstall the CLI with `uv tool uninstall acu-desktop`.
+For development, `uv sync` installs the quiet-test dependencies, `uv run pytest ...` runs focused checks, and `uv build` creates an installable wheel containing the launcher, scripts, vendored UIA library, and skill. These are setup/build commands, not the agent-facing interface. Uninstall the CLI with `uv tool uninstall acu-desktop`.
 
 ## Agent interface
 
@@ -31,11 +31,11 @@ ACU is CLI-only and exposes one operation: run an existing AutoHotkey v2 script 
 
 ```
 acu run action.ahk [--timeout 30] [-- arguments for the script]
-acu run "C:/absolute/path/acu/tree.ahk" -- "ahk_id 12345" --find Save
-acu run "C:/absolute/path/acu/screenshot.ahk" -- app "ahk_id 12345"
+acu run tree.ahk -- "ahk_id 12345" --find Save
+acu run screenshot.ahk -- app "ahk_id 12345"
 ```
 
-Use absolute paths from an agent session. Arguments after `--` are literal strings passed to `A_Args`. `tree.ahk` and `screenshot.ahk` are ordinary scripts passed to the same command, not separate operations. A screenshot script prints its saved PNG path and coordinate mapping in `output`; read the PNG separately. Authoring and inspection guidance is in `acu/guides/`.
+Use absolute paths for your own scripts from an agent session. Arguments after `--` are literal strings passed to `A_Args`. `tree.ahk` and `screenshot.ahk` are ordinary scripts passed to the same command, not separate operations; named without a directory, they resolve to the bundled copies unless a file of that name exists in the current directory. A screenshot script prints its saved PNG path and coordinate mapping in `output`; read the PNG separately. Authoring and inspection guidance is in `acu/SKILL.md`, which is the complete agent-facing manual.
 
 There is no server or MCP integration, inline-code input, engine selector, maintained-script-ID registry, discovery, or description operation. Other operations require a separate design decision before implementation.
 
@@ -84,13 +84,16 @@ The trailer is always the last line. The prelude's own notes, such as an error r
 - No injected delays: `SetMouseDelay -1` and `SetDefaultMouseSpeed 0`. Clicks and moves are single jumps even when AutoHotkey falls back from SendInput to SendEvent, which it does whenever another AutoHotkey script on the machine has a keyboard or mouse hook.
 - Runtime errors are printed with their message, file, line, and stack, and the script exits with code 1. No dialog ever appears. Load-time syntax errors are printed the same way by AutoHotkey itself, and load-time warnings, such as a call to a function that does not exist, go to the output too. By default those warnings are modal dialogs that appear before the script has a window, so nothing could close them.
 - The `UIA` class from Descolada's UIA-v2 library, so a script can find a control by name and act on it without the pointer. See below.
+- `AcuLaunch(command, winTitle, timeoutMs := 10000)` starts a program and returns the one new top-level window matching `winTitle` as an object with `hwnd`, `pid`, `title`, `class`, and `process`. Pre-existing windows are snapshotted first and never selected; no new window, or several, is an error rather than a guess. Every fresh agent in Testbench 1 had hand-written this loop, and one got it wrong.
+- `AcuWaitUntil(predicate, timeoutMs := 2000, intervalMs := 25)` polls until the predicate returns a true value and returns it, or 0 after the timeout: an observed wait in place of a fixed `Sleep`.
+- `AcuTree(target, {find, type, depth, max})` returns the same dump `tree.ahk` prints, as text, and `AcuScreenshot({app: target} | {monitor: n} | {rect: [x1, y1, x2, y2]}, outPath, maxSide)` saves the same PNG `screenshot.ahk` does and returns its mapping. Both live in `acu/lib/` and let an action chain end with the evidence it needs; in Testbench 1 the separate screenshot call was the last non-essential model turn.
 - No tray icon, and several scripts may run at once.
 - The foreground window and cursor position from the start of the script are restored when it ends, including on errors and on the watchdog's close request. See the rules below.
 - UI Access. The script runs under AutoHotkey's signed UI Access build, so an elevated window, such as an installer running as administrator, is in the tree and accepts input, without the script being elevated and without a UAC prompt. The UAC consent prompt itself is on a separate desktop and stays out of reach. Windows starts a UI Access program only through ShellExecute, which gives it no standard output, so the launcher names an output file in a leading argument that the prelude strips and redirects stdout and stderr into. Load-time errors and warnings happen before the prelude runs, so the launcher first loads the script without running it under the plain build, which has a pipe; a syntax error ends there with exit code 2.
 
 ## Seeing the screen
 
-`acu/screenshot.ahk` is the agent's eyes. It saves a PNG and reports where that image sits on the screen, so a point the agent picks in the image converts to a click position mechanically.
+`acu/screenshot.ahk` is the agent's eyes. It saves a PNG and reports where that image sits on the screen, so a point the agent picks in the image converts to a click position mechanically. The script only parses arguments; the capture is `AcuScreenshot` in `acu/lib/capture.ahk`, which every script can call.
 
 ```
 python acu/run.py acu/screenshot.ahk -- fullscreen [monitor]
@@ -117,7 +120,7 @@ scale=3
 
 ## Finding controls by name
 
-`acu/tree.ahk` lists a window's controls from its accessibility tree, the same tree a screen reader uses. Modern applications draw their own buttons inside one blank window, so this is the only programmatic way to find them.
+`acu/tree.ahk` lists a window's controls from its accessibility tree, the same tree a screen reader uses. Modern applications draw their own buttons inside one blank window, so this is the only programmatic way to find them. The script only parses arguments; the dump is `AcuTree` in `acu/lib/dump.ahk`, which every script can call. A Chromium or Electron window exists before its UI Automation provider answers, and the first full-subtree request then fails with `UIA_E_TIMEOUT`; the dump nudges the provider with a plain root query and retries for up to five seconds before reporting that the application may still be starting.
 
 ```
 python acu/run.py acu/tree.ahk -- "<WinTitle>" [--find <text>] [--type <Type>] [--depth 25] [--max 300]
@@ -140,9 +143,11 @@ Every script has the `UIA` class, so acting needs no include:
 root := UIA.ElementFromHandle("Calculator")
 root.FindElement({Type:"Button", Name:"Six"}).Invoke()      ; by name
 root.FindElement({AutomationId:"num6Button"}).Invoke()         ; by id
-root.ElementFromPath("2,2,2,5,3").Click()                       ; by path from the dump; Click moves the pointer
+root.ElementFromPath("2,2,2,5,3").Invoke()                      ; by path from the dump
 root.FindElement({Type:"Edit"}).Value := "text"                ; a control flagged value
 ```
+
+`element.Click()` without an argument is semantic as well: the library routes it to Invoke, Toggle, or Select. Pointer input is `element.Click("left")`, which moves the cursor to the element's center and needs the window in the foreground.
 
 Measured on Calculator: one button by name in 47 ms, all 48 buttons in 31 ms, the whole tree of 77 elements in 32 ms, and 6 × 7 = through `Invoke()` alone with the result read back from the display element. A Chrome window with 136 elements took 0.8 s, because the dump fetches the whole subtree in one round trip before applying `--depth` and `--max`; the budget bounds the output, not the fetch.
 
@@ -162,7 +167,7 @@ Scripts should end at a stable state. A script whose purpose is to leave an appl
 
 ## Third-party code
 
-`acu/lib/UIA.ahk` is Descolada's UIA-v2 library, copied from https://github.com/Descolada/UIA-v2 at commit 2846a9b (2026-04-23), MIT, license in `acu/lib/UIA-LICENSE.txt`. The prelude includes it, which costs about 30 ms per script. One line is changed, marked `; ACU patch:` in the element indexer: a single-segment numeric path such as `"3"` now resolves like `"3,2"` already did, so every path the tree dump prints is accepted by `ElementFromPath`. To update, copy the upstream file over it, re-apply that line, and run the tests.
+`acu/lib/dump.ahk` and `acu/lib/capture.ahk` are first-party. `acu/lib/UIA.ahk` is Descolada's UIA-v2 library, copied from https://github.com/Descolada/UIA-v2 at commit 2846a9b (2026-04-23), MIT, license in `acu/lib/UIA-LICENSE.txt`. The prelude includes it, which costs about 30 ms per script. One line is changed, marked `; ACU patch:` in the element indexer: a single-segment numeric path such as `"3"` now resolves like `"3,2"` already did, so every path the tree dump prints is accepted by `ElementFromPath`. To update, copy the upstream file over it, re-apply that line, and run the tests.
 
 ## Debugging artifacts
 
@@ -177,7 +182,7 @@ Set `ACU_HOME` to move these locations. ACU does not log script text, only its S
 
 ## Computer-use test bench
 
-`bench/` prepares isolated Codex/native, Pi/CUA, and Pi/ACU profiles, all using GPT-6.1 at low reasoning. Each live trial needs approval and records raw transcripts, token usage, timing, verification and cleanup. See [bench/README.md](bench/README.md) for commands and measurement limits, and [the first Calculator results](docs/reports/bench-calculator-2026-10-09.md). The two initial ACU attempts did not reach calculation: one stopped on confirmed concurrent mouse use, and one used the wrong top-level window process assumption.
+`bench/` prepares isolated Pi/ACU, Claude Code/ACU, Pi/CUA, and Codex/native profiles. The GPT harnesses use GPT-6.1 at low reasoning; Claude Code runs only Claude models, so its arm uses Opus 5.5 at low effort. Each live trial needs approval and records raw transcripts, token usage, timing, verification and cleanup. The primary measurement is task time, from the actor's session start to its last computer-use call; writing result evidence and the final answer are outside it. See [bench/README.md](bench/README.md) for commands and measurement limits, [the first Calculator results](docs/reports/bench-calculator-2026-10-09.md), and [the latest complete Testbench 1](docs/reports/testbench-1-2026-10-10.md). The two initial ACU attempts did not reach calculation: one stopped on confirmed concurrent mouse use, and one used the wrong top-level window process assumption.
 
 ## Tests
 

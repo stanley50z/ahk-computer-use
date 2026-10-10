@@ -37,20 +37,29 @@ def test_skill_teaches_window_discovery_before_control_lookup():
     text = SKILL_FILE.read_text(encoding="utf-8")
     discovery = text.split("### 1. Look", 1)[1].split('acu run ', 1)[0]
 
-    for required in ("WinGetList()", "WinGetTitle", "WinGetClass", "WinGetProcessName", "ahk_id",
+    for required in ("AcuLaunch(", "WinGetList()", "WinGetTitle", "WinGetClass", "WinGetProcessName", "ahk_id",
                      "CalculatorApp.exe", "ApplicationFrameHost.exe"):
         assert required in discovery, f"window discovery must explain {required} before tree lookup"
-    assert "new matching handle" in discovery, "new-window tasks must preserve pre-existing windows"
+    assert "pre-existing window" in discovery, "new-window tasks must preserve pre-existing windows"
     assert "observed" in discovery, "window identity must be observed rather than guessed"
-    for required in ("guides/scripting.md", 'acu run "<script.ahk>"', "whole scripted action chain"):
+    for required in ('acu run "<absolute script.ahk>"', "whole scripted action chain"):
         assert required in text, f"skill must teach the script-first tool interface: {required}"
     assert "`discover`" not in text and "`describe`" not in text
     assert "MCP" not in text and "uv run" not in text and "python -m acu" not in text
-    assert len(text.splitlines()) <= 120, "keep the skill compact; longer material belongs in README"
+
+
+def test_skill_is_self_contained_and_spends_turns_on_looking_not_ceremony():
+    """Guard the Testbench 1 findings: separate guide reads, write-then-run turns, blind sleeps, and the Click() claim."""
+    text = SKILL_FILE.read_text(encoding="utf-8")
+
+    assert "guides/" not in text, "everything an agent needs before its first script lives in the skill itself"
+    for required in ("one shell call", "heredoc", "AcuLaunch(command, winTitle", "AcuWaitUntil(predicate", "AcuTree(target", "AcuScreenshot({app", "acu run tree.ahk",
+                     "element.Click()", 'Click("left")', "screen-reader text", "truncated=", "scale=", "fullscreen [monitor]"):
+        assert required in text, f"skill must cover {required}"
 
 
 def test_skill_names_only_files_that_exist_beside_it():
-    for script in ("run.py", "screenshot.ahk"):
+    for script in ("run.py", "prelude.ahk", "tree.ahk", "screenshot.ahk"):
         assert script in SKILL_FILE.read_text(encoding="utf-8")
         assert (SKILL_DIR / script).is_file()
 

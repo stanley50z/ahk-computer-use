@@ -157,6 +157,24 @@ def test_app_capture_of_a_window_windows_scales_matches_what_is_on_screen(open_w
     assert difference < 6, f"the rendered window differs from the screen by {difference:.1f} per channel on average"
 
 
+def test_acu_screenshot_captures_a_window_from_inside_a_script(open_window, tmp_path):
+    title = f"ACU in-script shot {os.getpid()}"
+    target = open_window(title, 100, 100, backcolor="2E8B57")
+    out = tmp_path / "in-script.png"
+    script = tmp_path / "shot.ahk"
+    script.write_text(f'shot := AcuScreenshot({{app: "{title}"}}, "{out.as_posix()}")\nFileAppend shot.text "returned=" shot.saved "|" shot.x "," shot.y " " shot.w "x" shot.h "`n", "*"\n', encoding="utf-8")
+
+    result = run_launcher(script, "--timeout", "15")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    x, y, w, h = source_rect(result.stdout)
+    assert (x, y, w, h) == visible_frame(target)
+    assert reported(result.stdout, "saved") == str(out)
+    assert reported(result.stdout, "returned") == f"{out}|{x},{y} {w}x{h}"
+    with Image.open(out) as img:
+        assert img.size == (w, h)
+
+
 def test_app_reports_a_missing_window(tmp_path):
     result = shoot("app", "ahk_class NoSuchWindowClass_ACU", "--out", str(tmp_path / "none.png"))
 
