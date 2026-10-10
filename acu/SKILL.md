@@ -1,90 +1,87 @@
 ---
 name: acu
-description: Operate this Windows desktop through AutoHotkey v2 scripts run by the ACU launcher. Look by listing a window's controls from its accessibility tree, or with a screenshot of one display, one window, or one rectangle; act by writing one short script per action chain, by control name before coordinates; check the effect. Use when asked to click, type into, open, read, or drive a Windows application or the desktop on this machine, or when a task names ACU or AutoHotkey.
+description: Operate this Windows desktop through ACU's script-first CLI or MCP tools. Discover maintained scripts and instructions, execute a short AutoHotkey v2 action chain, and check the observed result. Use when asked to click, type into, open, read, or drive a Windows application or the desktop on this machine, or when a task names ACU or AutoHotkey.
 ---
 
 # ACU
 
-You supply the intelligence, ACU supplies the hands. Every action is a plain AutoHotkey v2 script that you write to a file and run through `run.py` in this directory. Use absolute paths to `run.py`, `tree.ahk`, and `screenshot.ahk`; they live beside this file.
+You supply the intelligence, ACU supplies the hands. The primary action is a whole scripted action chain in one execution, not a tool call for every button. ACU manages inline script files and runs them through its launcher protections. AHK is the only execution engine currently supported.
+
+## Call ACU
+
+Use the connected ACU MCP tools (`discover`, `describe`, `run`, `execute`, `tree`, `screenshot`). In Pi their names are `mcp__acu__<operation>`. If MCP is not configured, use the CLI: `uv run --project "<absolute repo root>" python -m acu <operation>`. Resolve this skill directory's link and take its parent to locate the repository. The installed console command is `acu`; examples below use that spelling.
+
+Find relevant capabilities with `discover(query)` / `acu discover "query"`; summaries distinguish maintained implementations from instructions only. Read a selected capability with `describe(id)` / `acu describe <id>`. Run a maintained implementation with `run(id, parameters)` / `acu run <id> --params '<JSON object>'`. Instructions-only capabilities require you to draft code and call `execute`; ACU does not generate a fallback script. Discovery grants no permission to act.
+
+Before drafting your first script, describe `ahk.action-chain` for targeting, waits, UIA patterns, restore, and verification guidance. Use only the desktop actions the user authorized.
 
 ## The loop
 
-Look, act, check. Repeat until the user's postcondition is observed. The task is done when a window state, printed text, or screenshot shows the result, never because a script exited 0.
+Look, act, check. Repeat until the user's postcondition is observed. The task is done when a window state, printed text, or screenshot shows the result, never because an execution exited zero.
 
 ### 1. Look
 
-Skip this when you already know the window and the control. Otherwise list the window's elements first:
+Find the window before its controls. `Run` returns before a program's window appears; allow up to 10 seconds. Discover by title or class, then retain the exact handle (`ahk_id`) for the tree, waits, activation and cleanup. Use an executable filter only when the top-level window's process name has been observed: Calculator's app process can be `CalculatorApp.exe` while its window belongs to `ApplicationFrameHost.exe`.
 
-```
-python run.py tree.ahk -- "<WinTitle>" [--find <text>] [--type <Type>] [--depth 25] [--max 300]
-```
+Run the maintained `windows.list` capability to list identities without activation. In a script, the equivalent is:
 
-One line per element, depth first:
-
-```
-2,2,2,5,3 Button "Six" id="num6Button" @2073,1917 157x71 invoke
-2,2,2,2 Text "Display is 0" id="CalculatorResults" @1700,1300 400x80
+```autohotkey
+for hwnd in WinGetList() {
+    target := "ahk_id " hwnd
+    FileAppend hwnd " | " WinGetTitle(target) " | " WinGetClass(target) " | " WinGetProcessName(target) "`n", "*"
+}
 ```
 
-Path, type, name, id, value in full, screen bounds, then the actions the element supports (`invoke toggle value select expand scroll`), which make it a control, and its state (`disabled offscreen focused selected`). `value` means writable. A name or id is what you put in the script; the path is for a control that has neither. Quoted fields are printed as AutoHotkey string contents, so paste them between quotes exactly as shown. `--find` keeps elements whose name or id contains the text and `--type` keeps one type; use them when a dialog is mostly file lists. `elements=` and `truncated=` close the dump: `truncated=max` means raise `--max` or narrow the dump, `truncated=depth` means raise `--depth`; `max+depth` reports both limits.
+Select the intended window from its observed title/class and inspect its tree. For a new-window task, snapshot existing handles before `Run` and select a new matching handle; preserve existing windows. If no unique intended window can be identified, report that ambiguity instead of acting on a guess. A store app may restore previous documents, so check its content before typing.
 
-Take a screenshot when the tree is empty or nameless, as in canvas apps, games, and icon-only toolbars, or when you need to see rather than list:
+Skip the tree dump when you already know the window and control. Otherwise call `tree(target, find?, type?, depth?, max?)`, or:
 
 ```
-python run.py screenshot.ahk -- fullscreen [monitor]
-python run.py screenshot.ahk -- app "<WinTitle>"
-python run.py screenshot.ahk -- custom <x1> <y1> <x2> <y2>
+acu tree "<WinTitle or ahk_id>" [--find <text>] [--type <Type>] [--depth 25] [--max 300]
 ```
 
-It prints `saved=`, `image=`, `source=X,Y WxH`, and `scale=`. Read the saved PNG. A point (px, py) in the image is the screen point (X + px * scale, Y + py * scale). `app` renders a window even when another covers it and never changes the foreground. `custom` with `--max 0` is the close look at a small area.
+Describe `uia.tree` when interpreting a dump: it explains control-view paths, full values, action/state flags, AHK-escaped names, and truncation. Prefer named controls and semantic UIA actions, then element bounds, then screenshot coordinates. Before pointer input or keys, activate the target and verify `WinWaitActive`; throw rather than click into another application.
+
+Use `screenshot` for an empty/nameless tree, canvas content, or visual confirmation. Describe `screen.capture` for capture modes and coordinate mapping:
+
+```
+acu screenshot --mode fullscreen [--monitor 1]
+acu screenshot --mode app --target "<WinTitle or ahk_id>"
+acu screenshot --mode custom --rect <x1> <y1> <x2> <y2>
+```
+
+MCP returns the PNG and metadata; CLI returns its saved path. An explicit `out` may overwrite a file; use only an authorized path. An image point (px,py) is the screen point (sourceX + px * scale, sourceY + py * scale). App capture never activates the window. Use `max=0` / `--max 0` for an unscaled close look.
 
 ### 2. Act
 
-Write the whole chain as one script when you can predict the intermediate states: press the button, wait for the dialog it opens, act inside the dialog. When you cannot predict them, write one short script, then look again. Run it:
+Write the whole chain when you can predict intermediate states: press a button, wait for its dialog, act inside it. Otherwise execute a short script, then look again.
 
+MCP example (plain AHK v2, no boilerplate):
+
+```json
+{"code":"root := UIA.ElementFromHandle(\"<observed Calculator target>\")\nfor buttonId in [\"clearButton\", \"num6Button\", \"multiplyButton\", \"num7Button\", \"equalButton\"]\n    root.FindElement({Type:\"Button\", AutomationId:buttonId}).Invoke()", "engine":"ahk", "timeout":30}
 ```
-python run.py <script.ahk> [--timeout 30]
-```
 
-Reach for the control in this order:
+For the CLI, supply code on stdin with `acu execute --file - [--timeout 30]`. `--code` supports short inline snippets; command-line arguments may be visible to other processes, so prefer stdin for sensitive text. An existing script can be run with `acu execute --file "<absolute script.ahk>"`; caller-owned files are preserved. Put `--args` last to forward literal strings to `A_Args`.
 
-1. **By name, no pointer.** `root := UIA.ElementFromHandle("<WinTitle>")`, then `root.FindElement({Type:"Button", Name:"Six"}).Invoke()`. Use `{AutomationId:"num6Button"}` when the dump shows an id, and `root.ElementFromPath("2,2,2,5,3")` for a nameless control. `.Value := "text"` sets a control flagged `value`; `.Toggle()` flips a `toggle`; `.Select()` picks a `select`; `.Expand()` opens an `expand`. These use semantic actions rather than pointer input; the application may still change focus or open a window. Ids repeat inside a window, so combine type, name, and id, or find a parent first and search within it: `tab := root.FindElement({Type:"TabItem", Name:"notes.txt. Unmodified."})`, then `tab.FindElement({Type:"Button", Name:"Close Tab"}).Invoke()`. That is also how you close only what you opened.
-2. **By bounds.** `.Click()` on an element from the tree clicks its center. Activate the window first.
-3. **By screenshot coordinates.** `Click x, y` with the screen point you computed. Activate the window first.
-
-Script shape:
-
-- Plain AutoHotkey v2, no boilerplate. The prelude already set screen coordinates, per-monitor DPI awareness, zero mouse delay, an error handler, end-of-script restore, and the `UIA` class.
-- Name the target window with WinTitle criteria: a title fragment, `ahk_exe notepad.exe`, or `ahk_id` with a handle. Matching is case sensitive, so copy the title a dump printed or use the handle. Before any pointer click or keystroke: `WinActivate`, then `WinWaitActive(target, , 2)`, and throw when it returns 0. A click aimed at a window that is not in front is a click into the wrong application.
-- Wait with `WinWait` and `WinWaitActive` and timeouts of about 2 seconds. `Sleep` only when nothing observable marks the moment. A script should finish in well under the 30 second watchdog.
-- Type text with `SendText`, which sends every character literally. Use `Send` only for keys and chords, such as `{Enter}` or `^s`.
-- Variable names share one namespace with functions and classes. `edit`, `click`, `send`, `run`, `menu`, and `gui` are taken; use `field`, `target`, `box`, `bar`.
-- Print what you observe with `FileAppend "title=" WinGetTitle("A") "`n", "*"` so the check happens inside the script and reaches you in the output.
-- Normally end at a stable state: no open menu, no half-typed field. The prelude restores the user's foreground window and cursor when the script exits. When the task is to leave an application showing, call `AcuKeepForeground()` anywhere in the script; the cursor still goes back. It also keeps transient state alive for the next look: an opened menu, an address bar switched to edit mode.
+End at a stable state. The prelude restores the user's foreground window and cursor. Call `AcuKeepForeground()` when the purpose is to leave an application or transient menu showing; the cursor still returns.
 
 ### 3. Check
 
-Read the state back through the tree in the same script: the `.Name` of a display text, the `.Value` of a field, the `.ToggleState` of a check box. An `Invoke()` that returned is not proof the application acted, and a pattern call returns before the control repaints, so read back after a short wait or poll for up to a second.
+Print facts with `FileAppend ..., "*"` and read state back in the script. Poll briefly after UIA patterns: an Invoke returning is not proof of effect. The JSON result includes `outcome`, `exit_code`, `output`, `trailer`, `duration_ms`, and artifact paths. MCP also sets `isError` on failed execution. A `cleanup_error` preserves the real execution outcome and identifies a leftover script; do not repeat an already-completed chain.
 
-The last line of the output is the launcher's verdict; the exit code matches it.
+- `ok`, exit 0: the script ran; observed facts establish whether it worked.
+- `error`, exit 1: runtime error with location and stack; fix the failing script.
+- `error`, exit 2: parse error; nothing ran.
+- `timeout`, exit 124: watchdog fired; inspect before acting again.
+- `error` without an execution outcome: invalid request, unavailable engine, or tool failure; read the diagnostic. A `busy` error means another tool execution owns the desktop: inspect before retrying.
 
-| Last line | Exit | Meaning |
-| --- | --- | --- |
-| `[acu] ok` | 0 | The script ran. Your printed facts say whether it worked. |
-| `[acu] exit 1` after `[acu] error: ... at file:line` | 1 | A runtime error. Fix the script at that line. |
-| `[acu] exit 2` after `file (line) : ==> message` | 2 | The script did not parse. Nothing ran. |
-| `[acu] timeout` | 124 | A wait never ended. Look again before acting. |
+If output says `restore skipped: cursor moved by someone else`, stop and ask before continuing. If it says an unrelated foreground was left alone, look before acting again.
 
-Two prelude notes can appear in the body:
+## Operational facts
 
-- `[acu] restore skipped: cursor moved by someone else` means the user took the mouse during the script. Stop and ask before continuing.
-- `[acu] foreground left on <process>` means an unrelated window came forward. Look before acting again.
-
-## Facts the environment does not confess
-
-- Elevated windows, such as an installer running as administrator, are in the tree and accept input: scripts run with UI Access. The UAC consent prompt itself is on a separate desktop that nothing reaches, so when one appears, tell the user and wait.
-- The launcher waits for the script, not for programs the script starts. `Run "notepad.exe"` returns at once; a store app takes seconds to appear and may restore previous documents, so `WinWait` for up to 10 seconds, `WinActivate`, `WinWaitActive`, then check the content before typing.
-- In a file dialog, set `File name:` to the full path and invoke `Save`; the address bar is only for browsing, and it is a toolbar until `Send "!d"` turns it into an Edit named `Address`. The dialog closing is not the save: poll for the file, or for the window title to show the new name, before reading it back.
-- A tree dump fetches the whole window before applying its budget. A large browser page costs about a second; a desktop application tens of milliseconds.
-- Scripts run concurrently. Two of yours at the same time share one cursor and one keyboard focus, so run one at a time.
-- Artifacts: run log `%LOCALAPPDATA%\ACU\logs\runs.jsonl`, crash reports with full output in `%LOCALAPPDATA%\ACU\crashes\`, screenshots taken without `--out` in `%LOCALAPPDATA%\ACU\shots\` with only the newest 30 kept. Script text is never logged.
+- Tool executions share cursor/focus and are serialized across CLI and MCP; overlapping calls fail busy, rather than queue stale actions. The low-level `run.py` launcher remains available for development but does not enforce this tool-level lease.
+- UI Access reaches elevated windows, not the secure-desktop UAC prompt.
+- Scripts inherit only `ACU_HOME`; pass other values in arguments. The launcher waits for its script, not programs that script starts.
+- Run log: `%LOCALAPPDATA%\ACU\logs\runs.jsonl`. MCP diagnostics: `logs\mcp.log`. Crash reports with output/stacks: `crashes\`. Managed screenshots: `shots\`, newest 30 kept. Set `ACU_HOME` to relocate them. Script text is never deliberately logged; output/crash reports may contain sensitive fragments.
+- Implementation files beside this skill: `run.py`, `tree.ahk`, `screenshot.ahk`. CLI/MCP setup and detailed launcher behavior are in the repository's `README.md`.

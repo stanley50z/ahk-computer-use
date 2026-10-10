@@ -174,8 +174,8 @@ def run_script(script: Path, timeout: float, args: Sequence[str] = ()) -> Run:
     return Run(output, "error", exit_code.value, duration_ms, f"[acu] exit {exit_code.value} {duration_ms}ms")
 
 
-def record(script: Path, run: Run, timeout: float) -> None:
-    """Append the run to logs/runs.jsonl and, unless it ended cleanly, write a crash report with its output."""
+def record(script: Path, run: Run, timeout: float) -> Path | None:
+    """Append the run log; return the failure report's path so CLI/MCP callers can expose it."""
     home = acu_home()
     stamp = datetime.now().astimezone()
     digest = hashlib.sha256(script.read_bytes()).hexdigest()
@@ -188,6 +188,7 @@ def record(script: Path, run: Run, timeout: float) -> None:
         "duration_ms": run.duration_ms,
         "timeout_s": timeout,
     }
+    report = None
     if run.outcome != "ok":
         crashes = home / "crashes"
         crashes.mkdir(parents=True, exist_ok=True)
@@ -198,6 +199,7 @@ def record(script: Path, run: Run, timeout: float) -> None:
     logs.mkdir(parents=True, exist_ok=True)
     with (logs / "runs.jsonl").open("a", encoding="utf-8") as log:
         log.write(json.dumps(entry) + "\n")
+    return report
 
 
 def main(argv: Sequence[str] | None = None) -> int:

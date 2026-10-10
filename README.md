@@ -1,13 +1,79 @@
 # ACU
 
-A minimal computer-use tool for AI agents, built on AutoHotkey v2. The agent writes a plain AutoHotkey v2 script for each logical action chain; ACU runs it with the right defaults, a watchdog, and captured output. The agent supplies the intelligence, ACU supplies the hands.
+A script-first computer-use tool for AI agents, available through a JSON CLI and MCP. The agent executes a plain AutoHotkey v2 script for each logical action chain, or discovers a maintained script and runs it with parameters. ACU manages execution with the right defaults, a watchdog, and captured output. The agent supplies the intelligence, ACU supplies the hands. AHK is the first and currently only execution engine.
 
 Vocabulary: `CONTEXT.md`. Decisions and why: `docs/adr/`. Design record: `docs/design/acu-brainstorm-2026-10-08.md`. Research notes: `docs/research/`.
 
 ## Requirements
 
 - Windows with AutoHotkey v2 installed with its UI Access option, so that `C:\Program Files\AutoHotkey\v2\AutoHotkey64_UIA.exe` exists beside `AutoHotkey64.exe`. Or set `ACU_AHK` to the UI Access executable; the plain build must sit beside it. Windows grants UI Access only to a signed program under Program Files, so a copy elsewhere will not do.
-- Python 3.12 or newer. The launcher uses only the standard library.
+- Python 3.12 or newer. The low-level launcher uses only the standard library; the tool uses `jsonschema` and the official Python MCP SDK.
+- [uv](https://docs.astral.sh/uv/) for the checkout commands below. An installed wheel also provides the standalone `acu` console command.
+
+## Install the tool
+
+```
+uv sync
+uv run python -m acu --help
+```
+
+Use `uv run python -m acu` inside the checkout. From another directory, use `uv run --project "<absolute checkout path>" python -m acu`. This also avoids `uv run acu` mistaking this checkout's `acu/` directory for a Python script. `uv build` creates an installable wheel containing the launcher, scripts, vendored UIA library, skill, and capability guides.
+
+## Agent interface
+
+Scripting is the primary interface: one call executes a predictable action chain, not one tool call per button. The CLI and MCP tools share the same implementation.
+
+| CLI operation / MCP tool | Purpose |
+| --- | --- |
+| `discover` | Find compact capability summaries, with a `runnable` flag |
+| `describe` | Load one capability's instructions and JSON parameter contract |
+| `run` | Execute its maintained implementation with validated parameters |
+| `execute` | Execute agent-written code or an existing script under the launcher |
+| `tree` | Inspect an observed window's controls |
+| `screenshot` | Capture a display, window, or rectangle; MCP also returns the image |
+
+Bundled capabilities are `windows.list`, `uia.tree`, `screen.capture`, and the instructions-only `ahk.action-chain`. The agent remains responsible for choosing actions and writing code. ACU never generates code or silently substitutes an implementation when a capability fails. Only bundled capabilities are loaded; no third-party capability installation or plugin framework is implemented.
+
+```
+uv run python -m acu discover window
+uv run python -m acu describe ahk.action-chain
+uv run python -m acu run windows.list
+uv run python -m acu run uia.tree --params '{"target":"ahk_id 12345","find":"Save"}'
+uv run python -m acu execute --file action.ahk --timeout 30 --args "literal argument"
+uv run python -m acu tree "ahk_id 12345" --find Save
+uv run python -m acu screenshot --mode app --target "ahk_id 12345"
+```
+
+Inline scripts can use ``execute --code 'FileAppend "hello`n", "*"'``. For multiline code or sensitive text, use `execute --file -` and supply UTF-8 code on stdin: command-line strings can be visible to other processes. MCP `execute` accepts exactly one of `code` or `file`, plus `engine` (currently `ahk` only), `args`, and `timeout`. ACU removes its own inline-script temporary directory on success, script error, timeout, or tool error; existing caller-owned scripts are preserved. If file sharing prevents cleanup, `cleanup_error` and `artifacts.leftover_script` report the leftover without replacing the actual execution outcome; inspect rather than repeat an already-completed chain. An abruptly killed Python process may also leave a temporary script under `ACU_HOME/tmp`. ACU is not a sandbox or an access-control boundary.
+
+CLI stdout is one JSON result. Execution results contain `engine`, `outcome`, `exit_code`, `output`, `trailer`, `duration_ms`, and `artifacts` paths; screenshot results also contain `screenshot` with `saved`, `image`, `source`, and `scale`. CLI exit codes preserve the script's exit code (124 for timeout); invalid requests exit 2 and tool infrastructure failures exit 1. MCP returns matching `structuredContent` and text, sets `isError` for failed execution or invalid requests, and includes PNG image content for screenshots. Execution success never claims the task's effect was verified.
+
+Tool execution timeouts must be finite and greater than zero, at most 300 seconds. Across CLI/MCP processes, a Windows session-local mutex rejects overlapping executions with a `busy` error; actions are not queued against potentially stale state. The existing low-level launcher does not take this tool-level lease. Discovery and description do not operate the desktop or confer permission to do so.
+
+### Connect MCP
+
+The stdio server is launched by the calling harness, which owns its lifetime:
+
+```
+uv run --project "<absolute checkout path>" python -m acu mcp
+```
+
+There is no independent daemon, localhost listener, or persistent desktop-control session. Each action chain still runs in a short-lived AHK process. This checkout includes `.pi/mcp.json`, enabling direct ACU tool exposure only inside this trusted project. Run `/reload` in Pi after changing configuration; tools are named `mcp__acu__execute`, `mcp__acu__discover`, etc. The current session's already-declared tools do not change until the harness reloads.
+
+For another MCP harness, use its stdio configuration with this command and arguments (replace the checkout path):
+
+```json
+{
+  "mcpServers": {
+    "acu": {
+      "command": "uv",
+      "args": ["run", "--frozen", "--project", "C:/path/to/ahk-computer-use", "python", "-m", "acu", "mcp"]
+    }
+  }
+}
+```
+
+Set the harness's request timeout above the script timeout plus startup/close grace. The Pi configuration allows 360 seconds for the maximum 300-second execution. MCP discovery and tree tools have read-only annotations; arbitrary execution, maintained-script `run`, and `screenshot` are conservatively marked potentially destructive. Screenshot capture can overwrite an explicitly selected `out` file; choose only an authorized path. Harness permission checks still apply. No machine-wide harness configuration is changed by installation.
 
 ## Install the skill
 
@@ -21,7 +87,9 @@ That creates two directory junctions (symlinks outside Windows), `.agents/skills
 
 To make the skill available from every directory on the machine, `python install_skill.py --global` links into `~/.agents/skills`, `~/.claude/skills`, and `~/.config/opencode/skills` instead. Not used while ACU is being tested.
 
-## Usage
+## Low-level launcher usage
+
+Agents normally use the CLI or MCP interface above. The existing launcher remains the implementation and development entry point:
 
 ```
 python acu/run.py script.ahk [--timeout 30] [-- arguments for the script]
@@ -134,22 +202,29 @@ Scripts should end at a stable state. A script whose purpose is to leave an appl
 | --- | --- |
 | Run log, one JSON line per run | `%LOCALAPPDATA%\ACU\logs\runs.jsonl` |
 | Crash reports for errors and timeouts, with the full output | `%LOCALAPPDATA%\ACU\crashes\<timestamp>-<script hash>.json` |
+| Tool infrastructure failures with Python stack traces | `%LOCALAPPDATA%\ACU\crashes\<timestamp>-tool.json` |
+| MCP server diagnostics | `%LOCALAPPDATA%\ACU\logs\mcp.log` |
+| Inline scripts, removed when an execution returns | `%LOCALAPPDATA%\ACU\tmp\script-*\action.ahk` |
 | Screenshots taken without `--out`, newest 30 kept | `%LOCALAPPDATA%\ACU\shots\<timestamp>-<action>.png` |
 
-Set `ACU_HOME` to move both. Script text is never logged, only its SHA-256, because scripts can contain secrets. A crash report does quote the run's output, and an error message can cite fragments of the failing line, so treat crash reports as sensitive too.
+Set `ACU_HOME` to move these locations. ACU does not log script text, only its SHA-256, because scripts can contain secrets. A harness may independently record tool-call arguments. A crash report does quote the run's output, and an error message can cite fragments of the failing line, so treat crash reports as sensitive too. If tool crash-report persistence itself fails, the original error remains in the JSON response together with an explicit `diagnostic_error`.
+
+## Computer-use test bench
+
+`bench/` prepares isolated Codex/native, Pi/CUA, and Pi/ACU profiles, all using GPT-6.1 at low reasoning. Each live trial needs approval and records raw transcripts, token usage, timing, verification and cleanup. See [bench/README.md](bench/README.md) for commands and measurement limits, and [the first Calculator results](docs/reports/bench-calculator-2026-10-09.md). The two initial ACU attempts did not reach calculation: one stopped on confirmed concurrent mouse use, and one used the wrong top-level window process assumption.
 
 ## Tests
 
-Run checks relevant to the change. The default is the skill/installer checks, with no AutoHotkey execution:
+Run checks relevant to the change. The default includes skill/installer and quiet benchmark checks, with no AutoHotkey execution or desktop input:
 
 ```
-python -m pytest -q
+uv run pytest -q
 ```
 
 All AutoHotkey integration tests carry the `desktop` marker and are deselected unless `--desktop` is supplied, even if their file is explicitly selected. With approval for desktop use, run a focused check, for example:
 
 ```
-python -m pytest --desktop tests/test_uia.py -k tree_find_and_type -q
+uv run pytest --desktop tests/test_tool.py -q
 ```
 
 These tests can open windows, move the cursor, and change focus. Do not run the full desktop suite after every change. Keep useful regressions available, consolidate repetitive checks, and remove redundant tests. A full run (`python -m pytest --desktop`) is reserved for deliberate validation on an idle desktop. Tests require pytest; screenshot tests also require Pillow.

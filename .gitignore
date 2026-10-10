@@ -2,6 +2,10 @@
 !/.pi/
 /.pi/*
 !/.pi/extensions/
+!/.pi/mcp.json
 /.agents/
 /.claude/skills/
 __pycache__/
+.venv/
+.pytest_cache/
+dist/

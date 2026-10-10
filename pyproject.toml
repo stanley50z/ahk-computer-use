@@ -1,3 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "acu-desktop"
+version = "0.1.0"
+description = "Script-first computer use through CLI and MCP"
+requires-python = ">=3.12"
+dependencies = ["mcp>=1.26,<2", "jsonschema>=4.26,<5"]
+
+[project.scripts]
+acu = "acu.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "Pillow>=11"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["acu"]
+
+[tool.hatch.build.targets.sdist]
+only-include = ["acu", "README.md", "pyproject.toml", "uv.lock", "install_skill.py", "CONTEXT.md", "docs/adr"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [

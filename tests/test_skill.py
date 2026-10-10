@@ -32,6 +32,21 @@ def test_frontmatter_follows_the_agent_skills_specification():
     assert fields["description"].startswith("Operate"), "front-load the verb the agent will route on"
 
 
+def test_skill_teaches_window_discovery_before_control_lookup():
+    """Guard the launch recipe against the process-only assumption seen in the Calculator trial."""
+    text = SKILL_FILE.read_text(encoding="utf-8")
+    discovery = text.split("### 1. Look", 1)[1].split('acu tree "', 1)[0]
+
+    for required in ("WinGetList()", "WinGetTitle", "WinGetClass", "WinGetProcessName", "ahk_id",
+                     "CalculatorApp.exe", "ApplicationFrameHost.exe"):
+        assert required in discovery, f"window discovery must explain {required} before tree lookup"
+    assert "new matching handle" in discovery, "new-window tasks must preserve pre-existing windows"
+    assert "observed" in discovery, "window identity must be observed rather than guessed"
+    for required in ("mcp__acu__", "ahk.action-chain", "acu execute --file -", "whole scripted action chain"):
+        assert required in text, f"skill must teach the script-first tool interface: {required}"
+    assert len(text.splitlines()) <= 120, "keep the skill compact; longer material belongs in README"
+
+
 def test_skill_names_only_files_that_exist_beside_it():
     for script in ("run.py", "screenshot.ahk"):
         assert script in SKILL_FILE.read_text(encoding="utf-8")

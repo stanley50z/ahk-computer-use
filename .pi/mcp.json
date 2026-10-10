@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "acu": {
+      "command": "uv",
+      "cwd": ".",
+      "args": [
+        "run",
+        "--frozen",
+        "--project",
+        ".",
+        "python",
+        "-m",
+        "acu",
+        "mcp"
+      ],
+      "exposure": "direct",
+      "timeout": 360,
+      "description": "Script-first Windows computer use: execute batched AHK action chains, discover maintained scripts and instructions, inspect controls and screenshots."
+    }
+  }
+}
