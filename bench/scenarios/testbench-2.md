@@ -1,0 +1,9 @@
+# Testbench 2: Illustrator Pen-tool reconstruction v0.3 (pilot)
+
+Recreate the Cloud9 icon shown in Cloud9-Reference.jpg in Adobe Illustrator, using the Pen tool to draw editable vector paths in the supplied Cloud9-Pen-Starter.ai. The starter is already open: one blank 800 × 800-point RGB artboard and one unlocked Drawing layer. Match the reference image's shape, scale, and placement on the 800 × 800 canvas.
+
+Select fill #00AEEF, no stroke, and 100% opacity. You may place the supplied JPEG in Illustrator as a Pen-tool tracing aid; remove that image before saving the finished artwork. Choose each anchor and Bezier-handle position yourself by visually inspecting the reference, write those positions as literal coordinates, and create the paths through the Pen tool's desktop controls. Code may map your authored coordinates to screen pixels and replay the click/drag list, but must not generate anchor or handle coordinates. Image Trace, raster-contour extraction, parametric shape/curve generators, other reference-to-point generators, vector import, raster substitution, and Illustrator scripting are not allowed for creating the artwork.
+
+Save the editable artwork as Cloud9-Recreated.ai in the workspace, with Create PDF Compatible File enabled. Export Cloud9-Recreated.png in the workspace through Export As using PNG, Use Artboards (the single artboard), 72 ppi, Art Optimized (Supersampling), White background, and Interlaced off. The PNG must be 800 × 800 pixels with an opaque white background. Illustrator may append an artboard suffix to the exported filename; rename that export to Cloud9-Recreated.png if necessary.
+
+When done, write result.json in the workspace with these fields: status (completed or blocked), ai_file, png_file, input_method, and hiccups (an array of concrete problems encountered).

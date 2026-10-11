@@ -197,6 +197,9 @@ AcuWaitUntil(predicate, timeoutMs := 2000, intervalMs := 25) {
 ; First-party input-language guard; plain native send calls are checked before injecting keys.
 #Include "%A_LineFile%\..\lib\keyboard.ahk"
 
+; Opt-in target activation and paced input; native functions keep their existing behavior.
+#Include "%A_LineFile%\..\lib\actions.ahk"
+
 ; First-party: AcuTree (lib/dump.ahk) and AcuScreenshot (lib/capture.ahk). tree.ahk and screenshot.ahk are their
 ; command-line wrappers, so a script can do in one run what the agent would otherwise spend a separate call on.
 #Include "%A_LineFile%\..\lib\dump.ahk"

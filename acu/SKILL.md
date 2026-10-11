@@ -9,7 +9,7 @@ You supply the intelligence, ACU supplies the hands. Every action is a whole scr
 
 ## Call ACU
 
-Call the installed CLI through your shell tool: `acu run "<absolute script.ahk>" [--timeout 30] [-- arguments]`. Arguments after `--` reach the script in `A_Args`. There are no script IDs, inline-code input, or separate inspection operations. The bundled `tree.ahk` and `screenshot.ahk` can be named without a path: `acu run tree.ahk -- …`. If `acu` is not on PATH, report the installation prerequisite; setup is in the repository's `README.md` (resolve this skill directory's link and take its parent).
+Call the installed CLI through your shell tool: `acu run "<absolute script.ahk>" [--timeout 30] [-- arguments]`. Keep scripts and explicit captures in your current working directory or its subdirectories unless the user supplies another destination. Arguments after `--` reach the script in `A_Args`. There are no script IDs, inline-code input, or separate inspection operations. The bundled `tree.ahk` and `screenshot.ahk` can be named without a path: `acu run tree.ahk -- …`. If `acu` is not on PATH, report the installation prerequisite; setup is in the repository's `README.md` (resolve this skill directory's link and take its parent).
 
 A model turn costs seconds; a file write or an `acu run` costs milliseconds to a few seconds. Spend turns on looking and deciding, not on ceremony:
 
@@ -78,7 +78,30 @@ root.ElementFromPath("2,2,2,5,3").Invoke()                     ; by path from th
 root.FindElement({Type:"Edit"}).Value := "text"               ; a control flagged value
 ```
 
-Combine selectors or search within a parent when ids repeat. Toggle, Select, and Expand use the corresponding patterns. `element.Click()` with no argument is semantic too: it invokes, toggles, or selects. Pointer input is `element.Click("left")`, which moves the cursor to the element's center and needs the window in the foreground. Before pointer input or keys, call `WinActivate`, then `WinWaitActive(target, , 2)` and throw if it returns zero; never click into another application. **Type text with `SendText`, never `Send`.** `Send` reads `+ ^ ! #` as Shift, Control, Alt and Win and `{}` as key names, so `Send "2+3="` presses Shift+3 and Calculator shows `2^3`. `Send` is for keys and chords only: `Send "{Enter}"`, `Send "^s"`. Variable names share the namespace with functions and classes: use `field`, `target`, `box`, or `bar` rather than `edit`, `click`, `send`, `run`, `menu`, or `gui`.
+Combine selectors or search within a parent when ids repeat. Toggle, Select, and Expand use the corresponding patterns. `element.Click()` with no argument is semantic too: it invokes, toggles, or selects. Pointer input is `element.Click("left")`, which moves the cursor to the element's center and needs the window in the foreground. Before pointer input or keys, use `AcuActivate(target)`: it requires one matching window, activates it, and refuses an owned dialog even if the application leaves its parent frame enabled. Address the observed dialog by its own handle instead. Native `WinActivate` remains available; follow it with `WinWaitActive(target, , 2)` and throw if that returns zero. Never click into another application. **Type text with `SendText`, never `Send`.** `Send` reads `+ ^ ! #` as Shift, Control, Alt and Win and `{}` as key names, so `Send "2+3="` presses Shift+3 and Calculator shows `2^3`. `Send` is for keys and chords only: `Send "{Enter}"`, `Send "^s"`. Variable names share the namespace with functions and classes: use `field`, `target`, `box`, or `bar` rather than `edit`, `click`, `send`, `run`, `menu`, or `gui`.
+
+### Paced input for canvases and shortcuts
+
+For Illustrator and other applications that process input asynchronously, use these target-bound helpers. Native AutoHotkey functions remain unchanged.
+
+- `AcuKeys(target, keys, pressMs := 30)` sends keys/chords with a nonzero press duration. It uses the English-input guard and restores the script's key timing. Use `SendText` for literal text, not `AcuKeys`.
+- `AcuClick(target, x, y)` gives a left click enough contact time to register. Pointer helpers verify that both endpoints belong to the target or its owned windows, recheck at button-down, and release/abort if activation is lost. They are for interaction within one target, not cross-application drag-and-drop.
+- `AcuDrag(target, x1, y1, x2, y2, durationMs := 150)` replays a drag between your authored screen-pixel endpoints. It paces movement and approaches the endpoint again from one pixel away: some canvas tools commit the previous distinct mouse position, shortening a fast drag. It releases its button on error or normal script exit and restores native mouse timing/SendMode. It leaves cursor position and foreground in place.
+
+These are input durations, not waits for dialogs or rendering. Observe the result after each predictable chain. A drag can finish correctly while the drawing itself is wrong. For a tight contour fit, use shorter curve segments near corners and on arcs longer than a quarter turn. A pointed or egg-shaped loop can come from anchor/handle choices; increasing the drag delay will not fix that geometry. Snapping can also shift faithful input: inspect the application's snapping/Smart Guides state when exact authored positions matter.
+
+For Pen-tool work, place each new smooth anchor with **one drag**, or a straight-segment corner with **one click**. A curve/line join still needs the curve's tangent: do not replace its curved endpoint with a plain corner click and lose that handle. For curve-to-line, drag the endpoint along the curve tangent, then click that selected endpoint again (the Pen's convert-point icon) to remove its outgoing direction line before the straight segment. For line-to-curve, draw the straight segment, then drag its selected endpoint's direction line before placing the next curve anchor. This edits the existing join rather than adding an anchor. Start a closed curved outline at a smooth anchor so the first drag places it directly; the close-path cursor at that first point is not a convert-point cursor. Before a redraw, leave the Pen tool, select and delete only the task's old artwork, and verify the cleared canvas. If an edit field has focus, click the intended canvas before tool shortcuts. In a Color Picker, Enter may commit a field without accepting the dialog; operate its observed OK button and wait for closure.
+
+```autohotkey
+; Replace these example coordinates with points you chose from the observed canvas.
+AcuKeys(target, "p")
+AcuDrag(target, 1000, 600, 1080, 600)
+AcuClick(target, 1200, 800)
+AcuKeys(target, "{Esc}")
+FileAppend AcuScreenshot({app: target}, A_WorkingDir "\path-check.png").text, "*"
+```
+
+For the installed English Illustrator menus, `AcuKeys(target, "^+s")` opens Save As. `AcuKeys(target, "!fe{Right}{Down}{Enter}")` opens File > Export > Export As; wait for the observed `Export` dialog. Ctrl+Alt+E opens Export for Screens, a different workflow. In AHK v2 the Win32 menu function is `MenuSelect`, not `WinMenuSelectItem`; Illustrator's custom menus are better driven by their observed controls or this keyboard route. Set the native File name edit's `.Value` to the full destination path, then operate the observed Save/Export button. Address each ensuing options dialog by its own handle and check the file produced.
 
 Wait on observed state, not fixed sleeps. `AcuWaitUntil(predicate, timeoutMs := 2000, intervalMs := 25)` polls the predicate until it returns a true value and returns that value, or `0` when the time runs out. Pick a fact the action really changes:
 

@@ -34,15 +34,16 @@ def input_script(chinese_layout):
     )
 
 
-@pytest.mark.parametrize("send", ["Send", "SendInput", "SendEvent", "SendText", "ControlSend", "ControlSendText"])
+@pytest.mark.parametrize("send", ["Send", "SendInput", "SendEvent", "SendText", "ControlSend", "ControlSendText", "AcuKeys"])
 def test_keyboard_send_switches_the_active_target_to_english(tmp_path, chinese_layout, send):
     script = tmp_path / "input.ahk"
     expected = "你好+^{}" if send.endswith("Text") else "O"
     keys = expected if send.endswith("Text") else "+o"
     target = ', field.Hwnd' if send.startswith("Control") else ""
+    statement = f'AcuKeys(win.Hwnd, "{keys}")' if send == 'AcuKeys' else f'{send} "{keys}"{target}'
     script.write_text(
         input_script(chinese_layout)
-        + f'{send} "{keys}"{target}\n'
+        + statement + '\n'
         + f'AcuWaitUntil(() => field.Value = "{expected}", 1000)\n'
         + 'FileAppend "after_primary=" (DllCall("GetKeyboardLayout", "uint", 0, "uptr") & 0x3FF) " text=" field.Value "`n", "*"\nExitApp\n',
         encoding="utf-8",

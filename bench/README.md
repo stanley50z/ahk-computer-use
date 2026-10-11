@@ -11,7 +11,7 @@ Compare four fresh agent configurations, not a knowledgeable parent agent solvin
 | `pi-cua` | Pi | Installed `cua-driver` skill and CLI | v1.1, four trials: median 104.97 s (88.28 to 107.75); daemon restarted before each |
 | `codex-computer-use` | Codex CLI | Installed `computer-use` skill, native `@oai/sky` through `node_repl` | v1.1, four trials by keyboard: median 53.27 s (48.02 to 60.34) |
 
-The GPT harnesses use **GPT-6.1 (`gpt-6.1-sol`) at low reasoning**; Pi uses the `openai` provider. This supersedes the earlier GPT-6 Astra acceptance-test choice for this bench only. Claude Code runs only Claude models, so `claude-acu` is the one exception: **Opus 5.5 (`claude-opus-5-5`) at low effort**, by the user's decision on 2026-10-10 after round 2, which had used Haiku 5.5 at high effort. No automatic provider/model fallback, parent coaching, or retry after a blocked trial. Each further desktop trial needs explicit approval.
+The GPT harnesses use **GPT-6.1 (`gpt-6.1-sol`) at low reasoning**; Pi uses the `openai` provider. This supersedes the earlier GPT-6 Astra acceptance-test choice for this bench only. Claude Code runs only Claude models, so `claude-acu` is the one exception: **Opus 5.5 (`claude-opus-5-5`) at low effort**, by the user's decision on 2026-10-10 after round 2, which had used Haiku 5.5 at high effort. No automatic provider/model fallback or parent coaching. The user's standing desktop approval now permits fresh trials and reruns needed for TB2 and ACU improvement; it supersedes the previous per-run approval and no-retry rules. Preserve and classify interrupted/blocked attempts rather than folding them into successful-completion timing.
 
 Round 1 (2026-10-10, three arms) is in [its report](../docs/reports/testbench-1-2026-10-10.md); round 2 (all four arms, after the ACU changes) in [round 2](../docs/reports/testbench-1-round-2-2026-10-10.md); round 3 (in-script AcuTree/AcuScreenshot, Opus 5.5 on the Claude arm) in [round 3](../docs/reports/testbench-1-round-3-2026-10-10.md). Archived runs keep their original metrics; `analyse` replays them with the current task-time definition into `metrics-replayed.json`.
 
@@ -51,6 +51,31 @@ Cleanup protects every pre-existing top-level handle, including hidden windows, 
 
 Versions: **v1.0** is the button-only prompt that rounds 1 to 3 used, with the expression `128+465*12387/138473-12343` and the evidence-file protocol in the prompt (its 2026-10-09 drafts tightened ownership and then allowed semantic Invoke alongside pointer clicks; the archived run directories keep each draft and its hash). A one-round interim text that listed allowed input routes, and whose title line "Calculator buttons" was sent to the actors, is recorded in [its report](../docs/reports/testbench-1-v4-2026-10-11.md) and superseded. **v1.1** is the two-line task above with a new expression. Comparisons across versions are across prompts and expressions. Preserve original verdicts and prompt hashes; this is not an exact-prompt statistical comparison.
 
+## Testbench 2: Illustrator Pen-tool reconstruction
+
+Use `--scenario testbench-2`; Calculator remains the default. The frozen actor prompt is [v0.3](scenarios/testbench-2.md). Actor inputs are only copies of the [blank AI and separate JPEG](assets/testbench-2/README.md), with hashes in `plan.json`. The JPEG fixes framing and shape; `#00AEEF` fixes color independently of lossy JPEG pixels. Reference provenance, official vectors, guidelines and inspection evidence stay outside the actor workspace.
+
+Before timing, the maintainer observer binds/starts one Illustrator instance, snapshots pre-existing documents and PNG preferences, opens the blank starter, resets the Getting Started workspace, and sets a 100% viewport. This reset changes panel layout, not document artwork. A blank calibration export through the actual Export As/PNG dialogs commits repeatable 72 ppi, Art Optimized, white, non-interlaced options; preference API writes alone do not reliably update Illustrator's cached dialog state. English input is verified on the exact destination. The actor still performs appearance selection, Pen drawing, saving, export and any filename correction inside continuous task time.
+
+The actor may place the JPEG as a tracing aid but must remove it from the submitted AI. Every anchor/handle is a visually authored literal coordinate; mapping/replaying those inputs is allowed, contour/parametric point generators and vector imports are not. Each trial needs post-run transcript/script review; a matching PNG alone cannot establish method compliance.
+
+The independent observer opens a copy of the saved AI, checks editable paths, appearance, RGB/single-artboard dimensions, PDF compatibility, and renders it independently. PNG verification checks dimensions, opacity, white background, solid blue, interlacing and resolution metadata. Frozen-reference shape metrics are unaligned foreground IoU and symmetric boundary Manhattan distances; submissions are never resized or registered after the fact. Saved-AI/PNG consistency is reported separately. The result manifest must contain the requested fields and identify the inspected output files.
+
+This is an exploratory pilot: `passed: null` means structural/export checks completed but shape calibration and method/consistency review are still pending, not an overall pass. Hard failures remain `passed: false`. `pilot_completed` records successful automated execution, not an uncalibrated shape verdict.
+
+Cleanup cancels only recognized new dialogs in the bound process, closes only task document paths after native revalidation, restores the recorded PNG preferences, and closes Illustrator only if that trial started it and no documents remain. Pre-existing documents, including unsaved ones, are protected; missing/renamed or unclaimed documents make cleanup fail explicitly. Conduct fingerprints include the frozen reference and pre-existing on-disk documents, with native geometry/appearance summaries for in-memory change detection. Illustrator-owned panels/task bars are task UI; exact `SysShadow` menu/tooltip shadows in its surviving process are not user windows. Main frames and unrelated applications remain protected. This audit is evidence, not an OS sandbox or exhaustive proof of unchanged complex artwork.
+
+[First runs and ACU improvement](../docs/reports/testbench-2-first-run-2026-10-11.md): three fresh Claude+ACU baseline versus three fresh final trials, same Opus 5.5/low, v0.3 prompt and JPEG. Median task time **369.36 → 265.93 s (28.0% lower)**; median foreground IoU **0.94655 → 0.96836**. Intermediate variants and exclusions are retained in the report. This small sample is task-specific evidence, not a statistical-significance claim or comparison across all four arms.
+
+Offline preparation and an authorized background trial:
+
+```bash
+uv run python bench/run.py prepare --scenario testbench-2 --arm claude-acu
+uv run python bench/start.py --scenario testbench-2 --arm claude-acu --desktop-approved
+```
+
+Use the same scenario flag for the other arms. Runtime PNG grading needs Pillow, included in the project's `uv` dev environment. Maintainer scripts under `bench/illustrator/` may use JSX to prepare/inspect/clean documents; that permission does not extend to actor artwork generation.
+
 ## Commands
 
 Offline preparation only; no credentials copied and no desktop operation:
@@ -62,13 +87,13 @@ python bench/run.py prepare --arm pi-cua
 python bench/run.py prepare --arm codex-computer-use
 ```
 
-After approval for that specific trial, start in the background without opening another terminal:
+With desktop authorization (the current TB2 work has standing approval), start in the background without opening another terminal:
 
 ```bash
 python bench/start.py --arm pi-acu --desktop-approved
 ```
 
-Replace the arm only when the corresponding run is authorized. `start.py` prints the run directory and worker PID. For the native arm, `--native-transport app-pipe` uses the running ChatGPT/Codex desktop app's own computer-use pipe instead of the shipped SDK helper; the worker refuses to start if that pipe is not open. The default remains the SDK helper. There is no overall actor time limit. Stop a stalled or unwanted run explicitly with `stop.py`; per-script watchdogs and backend request/startup timeouts remain separate protections. A run directory is never reused for another trial.
+Replace the arm only when the corresponding task/run is authorized. `start.py` prints the run directory and worker PID. For the native arm, `--native-transport app-pipe` uses the running ChatGPT/Codex desktop app's own computer-use pipe instead of the shipped SDK helper; the worker refuses to start if that pipe is not open. The default remains the SDK helper. There is no overall actor time limit. Stop a stalled or unwanted run explicitly with `stop.py`; per-script watchdogs and backend request/startup timeouts remain separate protections. A run directory is never reused for another trial.
 
 Stop only that run, allowing its worker to terminate owned processes and perform cleanup:
 
