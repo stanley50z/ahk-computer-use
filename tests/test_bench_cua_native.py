@@ -6,7 +6,7 @@ import tomllib
 
 import pytest
 
-from bench.run import prepare, restart_cua_daemon
+from bench.run import ARMS, prepare, restart_cua_daemon, uses_cua_daemon
 
 STUB = '''
 import json, sys
@@ -31,6 +31,10 @@ def skill_fixture(root, name):
     path.mkdir()
     (path / 'SKILL.md').write_text(f'---\nname: {name}\ndescription: test fixture\n---\n', encoding='utf-8')
     return path
+
+
+def test_only_the_cua_arm_restarts_the_daemon():
+    assert [arm for arm in ARMS if uses_cua_daemon(arm)] == ['pi-cua'], 'pi-cua shares the pi harness prefix; the arm name decides'
 
 
 def test_cua_daemon_is_stopped_and_restarted_before_a_trial_and_the_record_is_kept(tmp_path):

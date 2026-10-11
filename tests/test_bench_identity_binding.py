@@ -2,7 +2,7 @@
 
 import pytest
 
-from bench.run import bind_owned_window
+from bench.run import actor_window, bind_owned_window, new_calculator_window
 
 
 def test_returned_numeric_or_hex_window_id_can_use_observer_pid():
@@ -19,6 +19,20 @@ def test_preexisting_or_identity_mismatched_window_is_never_bound_for_cleanup():
         bind_owned_window('', {'hwnd': '100', 'pid': 8}, observed)
     with pytest.raises(ValueError, match='observed'):
         bind_owned_window('', {'window_id': '101'}, observed)
+
+
+def test_without_an_actor_claim_the_one_new_calculator_window_is_the_actors():
+    before = 'window=50 pid=9\ncalculator=50\npid=9\n'
+    observed = 'window=50 pid=9\nwindow=100 pid=8044\ncalculator=50\npid=9\ncalculator=100\npid=8044\n'
+    assert new_calculator_window(before, observed) == ('100', 8044)
+    assert actor_window(before, None, observed) == ('100', 8044)
+    assert actor_window(before, {'status': 'completed'}, observed) == ('100', 8044), 'a claim without a window id falls back to observation'
+    assert actor_window(before, {'window_id': '100'}, observed) == ('100', 8044)
+    with pytest.raises(ValueError, match='exactly one'):
+        new_calculator_window(before, before)
+    two = observed + 'window=101 pid=8044\ncalculator=101\npid=8044\n'
+    with pytest.raises(ValueError, match='exactly one'):
+        new_calculator_window(before, two)
 
 
 def test_hidden_preexisting_frame_host_shell_reused_by_the_new_window_is_still_owned():
