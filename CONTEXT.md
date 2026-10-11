@@ -23,7 +23,7 @@ The document a harness loads that teaches the agent how to write and run scripts
 _Avoid_: prompt, manual, instructions
 
 **Prelude**:
-The code ACU places ahead of every script so that coordinates, DPI, errors, restore, and the accessibility tree are already taken care of.
+The code ACU places ahead of every script so that coordinates, DPI, errors, English input preparation, and the accessibility tree are already taken care of.
 _Avoid_: header, bootstrap, runtime
 
 **Launcher**:
@@ -50,20 +50,6 @@ Look, act, check. The agent repeats it until the user's postcondition is observe
 **Trailer**:
 The launcher's last output line, its verdict on the run: ok, exit with a code, or timeout.
 _Avoid_: summary, status line, footer
-
-**Entry state**:
-The foreground window and cursor position as they were when a script started.
-
-**Restore**:
-Putting the entry state back when a script ends, on success, on error, and on timeout alike.
-_Avoid_: cleanup, reset
-
-**Takeover**:
-The user intervening while a script runs, recognized by the cursor not being where ACU left it. A takeover cancels restore.
-_Avoid_: interruption, interference, conflict
-
-**Keep-foreground**:
-A script's declaration that its purpose is to leave an application showing, so restore puts back only the cursor.
 
 ### Finding things on screen
 

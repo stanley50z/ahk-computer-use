@@ -4,6 +4,7 @@
 ; window's own coordinate space. Per-monitor DPI aware unless ACU_TEST_DPI_AWARENESS is "system", which stands in
 ; for an older application that Windows scales on a monitor whose DPI differs from the system's.
 #NoTrayIcon
+#Include "%A_LineFile%\..\english_keyboard.ahk"
 #SingleInstance Off
 DllCall("SetThreadDpiAwarenessContext", "ptr", EnvGet("ACU_TEST_DPI_AWARENESS") = "system" ? -2 : -4, "ptr")
 title := EnvGet("ACU_TEST_TITLE")

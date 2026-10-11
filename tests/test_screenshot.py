@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from conftest import REPO, foreground, monitor_dpis, monitor_rects, reported, run_launcher, system_dpi, visible_frame, wait_until
+from conftest import REPO, foreground, monitor_dpis, monitor_rects, reported, run_cli, run_launcher, system_dpi, visible_frame, wait_until
 
 pytestmark = pytest.mark.desktop
 
@@ -173,6 +173,41 @@ def test_acu_screenshot_captures_a_window_from_inside_a_script(open_window, tmp_
     assert reported(result.stdout, "returned") == f"{out}|{x},{y} {w}x{h}"
     with Image.open(out) as img:
         assert img.size == (w, h)
+
+
+def test_on_screen_capture_contains_a_live_popup_missing_from_the_app_render(open_window, tmp_path):
+    target = open_window(f"ACU popup capture {os.getpid()}", 100, 100, script="menu_window.ahk")
+    x, y, _, _ = visible_frame(target)
+    screen_out, app_out = tmp_path / "popup.png", tmp_path / "app.png"
+    script = tmp_path / "popup.ahk"
+    script.write_text(
+        f'WinActivate "ahk_id {target}"\n'
+        f'if !WinWaitActive("ahk_id {target}", , 2)\n throw Error("target did not activate")\n'
+        f'Click {x + 80}, {y + 150}, "Right"\n'
+        f'popup := AcuWaitUntil(() => WinExist("ahk_class #32768 ahk_pid " WinGetPID("ahk_id {target}")), 2000)\n'
+        'if !popup\n throw Error("popup did not appear")\n'
+        'WinGetPos &px, &py, &pw, &ph, "ahk_id " popup\n'
+        'if !AcuWaitUntil(() => PixelGetColor(px + pw // 2, py + ph // 2) != 0x006600, 2000)\n throw Error("popup did not repaint")\n'
+        f'shot := AcuScreenshot({{rect: [px, py, px + pw, py + ph]}}, "{screen_out.as_posix()}", 0)\n'
+        f'appShot := AcuScreenshot({{app: "ahk_id {target}"}}, "{app_out.as_posix()}", 0)\n'
+        'FileAppend "popup=" px "," py " " pw "x" ph "`napp_source=" appShot.x "," appShot.y "`n", "*"\n'
+        'Send "{Esc}"\n', encoding="utf-8",
+    )
+
+    result = run_cli(script)
+
+    assert result["exit_code"] == 0, result["output"]
+    origin, size = reported(result["output"], "popup").split(" ")
+    px, py = map(int, origin.split(","))
+    pw, ph = map(int, size.split("x"))
+    ax, ay = map(int, reported(result["output"], "app_source").split(","))
+    with Image.open(screen_out) as screen, Image.open(app_out) as app:
+        assert screen.size == (pw, ph)
+        point = (pw // 2, ph // 2)
+        screen_pixel = screen.convert("RGB").getpixel(point)
+        app_pixel = app.convert("RGB").getpixel((px + point[0] - ax, py + point[1] - ay))
+        assert app_pixel == (0, 102, 0), "the parent window's own rendering has its green background, not the popup"
+        assert screen_pixel != app_pixel, "the screen capture must include the separate native popup"
 
 
 def test_app_reports_a_missing_window(tmp_path):

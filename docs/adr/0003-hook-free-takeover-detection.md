@@ -1,5 +1,7 @@
 # Detect takeover by comparing cursor and foreground, without a hook
 
+Superseded by [ADR-0009](0009-persistent-desktop-state-and-english-input.md): ACU no longer restores cursor position or foreground, so this comparison and its keep-foreground opt-out were removed. The text below records the earlier decision.
+
 At the end of a script the prelude restores the entry state, but only when the user did not take over. AutoHotkey's physical-idle timer only distinguishes the user's input from ours when our own keyboard and mouse hooks are installed, and any AutoHotkey hook downgrades SendInput for every other AutoHotkey script on the machine. So the prelude shadows the mouse functions to remember where it placed the cursor and which processes it clicked, and compares that record with reality at exit.
 
 ## Consequences

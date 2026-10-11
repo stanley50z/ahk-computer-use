@@ -74,7 +74,7 @@ Arguments after `--` reach the script in `A_Args`. They are the only way to pass
 
 The exit code is the script's own, or 124 when the watchdog fired. At the timeout the script is first asked to close so its exit handler runs, and killed one second later if it has not exited.
 
-The trailer is always the last line. The prelude's own notes, such as an error report or a restore decision, also start with `[acu]` but appear in the body, so the agent can tell them from the script's output.
+The trailer is always the last line. The prelude's own notes, such as an error report or an input-language warning, also start with `[acu]` but appear in the body, so the agent can tell them from the script's output.
 
 ## What every script gets
 
@@ -84,11 +84,12 @@ The trailer is always the last line. The prelude's own notes, such as an error r
 - No injected delays: `SetMouseDelay -1` and `SetDefaultMouseSpeed 0`. Clicks and moves are single jumps even when AutoHotkey falls back from SendInput to SendEvent, which it does whenever another AutoHotkey script on the machine has a keyboard or mouse hook.
 - Runtime errors are printed with their message, file, line, and stack, and the script exits with code 1. No dialog ever appears. Load-time syntax errors are printed the same way by AutoHotkey itself, and load-time warnings, such as a call to a function that does not exist, go to the output too. By default those warnings are modal dialogs that appear before the script has a window, so nothing could close them.
 - The `UIA` class from Descolada's UIA-v2 library, so a script can find a control by name and act on it without the pointer. See below.
-- `AcuLaunch(command, winTitle, timeoutMs := 10000)` starts a program and returns the one new top-level window matching `winTitle` as an object with `hwnd`, `pid`, `title`, `class`, and `process`. Pre-existing windows are snapshotted first and never selected; no new window, or several, is an error rather than a guess. Every fresh agent in Testbench 1 had hand-written this loop, and one got it wrong. Before returning it waits, within the same timeout, until the window's accessibility tree holds the same element count on two polls 150 ms apart, and reports that count as `elements`: Calculator's frame exists before its buttons, and a dump taken at once showed only the title bar.
+- `AcuLaunch(command, winTitle, timeoutMs := 10000)` starts a program and returns the one new top-level window matching `winTitle` as an object with `hwnd`, `pid`, `title`, `class`, and `process`. Pre-existing windows, including hidden ones, are snapshotted first and never selected; no new window, or persistent ambiguity, is an error rather than a guess. Startup candidates have up to 500 ms to settle, bounded by the requested timeout, and the set is rechecked after tree settling before returning. Multiple candidates may clear until the deadline. Ambiguity errors include every candidate's handle, title, class, and PID. Every fresh agent in Testbench 1 had hand-written this loop, and one got it wrong. Before returning it waits, within the same timeout, until the window's accessibility tree holds the same element count on two polls 150 ms apart, and reports that count as `elements`: Calculator's frame exists before its buttons, and a dump taken at once showed only the title bar.
 - `AcuWaitUntil(predicate, timeoutMs := 2000, intervalMs := 25)` polls until the predicate returns a true value and returns it, or 0 after the timeout: an observed wait in place of a fixed `Sleep`.
 - `AcuTree(target, {find, type, depth, max})` returns the same dump `tree.ahk` prints, as text, and `AcuScreenshot({app: target} | {monitor: n} | {rect: [x1, y1, x2, y2]}, outPath, maxSide)` saves the same PNG `screenshot.ahk` does and returns its mapping. Both live in `acu/lib/` and let an action chain end with the evidence it needs; in Testbench 1 the separate screenshot call was the last non-essential model turn.
 - No tray icon, and several scripts may run at once.
-- The foreground window and cursor position from the start of the script are restored when it ends, including on errors and on the watchdog's close request. See the rules below.
+- Cursor position and foreground stay where the script leaves them, on success, error, and timeout. Native mouse functions are no longer shadowed for tracking; there is no restore hook or keep-foreground opt-out.
+- English input preparation at startup and immediately before native keyboard sends, including for a newly activated target. See the rules below.
 - UI Access. The script runs under AutoHotkey's signed UI Access build, so an elevated window, such as an installer running as administrator, is in the tree and accepts input, without the script being elevated and without a UAC prompt. The UAC consent prompt itself is on a separate desktop and stays out of reach. Windows starts a UI Access program only through ShellExecute, which gives it no standard output, so the launcher names an output file in a leading argument that the prelude strips and redirects stdout and stderr into. Load-time errors and warnings happen before the prelude runs, so the launcher first loads the script without running it under the plain build, which has a pipe; a syntax error ends there with exit code 2.
 
 ## Seeing the screen
@@ -102,7 +103,7 @@ python acu/run.py acu/screenshot.ahk -- custom <x1> <y1> <x2> <y2>
 ```
 
 - `fullscreen` captures one display, by AutoHotkey monitor number, default 1.
-- `app` captures one window by any WinTitle, such as `ahk_exe notepad.exe` or a title fragment. The window renders itself into the image, so it shows its own content even when another window covers it, and the foreground never changes. The image is cropped to the visible frame. An application that is not per-monitor DPI aware renders at the size it believes it has, and Windows scales that on a monitor with another DPI; the capture is scaled the same way, so it matches the screen and `source` stays a click position. A minimized window is an error; restore or activate it first.
+- `app` captures one window by any WinTitle, such as `ahk_exe notepad.exe` or a title fragment. The window renders itself into the image, so it shows its own content even when another window covers it, and the foreground never changes. The image is cropped to the visible frame. An application that is not per-monitor DPI aware renders at the size it believes it has, and Windows scales that on a monitor with another DPI; the capture is scaled the same way, so it matches the screen and `source` stays a click position. A minimized window is an error; restore or activate it first. App capture uses `PrintWindow` for that HWND and can omit separate menus, popups, and dialogs. Use an activated target's on-screen `fullscreen` or `custom` capture for transient UI, after observing its appearance or repaint; an unchanged immediate capture is not proof that the action failed.
 - `custom` captures the screen rectangle from (x1, y1) to (x2, y2), exclusive, in screen pixels. This is the zoom: a small rectangle comes back at full resolution.
 
 Options for every action: `--out <path.png>` and `--max <pixels>`, the longest side of the saved image, default 1280, 0 to keep full size.
@@ -151,23 +152,21 @@ root.FindElement({Type:"Edit"}).Value := "text"                ; a control flagg
 
 Measured on Calculator: one button by name in 47 ms, all 48 buttons in 31 ms, the whole tree of 77 elements in 32 ms, and 6 × 7 = through `Invoke()` alone with the result read back from the display element. A Chrome window with 136 elements took 0.8 s, because the dump fetches the whole subtree in one round trip before applying `--depth` and `--max`; the budget bounds the output, not the fetch.
 
-## Restore rules
+## Desktop state and English input
 
-The prelude restores the entry foreground window and cursor at exit, with two exceptions:
+ACU leaves cursor position and foreground at the script's last action. This applies to normal exit, runtime errors, and cooperative or forced timeouts. The previous restoration, takeover comparison, mouse tracking, and `AcuKeepForeground()` API have been removed by the user's decision in [ADR-0009](docs/adr/0009-persistent-desktop-state-and-english-input.md). Scripts written against the old API need that call removed. Hover menus and application focus can persist between action chains. The watchdog still asks the script to close before killing it so the script's own exit handlers can run.
 
-1. If the cursor is not where ACU last placed it, someone else moved it. The user has taken over, so nothing is restored and the prelude prints `[acu] restore skipped: cursor moved by someone else`.
-2. If ACU clicked at least once and the foreground window belongs to a process ACU never clicked, an unrelated window came forward. The foreground is left alone, the cursor is restored, and the prelude prints `[acu] foreground left on <process> (ACU never clicked it)`.
+Benchmark post-trial cleanup is separate: it still closes owned windows/processes and reloads the saved cursor scheme after a trial. It does not implement per-script cursor-position or focus restoration.
 
-To know where it placed the cursor without installing a hook, the prelude shadows `Click`, `MouseMove`, `MouseClick`, and `MouseClickDrag`. Each delegates to `Send "{Click ...}"`, which shares the built-in option parser, so the documented syntax works unchanged. Two consequences:
+The prelude's first-party `acu/lib/keyboard.ahk` prepares English input at startup and immediately before `Send`, `SendInput`, `SendEvent`, `SendPlay`, `SendText`, `ControlSend`, or `ControlSendText`. It checks the actual destination thread, including a control-send target, and the sending thread's layout. Already-English input is left as-is. For non-English input it prefers a loaded English (United States) keyboard, otherwise another loaded English keyboard. It does not install layouts or alter the user's configured language list.
 
-- The `speed` argument of the mouse functions is ignored. Moves are instant by policy.
-- A `{Click}` written directly inside `Send`, and any `WinActivate`, are not tracked. A script that only activates a window and types relies on the cursor check alone.
+Foreign-thread changes use a posted `WM_INPUTLANGCHANGEREQUEST` to the focused control; Windows documents that the app may accept or reject the request. ACU verifies English input before sending keys. The same-thread path activates the loaded layout directly. Native send functions keep their original parsing and SendMode. Direct Win32 keyboard injection or application-specific APIs are outside this guard.
 
-Scripts should end at a stable state. A script whose purpose is to leave an application showing calls `AcuKeepForeground()` anywhere in its body; the foreground is then left where the script put it and only the cursor is restored. Takeover detection still applies: if the user moved the cursor, nothing is restored.
+If no English keyboard is available, ACU emits a warning. An expected startup preparation failure still allows inspection and mouse actions; native keyboard sends fail before input until English preparation succeeds. If Windows or the app rejects the switch, the send reports an error and sends no keys. The earlier input language is not restored. Switching notes and failures are captured in the normal run output and crash reports.
 
 ## Third-party code
 
-`acu/lib/dump.ahk` and `acu/lib/capture.ahk` are first-party. `acu/lib/UIA.ahk` is Descolada's UIA-v2 library, copied from https://github.com/Descolada/UIA-v2 at commit 2846a9b (2026-04-23), MIT, license in `acu/lib/UIA-LICENSE.txt`. The prelude includes it, which costs about 30 ms per script. One line is changed, marked `; ACU patch:` in the element indexer: a single-segment numeric path such as `"3"` now resolves like `"3,2"` already did, so every path the tree dump prints is accepted by `ElementFromPath`. To update, copy the upstream file over it, re-apply that line, and run the tests.
+`acu/lib/dump.ahk`, `acu/lib/capture.ahk`, and `acu/lib/keyboard.ahk` are first-party. `acu/lib/UIA.ahk` is Descolada's UIA-v2 library, copied from https://github.com/Descolada/UIA-v2 at commit 2846a9b (2026-04-23), MIT, license in `acu/lib/UIA-LICENSE.txt`. The prelude includes it, which costs about 30 ms per script. One line is changed, marked `; ACU patch:` in the element indexer: a single-segment numeric path such as `"3"` now resolves like `"3,2"` already did, so every path the tree dump prints is accepted by `ElementFromPath`. To update, copy the upstream file over it, re-apply that line, and run the tests.
 
 ## Debugging artifacts
 

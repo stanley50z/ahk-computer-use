@@ -1,6 +1,7 @@
 """Shared helpers for ACU tests. Every test runs a real AutoHotkey script through the real launcher."""
 
 import ctypes
+import json
 import os
 import subprocess
 import sys
@@ -59,6 +60,17 @@ def run_launcher(script, *args, timeout=60):
         encoding="utf-8",
         timeout=timeout,
     )
+
+
+def run_cli(script, *, timeout=5, args=()):
+    """Run the public CLI in a subprocess and retain its JSON facts for desktop checks."""
+    result = subprocess.run(
+        [sys.executable, "-m", "acu", "run", str(script), "--timeout", str(timeout), "--", *args],
+        cwd=REPO, capture_output=True, text=True, encoding="utf-8", timeout=timeout + 10,
+    )
+    facts = json.loads(result.stdout)
+    assert result.returncode == facts.get("exit_code"), result.stdout + result.stderr
+    return facts
 
 
 def run_acu(script_name, *args, timeout=60):

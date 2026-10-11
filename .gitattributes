@@ -1,3 +1,6 @@
 .githooks/openwiki-sync text eol=lf
 .githooks/post-commit text eol=lf
 .githooks/openwiki_post_commit.py text eol=lf
+
+# Illustrator documents contain binary streams even when their PDF header looks textual.
+*.ai binary

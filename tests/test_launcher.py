@@ -94,7 +94,7 @@ def test_timeout_asks_script_to_exit_then_reports_124(acu_home):
 
     assert result.returncode == 124, result.stdout + result.stderr
     assert "hang: exit handler ran" in result.stdout
-    assert landed == (50, 50), "the prelude's exit handler should have put the cursor back"
+    assert landed == (300, 300), "timeout must leave the cursor where the script moved it"
     assert "hang: finished sleeping" not in result.stdout
     assert "[acu] timeout" in result.stdout
     assert elapsed < 5, f"launcher took {elapsed:.1f}s to enforce a 1s timeout"

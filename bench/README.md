@@ -112,6 +112,8 @@ Codex `exec --json` provides final aggregate usage but no authoritative per-resp
 
 ## Evidence and debugging
 
+ACU's per-script cursor-position and foreground restoration was removed after the archived Testbench 1 runs, by [issue #11](https://github.com/stanley50z/ahk-computer-use/issues/11). New scripts leave desktop state in place and prepare English input automatically. The bench's post-trial owned-resource cleanup and saved-cursor-scheme reload remain unchanged. Preserve the archived skill fingerprints and measurements rather than treating older trials as runs of the new runtime.
+
 Every run preserves:
 
 - `plan.json`, frozen `scenario.md`, selected configuration and skill/scenario fingerprints;

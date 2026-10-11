@@ -3,8 +3,7 @@
 ;   - screen coordinates and per-monitor-v2 DPI awareness, so screenshot pixels are click coordinates
 ;   - no injected delays, so a script occupies the desktop for as short a time as possible
 ;   - runtime errors printed to stderr with exit code 1, and load-time warnings printed to stdout, never a dialog
-;   - the user's foreground window and cursor restored when the script ends, unless the user took over
-;     or the script called AcuKeepForeground() because its job was to leave a window showing
+;   - cursor position and foreground left at the script's last action, so hover states survive between runs
 ;   - UI Automation through the UIA class, so a script can find a control by name and act on it
 ;   - AcuLaunch, which starts a program and returns the one new window it opened, and AcuWaitUntil, an observed
 ;     wait that replaces a fixed Sleep
@@ -48,8 +47,7 @@ SetMouseDelay -1
 SetDefaultMouseSpeed 0
 
 OnError AcuReportError
-AcuSnapshotEntry()
-OnExit AcuRestore
+AcuInstallKeyboardGuard()
 
 ; ---------------------------------------------------------------------------------------------------
 ; Errors
@@ -87,186 +85,76 @@ AcuRedirectOutput(path) {
 }
 
 ; ---------------------------------------------------------------------------------------------------
-; Restore
-
-; What the desktop looked like when the script started, and what ACU has done to it since.
-class AcuState {
-    static entryWindow := 0
-    static entryX := 0
-    static entryY := 0
-    static placedX := ""     ; where ACU last put the cursor; "" until the first mouse action
-    static placedY := ""
-    static touched := Map()  ; process ids of the windows ACU clicked, plus the script's own
-    static keepForeground := false  ; set by AcuKeepForeground(): leave the foreground where the script put it
-}
-
-; For a script whose purpose is to leave an application showing. Call it anywhere; at exit the foreground
-; window is left alone and only the cursor goes back.
-AcuKeepForeground() {
-    AcuState.keepForeground := true
-}
-
-; Records the foreground window and cursor as they were before the script ran. Called once, at load.
-AcuSnapshotEntry() {
-    AcuState.entryWindow := WinExist("A")
-    MouseGetPos &x, &y
-    AcuState.entryX := x
-    AcuState.entryY := y
-    AcuState.touched[DllCall("GetCurrentProcessId")] := true
-}
-
-; Runs at every exit: normal, error, and the launcher's close request. Restores the entry foreground
-; window and cursor unless the evidence says the user took over or an unrelated window came forward.
-AcuRestore(reason, code) {
-    CoordMode "Mouse", "Screen"  ; the script may have switched modes; the snapshot is in screen pixels
-    MouseGetPos &x, &y
-    AcuExpectedCursor(&expectedX, &expectedY)
-    if (x != expectedX || y != expectedY) {
-        AcuNote("restore skipped: cursor moved by someone else")
-        return 0
-    }
-    if !AcuState.keepForeground
-        AcuRestoreForeground()
-    MouseMove AcuState.entryX, AcuState.entryY
-    return 0
-}
-
-; Puts the entry window back in front, unless an unrelated window came forward on its own.
-AcuRestoreForeground() {
-    try {
-        current := WinExist("A")
-        if (current && current != AcuState.entryWindow) {
-            if (AcuState.placedX != "" && !AcuState.touched.Has(WinGetPID(current)))
-                AcuNote("foreground left on " WinGetProcessName(current) " (ACU never clicked it)")
-            else if WinExist(AcuState.entryWindow)
-                WinActivate AcuState.entryWindow
-        }
-    } catch as failure {
-        AcuNote("restore failed: " failure.Message)
-    }
-}
-
-; Where the cursor is if nobody but ACU has touched it: the last place ACU put it, else where it was at entry.
-AcuExpectedCursor(&x, &y) {
-    x := AcuState.placedX != "" ? AcuState.placedX : AcuState.entryX
-    y := AcuState.placedY != "" ? AcuState.placedY : AcuState.entryY
-}
-
-; ---------------------------------------------------------------------------------------------------
-; Mouse tracking
-
-; The mouse functions are shadowed so the prelude learns where ACU put the cursor and which window it
-; clicked, without installing a hook. Each delegates to Send's {Click} syntax, which shares the built-in
-; Click's option parser, so agent scripts behave as the AutoHotkey documentation describes.
-Click(options*) {
-    joined := ""
-    for option in options
-        joined .= " " option
-    AcuTrackMouse(joined)
-    Send "{Click" joined "}"
-}
-
-MouseMove(x, y, speed := "", relative := "") {
-    options := x " " y " 0" AcuRelWord(relative)
-    AcuTrackMouse(options)
-    Send "{Click " options "}"
-}
-
-MouseClick(button := "Left", x := "", y := "", count := 1, speed := "", downOrUp := "", relative := "") {
-    coords := (x != "" && y != "") ? x " " y : ""  ; a lone number would otherwise be read as X with count as Y
-    options := button " " coords " " count " " downOrUp AcuRelWord(relative)
-    AcuTrackMouse(options)
-    Send "{Click " options "}"
-}
-
-MouseClickDrag(button, x1, y1, x2, y2, speed := "", relative := "") {
-    rel := AcuRelWord(relative)
-    AcuTrackMouse(x1 " " y1 rel)
-    Send "{Click " x1 " " y1 " " button " D" rel "}"
-    AcuTrackMouse(x2 " " y2 rel)
-    Send "{Click " x2 " " y2 " 0" rel "}"
-    Send "{Click " button " U}"
-}
-
-; The {Click} word for a mouse function's Relative parameter. A bare R would mean the right button.
-AcuRelWord(relative) {
-    return relative = "R" ? " Rel" : ""
-}
-
-; Records where a Click-style option string leaves the cursor and which process owns the window there.
-; Mirrors ParseClickOptions: the first two numbers are X and Y, a lone number is a repeat count.
-; Assumes the prelude's screen coordinate mode; a script that switches CoordMode defeats takeover detection.
-AcuTrackMouse(options) {
-    numbers := []
-    relative := false
-    for word in StrSplit(options, [" ", ",", "`t"]) {
-        if (word = "")
-            continue
-        if IsNumber(word)
-            numbers.Push(Integer(Float(word)))
-        else if (word = "Rel" || word = "Relative")
-            relative := true
-    }
-    if (numbers.Length < 2)
-        return
-    x := numbers[1]
-    y := numbers[2]
-    if relative {
-        AcuExpectedCursor(&baseX, &baseY)
-        x += baseX
-        y += baseY
-    }
-    AcuState.placedX := x
-    AcuState.placedY := y
-    AcuState.touched[AcuProcessAt(x, y)] := true
-}
-
-; Process id of the top-level window under a screen point, 0 if there is none.
-AcuProcessAt(x, y) {
-    hwnd := DllCall("WindowFromPoint", "int64", (x & 0xFFFFFFFF) | (y << 32), "ptr")
-    if !hwnd
-        return 0
-    root := DllCall("GetAncestor", "ptr", hwnd, "uint", 2, "ptr")
-    pid := 0
-    DllCall("GetWindowThreadProcessId", "ptr", root, "uint*", &pid)
-    return pid
-}
-
-; ---------------------------------------------------------------------------------------------------
 ; Launch and wait
 
-; Starts a program and returns the one new top-level window matching winTitle, as an object with hwnd, pid, title,
-; class and process, so a script never guesses which window it opened. The windows that exist before the launch are
-; snapshotted and never selected. Throws when no new matching window appears within timeoutMs, or when several do.
-; A window can exist before its content does: Calculator's frame appears first and its buttons follow, so a dump
-; taken at once showed only the title bar. The remaining time is therefore spent waiting until the window's
-; accessibility tree stops growing (two equal counts 150 ms apart); `elements` reports the count it settled at.
+; Starts a program, allows startup windows up to 500 ms to settle within the timeout, and returns one new match.
+; Existing windows are never selected. Persistent ambiguity reports every candidate rather than guessing.
 AcuLaunch(command, winTitle, timeoutMs := 10000) {
     existing := Map()
-    for hwnd in WinGetList()
-        existing[hwnd] := true
-    Run command
-    deadline := A_TickCount + timeoutMs
-    found := []
-    loop {
-        found := []
+    detection := A_DetectHiddenWindows
+    DetectHiddenWindows true
+    try {
+        for hwnd in WinGetList()
+            existing[hwnd] := true
+    } finally
+        DetectHiddenWindows detection
+    candidates() {
+        local matches := []
         for hwnd in WinGetList(winTitle)
             if !existing.Has(hwnd)
-                found.Push(hwnd)
-        if (found.Length || A_TickCount >= deadline)
-            break
-        Sleep 50
+                matches.Push(hwnd)
+        return matches
     }
-    if (found.Length = 0)
-        throw Error("no new window matching " winTitle " appeared within " timeoutMs " ms after: " command)
-    if (found.Length > 1)
-        throw Error(found.Length " new windows match " winTitle "; list the windows and select one by its observed title and class")
-    target := "ahk_id " found[1]
-    elements := AcuTreeSettle(found[1], Max(1000, deadline - A_TickCount))
-    return {hwnd: found[1], pid: WinGetPID(target), title: WinGetTitle(target), class: WinGetClass(target), process: WinGetProcessName(target), elements: elements}
+    Run command
+    deadline := A_TickCount + timeoutMs
+    settleMs := Min(500, Max(0, timeoutMs // 3))
+    quietMs := Min(150, settleMs)
+    firstSeen := 0, stableSince := 0, previous := ""
+    loop {
+        found := candidates()
+        now := A_TickCount
+        key := ""
+        for hwnd in found
+            key .= hwnd "|"
+        if (key != previous) {
+            previous := key
+            stableSince := now
+        }
+        if (found.Length && !firstSeen)
+            firstSeen := now
+        if (found.Length = 1 && now - firstSeen >= settleMs && now - stableSince >= quietMs) {
+            elements := AcuTreeSettle(found[1], Max(1, deadline - now))
+            current := candidates()
+            if (current.Length = 1 && current[1] = found[1]) {
+                target := "ahk_id " found[1]
+                return {hwnd: found[1], pid: WinGetPID(target), title: WinGetTitle(target), class: WinGetClass(target), process: WinGetProcessName(target), elements: elements}
+            }
+        }
+        if (A_TickCount >= deadline) {
+            if (found.Length > 1)
+                throw Error(AcuLaunchAmbiguity(found, winTitle))
+            if !found.Length
+                throw Error("no new window matching " winTitle " appeared within " timeoutMs " ms after: " command)
+            throw Error("new window matching " winTitle " did not settle within " timeoutMs " ms")
+        }
+        Sleep Min(50, Max(1, deadline - A_TickCount))
+    }
 }
 
-; Waits until a window's control-view tree holds the same number of elements on two polls 150 ms apart, or waitMs
+; Formats the observed candidates in a failed launch so the next look can select by identity.
+AcuLaunchAmbiguity(found, winTitle) {
+    text := found.Length " new windows match " winTitle "; select by observed title and class"
+    for hwnd in found {
+        target := "ahk_id " hwnd
+        try
+            text .= "`n  hwnd=" hwnd " title=" WinGetTitle(target) " class=" WinGetClass(target) " pid=" WinGetPID(target)
+        catch as failure
+            text .= "`n  hwnd=" hwnd " unavailable: " failure.Message
+    }
+    return text
+}
+
+; Waits until a window's control-view tree holds the same number of elements on two polls, normally 150 ms apart, or waitMs
 ; runs out, and returns the last count. A provider that is not answering yet counts as zero and is polled again.
 AcuTreeSettle(hwnd, waitMs := 3000) {
     deadline := A_TickCount + waitMs
@@ -281,7 +169,7 @@ AcuTreeSettle(hwnd, waitMs := 3000) {
         if (A_TickCount >= deadline)
             return count
         previous := count
-        Sleep 150
+        Sleep Min(150, Max(1, deadline - A_TickCount))
     }
 }
 
@@ -305,6 +193,9 @@ AcuWaitUntil(predicate, timeoutMs := 2000, intervalMs := 25) {
 ; Descolada's UIA-v2 library (MIT, see lib/UIA-LICENSE.txt). It costs about 30 ms per script and gives every
 ; script the accessibility tree: UIA.ElementFromHandle(target).FindElement({Type:"Button", Name:"Six"}).Invoke()
 #Include "%A_LineFile%\..\lib\UIA.ahk"
+
+; First-party input-language guard; plain native send calls are checked before injecting keys.
+#Include "%A_LineFile%\..\lib\keyboard.ahk"
 
 ; First-party: AcuTree (lib/dump.ahk) and AcuScreenshot (lib/capture.ahk). tree.ahk and screenshot.ahk are their
 ; command-line wrappers, so a script can do in one run what the agent would otherwise spend a separate call on.

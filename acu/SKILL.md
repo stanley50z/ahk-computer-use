@@ -35,7 +35,7 @@ Look, act, check. Repeat until the user's postcondition is observed. The task is
 
 ### 1. Look
 
-Find the window before its controls. To open a program, call `AcuLaunch(command, winTitle, timeoutMs := 10000)`: it snapshots the existing top-level windows, runs the command, waits for exactly one new window matching `winTitle` (any AutoHotkey WinTitle, such as `"Calculator"` or `"ahk_class Notepad++"`), waits for that window's accessibility tree to stop growing, and returns an object with `hwnd`, `pid`, `title`, `class`, `process`, and `elements`, the tree size it settled at. A dump taken right after it sees the window's controls, not just its frame. Existing windows are never selected. It throws when no new window appears in time or several do; then list the windows and choose by observed title and class instead of guessing:
+Find the window before its controls. To open a program, call `AcuLaunch(command, winTitle, timeoutMs := 10000)`: it snapshots the existing top-level windows, including hidden ones, runs the command, waits for exactly one new window matching `winTitle` (any AutoHotkey WinTitle, such as `"Calculator"` or `"ahk_class Notepad++"`), waits for that window's accessibility tree to stop growing, and returns an object with `hwnd`, `pid`, `title`, `class`, `process`, and `elements`, the tree size it settled at. It allows startup windows up to 500 ms to settle within the timeout and rechecks the candidates before returning. Multiple candidates are allowed to clear until the deadline; only remaining ambiguity fails. A dump taken right after it sees the window's controls, not just its frame. Existing windows are never selected. An ambiguity error lists each candidate's handle, title, class, and PID. It throws when no new window appears in time or several do; then list the windows and choose by observed title and class instead of guessing:
 
 ```autohotkey
 for hwnd in WinGetList() {
@@ -62,11 +62,11 @@ acu run screenshot.ahk -- app "<WinTitle or ahk_id>"
 acu run screenshot.ahk -- custom <x1> <y1> <x2> <y2>
 ```
 
-Inside a script: `shot := AcuScreenshot({app: target}, outPath)`, or `{monitor: 2}`, or `{rect: [x1, y1, x2, y2]}`, with an optional third argument for the longest side; it returns `saved`, `x`, `y`, `w`, `h`, `scale`, and `text`, the same four lines the script prints. Rectangle coordinates are exclusive at the far edge. Options are `--max <pixels>` for the longest saved side (default 1280, `0` keeps full resolution) and `--out <path.png>`. The script prints `saved=`, `image=`, `source=`, and `scale=` in `output`; read the PNG separately. An image point (px,py) is the screen point (sourceX + px * scale, sourceY + py * scale). App capture never activates the window and can render a covered one; a minimized window is an error. Without `--out`, only the newest thirty managed screenshots are kept; an explicit `--out` may overwrite a file, so use only an authorized path.
+Inside a script: `shot := AcuScreenshot({app: target}, outPath)`, or `{monitor: 2}`, or `{rect: [x1, y1, x2, y2]}`, with an optional third argument for the longest side; it returns `saved`, `x`, `y`, `w`, `h`, `scale`, and `text`, the same four lines the script prints. Rectangle coordinates are exclusive at the far edge. Options are `--max <pixels>` for the longest saved side (default 1280, `0` keeps full resolution) and `--out <path.png>`. The script prints `saved=`, `image=`, `source=`, and `scale=` in `output`; read the PNG separately. An image point (px,py) is the screen point (sourceX + px * scale, sourceY + py * scale). App capture uses `PrintWindow` to render that one window without activating it, even when covered; a minimized window is an error. It may omit separate menus, popup windows, or dialogs. Use app capture for document content. For transient UI, activate the intended window and use an on-screen monitor or rectangle capture with nothing covering the target. Wait for an observed menu/dialog state or repaint before capturing; an unchanged immediate image does not prove that the action failed. A sparse main-window tree may also omit those popups. Without `--out`, only the newest thirty managed screenshots are kept; an explicit `--out` may overwrite a file, so use only an authorized path.
 
 ### 2. Act
 
-Write plain AutoHotkey v2: ACU supplies the prelude, screen coordinates, per-monitor DPI awareness, the `UIA` class, zero mouse delays, runtime error reporting, and exit restore. A script should finish well within the default 30-second watchdog.
+Write plain AutoHotkey v2: ACU supplies the prelude, screen coordinates, per-monitor DPI awareness, the `UIA` class, zero mouse delays, runtime error reporting, and English input preparation. A script should finish well within the default 30-second watchdog.
 
 Prefer named controls and semantic UI Automation actions, then element bounds, then screenshot coordinates:
 
@@ -93,7 +93,9 @@ dialog := AcuWaitUntil(() => WinExist("Save As"), 5000)
 
 `Run` returns before a program's window appears; `AcuLaunch` waits for it. In a file dialog, set File name to a full path and invoke Save; verify the saved file or the changed title, not just that the dialog closed.
 
-End at a stable state. The prelude restores the user's foreground window and cursor. Call `AcuKeepForeground()` when the purpose is to leave an application or transient menu showing; the cursor still returns. The script stays yours on success, error, or timeout. Remove only your own temporary scripts when finished, unless the task requires keeping them as evidence.
+When the target input is non-English, ACU selects an already-loaded English keyboard at startup and checks again immediately before native `Send`, `SendInput`, `SendEvent`, `SendPlay`, `SendText`, `ControlSend`, or `ControlSendText` input. It prefers English (United States), otherwise another loaded English layout, and verifies the switch. If there is no English keyboard available, it warns; ask the user to add an English keyboard. Startup warnings still allow inspection and mouse actions, but native keyboard sends stop before input if English preparation fails. A rejected switch also stops the send before keys are sent. It does not install layouts or restore the earlier input language.
+
+End at a stable state. Cursor position and foreground stay where the script's actions leave them, including on error or timeout; hover menus can remain open between runs. There is no restoration or opt-out call. The script stays yours on success, error, or timeout. Remove only your own temporary scripts when finished, unless the task requires keeping them as evidence.
 
 ### 3. Check
 
@@ -105,7 +107,7 @@ Print facts with `FileAppend ..., "*"` and read state back in the script. An Inv
 - `timeout`, exit 124: watchdog fired; inspect before acting again.
 - `error` without an execution outcome: invalid request or tool failure; read the diagnostic. A `busy` error means another tool call owns the desktop: inspect before retrying.
 
-If output says `restore skipped: cursor moved by someone else`, stop and ask before continuing. If it says an unrelated foreground was left alone, look before acting again.
+If English input preparation fails, inspect the warning/error before continuing; repeating the same send cannot fix a missing keyboard or a rejected language switch.
 
 ## Operational facts
 

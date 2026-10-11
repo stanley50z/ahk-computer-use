@@ -1,6 +1,6 @@
 # Every script runs under a prelude the launcher injects
 
-The agent writes plain AutoHotkey v2 and the launcher prepends the prelude with AutoHotkey's `/include` switch, so screen coordinates, per-monitor DPI awareness, zero mouse delay, error and warning reporting, restore, and the UI Automation class exist in every script without boilerplate. The alternative, a template the agent copies, drifts the moment the agent edits it.
+The agent writes plain AutoHotkey v2 and the launcher prepends the prelude with AutoHotkey's `/include` switch, so screen coordinates, per-monitor DPI awareness, zero mouse delay, error and warning reporting, English input preparation, and the UI Automation class exist in every script without boilerplate. The alternative, a template the agent copies, drifts the moment the agent edits it.
 
 ## Deliberate deviations from AutoHotkey's defaults
 

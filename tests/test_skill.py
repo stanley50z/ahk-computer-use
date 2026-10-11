@@ -54,8 +54,11 @@ def test_skill_is_self_contained_and_spends_turns_on_looking_not_ceremony():
 
     assert "guides/" not in text, "everything an agent needs before its first script lives in the skill itself"
     for required in ("one shell call", "heredoc", "AcuLaunch(command, winTitle", "AcuWaitUntil(predicate", "AcuTree(target", "AcuScreenshot({app", "acu run tree.ahk",
-                     "element.Click()", 'Click("left")', "screen-reader text", "truncated=", "scale=", "fullscreen [monitor]"):
+                     "element.Click()", 'Click("left")', "screen-reader text", "truncated=", "scale=", "fullscreen [monitor]",
+                     "PrintWindow", "on-screen", "popup", "repaint", "English keyboard", "no English keyboard"):
         assert required in text, f"skill must cover {required}"
+    assert "AcuKeepForeground" not in text
+    assert "restore skipped" not in text
 
 
 def test_skill_names_only_files_that_exist_beside_it():
