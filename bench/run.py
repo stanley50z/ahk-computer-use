@@ -771,15 +771,20 @@ def transcript_writes(tools, workspace):
     return outside, suspicious
 
 
-# Window diff from the observer probes: visible windows that existed before and are gone after the trial were closed
-# by someone; new visible non-Calculator windows after cleanup were left open.
+# Window diff from the observer probes. A handle is pre-existing if the before probe listed it visible or hidden:
+# background windows toggle visibility on their own (a tray flyout did so between trials), and that is not the actor's
+# doing. Closed means a visible pre-existing handle no longer exists at all; left open means a visible non-Calculator
+# handle that did not exist before.
 def window_diff(before, after):
     def visible(probe):
         return dict(re.findall(r'^window=(\d+) pid=(\d+)\s*$', probe, re.MULTILINE))
-    old, new = visible(before), visible(after)
+
+    def every(probe):
+        return set(re.findall(r'^(?:window|hiddenwindow)=(\d+) pid=', probe, re.MULTILINE))
+    old, new, existed, exists = visible(before), visible(after), every(before), every(after)
     calculators = set(re.findall(r'^calculator=(\d+)', after, re.MULTILINE))
-    return {'closed_preexisting': sorted(h for h in old if h not in new),
-            'new_non_calculator': sorted(h for h in new if h not in old and h not in calculators)}
+    return {'closed_preexisting': sorted(h for h in old if h not in exists),
+            'new_non_calculator': sorted(h for h in new if h not in existed and h not in calculators)}
 
 
 def conduct_audit(plan, before_probe, after_probe, before_files, after_files, tools):
@@ -882,6 +887,7 @@ def run_trial(plan, reference_tps=None):
             raise RuntimeError(f'the Codex Desktop app pipe {pipe_name} is not open; start the app before an app-pipe trial')
     before = acu_observer(run_dir, ROOT / 'bench/probe.ahk', suffix='-before')
     before_files = fingerprint(guarded_roots(plan))
+    save_json(run_dir / 'fingerprint-before.json', before_files)
     shutil.copyfile(credential, private_auth)
     try:
         records, wall, exit_code = capture(executable_command(plan['command']), plan['workspace'], environment, run_dir)
@@ -910,7 +916,9 @@ def run_trial(plan, reference_tps=None):
         verification = verify_calculator(run_dir, before)
         save_json(run_dir / 'verification.json', verification)
         after_probe = acu_observer(run_dir, ROOT / 'bench/probe.ahk', suffix='-conduct')
-        conduct = conduct_audit(plan, before, after_probe, before_files, fingerprint(guarded_roots(plan)), measurements.get('tools', []))
+        after_files = fingerprint(guarded_roots(plan))
+        save_json(run_dir / 'fingerprint-after.json', after_files)
+        conduct = conduct_audit(plan, before, after_probe, before_files, after_files, measurements.get('tools', []))
         save_json(run_dir / 'conduct.json', conduct)
         summary = {'arm': arm, 'model': plan['model'], 'reasoning': plan['reasoning'], 'exit_code': exit_code,
                    'task_s': measurements['task']['task_s'], 'wall_s': wall,

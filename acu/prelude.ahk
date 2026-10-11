@@ -238,6 +238,9 @@ AcuProcessAt(x, y) {
 ; Starts a program and returns the one new top-level window matching winTitle, as an object with hwnd, pid, title,
 ; class and process, so a script never guesses which window it opened. The windows that exist before the launch are
 ; snapshotted and never selected. Throws when no new matching window appears within timeoutMs, or when several do.
+; A window can exist before its content does: Calculator's frame appears first and its buttons follow, so a dump
+; taken at once showed only the title bar. The remaining time is therefore spent waiting until the window's
+; accessibility tree stops growing (two equal counts 150 ms apart); `elements` reports the count it settled at.
 AcuLaunch(command, winTitle, timeoutMs := 10000) {
     existing := Map()
     for hwnd in WinGetList()
@@ -259,7 +262,27 @@ AcuLaunch(command, winTitle, timeoutMs := 10000) {
     if (found.Length > 1)
         throw Error(found.Length " new windows match " winTitle "; list the windows and select one by its observed title and class")
     target := "ahk_id " found[1]
-    return {hwnd: found[1], pid: WinGetPID(target), title: WinGetTitle(target), class: WinGetClass(target), process: WinGetProcessName(target)}
+    elements := AcuTreeSettle(found[1], Max(1000, deadline - A_TickCount))
+    return {hwnd: found[1], pid: WinGetPID(target), title: WinGetTitle(target), class: WinGetClass(target), process: WinGetProcessName(target), elements: elements}
+}
+
+; Waits until a window's control-view tree holds the same number of elements on two polls 150 ms apart, or waitMs
+; runs out, and returns the last count. A provider that is not answering yet counts as zero and is polled again.
+AcuTreeSettle(hwnd, waitMs := 3000) {
+    deadline := A_TickCount + waitMs
+    previous := -1
+    loop {
+        try
+            count := UIA.ElementFromHandle(hwnd).FindElements(UIA.TrueCondition).Length
+        catch
+            count := 0
+        if (count > 0 && count = previous)
+            return count
+        if (A_TickCount >= deadline)
+            return count
+        previous := count
+        Sleep 150
+    }
 }
 
 ; Polls predicate until it returns a true value, for at most timeoutMs, and returns that value, or 0 when the time

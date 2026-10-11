@@ -42,6 +42,8 @@ def test_acu_launch_returns_the_one_new_window_and_refuses_to_guess():
     assert reported(result.stdout, "process").lower() == plain_ahk_exe().name.lower()
     assert int(reported(result.stdout, "hwnd")) > 0 and int(reported(result.stdout, "pid")) > 0
     assert reported(result.stdout, "exists") == "1"
+    assert int(reported(result.stdout, "elements")) >= 1, "AcuLaunch waits for the window's tree before returning"
+    assert int(reported(result.stdout, "dumped")) >= 1
     assert reported(result.stdout, "nowindow").startswith("no new window matching")
 
 

@@ -35,7 +35,7 @@ Look, act, check. Repeat until the user's postcondition is observed. The task is
 
 ### 1. Look
 
-Find the window before its controls. To open a program, call `AcuLaunch(command, winTitle, timeoutMs := 10000)`: it snapshots the existing top-level windows, runs the command, waits for exactly one new window matching `winTitle` (any AutoHotkey WinTitle, such as `"Calculator"` or `"ahk_class Notepad++"`), and returns an object with `hwnd`, `pid`, `title`, `class`, and `process`. Existing windows are never selected. It throws when no new window appears in time or several do; then list the windows and choose by observed title and class instead of guessing:
+Find the window before its controls. To open a program, call `AcuLaunch(command, winTitle, timeoutMs := 10000)`: it snapshots the existing top-level windows, runs the command, waits for exactly one new window matching `winTitle` (any AutoHotkey WinTitle, such as `"Calculator"` or `"ahk_class Notepad++"`), waits for that window's accessibility tree to stop growing, and returns an object with `hwnd`, `pid`, `title`, `class`, `process`, and `elements`, the tree size it settled at. A dump taken right after it sees the window's controls, not just its frame. Existing windows are never selected. It throws when no new window appears in time or several do; then list the windows and choose by observed title and class instead of guessing:
 
 ```autohotkey
 for hwnd in WinGetList() {
@@ -78,7 +78,7 @@ root.ElementFromPath("2,2,2,5,3").Invoke()                     ; by path from th
 root.FindElement({Type:"Edit"}).Value := "text"               ; a control flagged value
 ```
 
-Combine selectors or search within a parent when ids repeat. Toggle, Select, and Expand use the corresponding patterns. `element.Click()` with no argument is semantic too: it invokes, toggles, or selects. Pointer input is `element.Click("left")`, which moves the cursor to the element's center and needs the window in the foreground. Before pointer input or keys, call `WinActivate`, then `WinWaitActive(target, , 2)` and throw if it returns zero; never click into another application. Use `SendText` for literal text and `Send` for keys and chords. Variable names share the namespace with functions and classes: use `field`, `target`, `box`, or `bar` rather than `edit`, `click`, `send`, `run`, `menu`, or `gui`.
+Combine selectors or search within a parent when ids repeat. Toggle, Select, and Expand use the corresponding patterns. `element.Click()` with no argument is semantic too: it invokes, toggles, or selects. Pointer input is `element.Click("left")`, which moves the cursor to the element's center and needs the window in the foreground. Before pointer input or keys, call `WinActivate`, then `WinWaitActive(target, , 2)` and throw if it returns zero; never click into another application. **Type text with `SendText`, never `Send`.** `Send` reads `+ ^ ! #` as Shift, Control, Alt and Win and `{}` as key names, so `Send "2+3="` presses Shift+3 and Calculator shows `2^3`. `Send` is for keys and chords only: `Send "{Enter}"`, `Send "^s"`. Variable names share the namespace with functions and classes: use `field`, `target`, `box`, or `bar` rather than `edit`, `click`, `send`, `run`, `menu`, or `gui`.
 
 Wait on observed state, not fixed sleeps. `AcuWaitUntil(predicate, timeoutMs := 2000, intervalMs := 25)` polls the predicate until it returns a true value and returns that value, or `0` when the time runs out. Pick a fact the action really changes:
 

@@ -7,7 +7,9 @@ EnvSet "ACU_TEST_X", "300"
 EnvSet "ACU_TEST_Y", "300"
 window := AcuLaunch('"' exe '" "' helper '"', title)
 FileAppend "hwnd=" window.hwnd "`npid=" window.pid "`ntitle=" window.title "`nclass=" window.class "`nprocess=" window.process "`n", "*"
-FileAppend "exists=" (WinExist("ahk_id " window.hwnd) ? 1 : 0) "`n", "*"
+FileAppend "exists=" (WinExist("ahk_id " window.hwnd) ? 1 : 0) "`nelements=" window.elements "`n", "*"
+; The tree was already settled when AcuLaunch returned, so a dump now sees the same controls it counted.
+FileAppend "dumped=" (StrSplit(AcuTree("ahk_id " window.hwnd), "`n").Length - 3) "`n", "*"
 WinClose "ahk_id " window.hwnd
 ; A command that opens no window must be reported as such, not returned as a guess.
 try {
