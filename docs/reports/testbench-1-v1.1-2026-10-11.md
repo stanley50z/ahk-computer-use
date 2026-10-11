@@ -69,7 +69,31 @@ The window check fired on CUA and native with the same handle, 66054, owned by `
 
 **Claude Code + ACU: median 17.54 s, range 16.18 to 19.54 s.** Two of three chose Invoke this time and one typed; the model alternates freely between the two routes with no instruction either way. The one hiccup was the actor's own AutoHotkey bug, an `InStr` with an empty needle inside its wait predicate, which it diagnosed from the error and recovered from in one extra call. Its first shell call still carries 4 to 8 s of Claude Code tool start-up that ACU's launcher does not see.
 
-With four completed v1.1 trials per ACU arm the two configurations sit within two seconds of each other and well under the other arms' single samples: CUA 103.5 s, native 54.1 s. The result is now stable enough that further Calculator trials would measure provider latency, not ACU. Combined record: `.pi/bench/testbench-1-v1.1-acu-repeats-20261011.json`.
+## Three repeats for the other two arms, 04:07 to 04:18 UTC
+
+The same balance for CUA and native, so every arm has four v1.1 trials. All six passed task, isolation, conduct and cleanup; the daemon restart ran before each CUA trial and no stale label was hit.
+
+| Trial | Route | Task time | Responses | Computer-use calls | Tokens |
+| --- | --- | ---: | ---: | ---: | ---: |
+| pi-cua 644e0f | Invoke by token, helper | 88.28 s | 9 | 5 | 208,774 |
+| pi-cua 256092 | Invoke by token, helper | 106.43 s | 11 | 7 | 283,289 |
+| pi-cua 4dd675 | Invoke by token, helper | 107.75 s | 11 | 7 | 200,747 |
+| codex 2482dc | Keyboard, one cell | 52.45 s | n/a | 7 | 364,572 |
+| codex 89d1d6 | Keyboard, one cell | 60.34 s | n/a | 8 | 427,832 |
+| codex 21847a | Keyboard, one cell | 48.02 s | n/a | 6 | 229,711 |
+
+CUA's helper, the 27 click-and-refresh pairs, took 53.8, 57.5 and 69.6 s of its three runs; every CUA actor reported the `Minus (` accessibility wording and checked a screenshot. Every native actor typed all keys in one cell of about 8 s and reported null accessibility.
+
+## Scenario v1.1, four trials per arm
+
+| Arm | Trials | Median task time | Range | Median tokens | Route chosen |
+| --- | ---: | ---: | --- | ---: | --- |
+| Pi + ACU | 4 | 16.29 s | 15.02 to 44.13 s | 37,894 | typed (1 of 4 recovered from a `Send` mistake, before the fix) |
+| Claude Code + ACU | 4 | 16.96 s | 16.18 to 19.54 s | 37,336 | typed 2, invoked 2 |
+| Codex + native | 4 | 53.27 s | 48.02 to 60.34 s | 297,410 | typed, one cell |
+| Pi + CUA | 4 | 104.97 s | 88.28 to 107.75 s | 204,761 | invoked by token |
+
+All sixteen trials passed every check. The ACU arms are the fastest by a factor of three over native and six over CUA, and use a fifth to an eighth of the tokens. The spread within each arm is now small relative to the gaps between arms. Combined record: `.pi/bench/testbench-1-v1.1-all-20261011.json`.
 
 ## Cleanup
 

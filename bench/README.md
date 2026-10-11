@@ -8,8 +8,8 @@ Compare four fresh agent configurations, not a knowledgeable parent agent solvin
 | --- | --- | --- | --- |
 | `pi-acu` | Pi | Project ACU skill and CLI | v1.1, three trials after the `Send`/settle fixes: median 15.90 s (15.02 to 16.68), six responses each; the first v1.1 trial took 44.13 s on a `Send` modifier mistake |
 | `claude-acu` | Claude Code | Project ACU skill and CLI | v1.1 with Opus 5.5/low, four trials: median 17.0 s (16.18 to 19.54), four to five responses |
-| `pi-cua` | Pi | Installed `cua-driver` skill and CLI | v1.1 passed: task time 103.51 s; daemon restarted before the trial |
-| `codex-computer-use` | Codex CLI | Installed `computer-use` skill, native `@oai/sky` through `node_repl` | v1.1 passed by keyboard in one cell: task time 54.09 s |
+| `pi-cua` | Pi | Installed `cua-driver` skill and CLI | v1.1, four trials: median 104.97 s (88.28 to 107.75); daemon restarted before each |
+| `codex-computer-use` | Codex CLI | Installed `computer-use` skill, native `@oai/sky` through `node_repl` | v1.1, four trials by keyboard: median 53.27 s (48.02 to 60.34) |
 
 The GPT harnesses use **GPT-6.1 (`gpt-6.1-sol`) at low reasoning**; Pi uses the `openai` provider. This supersedes the earlier GPT-6 Astra acceptance-test choice for this bench only. Claude Code runs only Claude models, so `claude-acu` is the one exception: **Opus 5.5 (`claude-opus-5-5`) at low effort**, by the user's decision on 2026-10-10 after round 2, which had used Haiku 5.5 at high effort. No automatic provider/model fallback, parent coaching, or retry after a blocked trial. Each further desktop trial needs explicit approval.
 
