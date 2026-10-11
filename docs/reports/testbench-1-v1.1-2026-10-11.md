@@ -49,10 +49,27 @@ Guarded files unchanged in all four trials: no actor touched the skill, the laun
 
 The window check fired on CUA and native with the same handle, 66054, owned by `explorer.exe`. That window has existed all day and toggles its own visibility; the first version of the diff compared visible sets only, so a background window that became visible during a trial counted as new. Fixed: a handle listed visible or hidden in the before probe is pre-existing. The two `conduct.json` files were recomputed from their saved probes and carry a note; the fingerprints are now saved per run as `fingerprint-before.json` and `fingerprint-after.json` so file checks can be replayed too.
 
-## Candidate ACU changes, not applied
+## Candidate ACU changes, applied in `319a1cd`
 
-- Skill: say outright that `Send` treats `+ ^ ! #` as modifiers and that an expression or any literal text goes through `SendText`. The rule is there; it needs to be impossible to miss.
-- `AcuTree`, or `AcuLaunch`: wait until the window's tree has more than its frame before returning, bounded like the existing retry.
+- Skill: `Send` treats `+ ^ ! #` as modifiers; text goes through `SendText`. Now stated in bold with the exact Calculator example.
+- `AcuLaunch` waits until the window's tree stops growing before returning, and reports the count as `elements`.
+
+## Three repeats per ACU arm after the fixes, 03:58 to 04:03 UTC
+
+| Trial | Route | Task time | Responses | Computer-use calls | Tokens | Hiccups |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| pi-acu 3894c7 | `SendText`, Invoke on Equals | 15.90 s | 6 | 2 | 37,843 | none |
+| pi-acu a28397 | `SendText` with `=` | 16.68 s | 6 | 2 | 37,743 | none |
+| pi-acu 15801e | `SendText`, Invoke on Equals | 15.02 s | 6 | 2 | 37,945 | none |
+| claude-acu 10a667 | Invoke by AutomationId | 17.54 s | 4 | 1 | 37,583 | none |
+| claude-acu aa0890 | Clear, `SendText` with `=` | 19.54 s | 5 | 2 | 51,656 | its own wait predicate threw after typing; a read-only script recovered |
+| claude-acu 5499af | Invoke by name, `AcuWaitUntil` per press | 16.18 s | 4 | 1 | 36,765 | none |
+
+**Pi + ACU: median 15.90 s, range 15.02 to 16.68 s, six responses every time.** All three used `SendText`; none repeated the `Send` mistake that cost the first v1.1 trial 28 s. `AcuLaunch` reported `elements=76` in each launch, and each actor's first dump saw the full control set, so the empty-frame detour is gone too. The three trials differ by less than two seconds, and that spread is model latency: the two scripts took 2.7 to 3.0 s of tool time in every trial.
+
+**Claude Code + ACU: median 17.54 s, range 16.18 to 19.54 s.** Two of three chose Invoke this time and one typed; the model alternates freely between the two routes with no instruction either way. The one hiccup was the actor's own AutoHotkey bug, an `InStr` with an empty needle inside its wait predicate, which it diagnosed from the error and recovered from in one extra call. Its first shell call still carries 4 to 8 s of Claude Code tool start-up that ACU's launcher does not see.
+
+With four completed v1.1 trials per ACU arm the two configurations sit within two seconds of each other and well under the other arms' single samples: CUA 103.5 s, native 54.1 s. The result is now stable enough that further Calculator trials would measure provider latency, not ACU. Combined record: `.pi/bench/testbench-1-v1.1-acu-repeats-20261011.json`.
 
 ## Cleanup
 

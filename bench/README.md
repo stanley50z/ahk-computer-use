@@ -6,8 +6,8 @@ Compare four fresh agent configurations, not a knowledgeable parent agent solvin
 
 | Arm | Harness | Only computer-use skill/runtime | Status |
 | --- | --- | --- | --- |
-| `pi-acu` | Pi | Project ACU skill and CLI | v1.1 passed: task time 44.13 s after a `Send` modifier mistake and recovery (v1.0 best 17.54 s) |
-| `claude-acu` | Claude Code | Project ACU skill and CLI | v1.1 passed with Opus 5.5/low by `SendText` in one script: task time 16.38 s |
+| `pi-acu` | Pi | Project ACU skill and CLI | v1.1, three trials after the `Send`/settle fixes: median 15.90 s (15.02 to 16.68), six responses each; the first v1.1 trial took 44.13 s on a `Send` modifier mistake |
+| `claude-acu` | Claude Code | Project ACU skill and CLI | v1.1 with Opus 5.5/low, four trials: median 17.0 s (16.18 to 19.54), four to five responses |
 | `pi-cua` | Pi | Installed `cua-driver` skill and CLI | v1.1 passed: task time 103.51 s; daemon restarted before the trial |
 | `codex-computer-use` | Codex CLI | Installed `computer-use` skill, native `@oai/sky` through `node_repl` | v1.1 passed by keyboard in one cell: task time 54.09 s |
 
