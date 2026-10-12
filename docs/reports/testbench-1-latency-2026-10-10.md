@@ -1,4 +1,4 @@
-# Testbench 1 latency analysis and deadline removal
+# Calculator latency analysis and deadline removal
 
 The 240-second value was an overall benchmark-worker safety default, not an ACU limitation or a measured requirement of the Calculator task. The user rejected it. It has now been removed from `bench/start.py`, `bench/run.py`, and the capture loop—not raised or made an implicit fallback. Future actors run until completion, failure, or explicit cancellation through `bench/stop.py`.
 

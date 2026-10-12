@@ -1,4 +1,4 @@
-# Testbench 2: Cloud9 source inspection
+# Adobe Illustrator Pen and Export: Cloud9 source inspection
 
 Maintainer-only preparation notes. Do not copy this document, the source package, the official vectors, or the guidelines into an actor workspace. The actor needs a prepared drawing document and the drawing/export task, not asset provenance or brand research.
 
@@ -6,7 +6,7 @@ Maintainer-only preparation notes. Do not copy this document, the source package
 
 Specification and continuing design: [issue #10](https://github.com/stanley50z/ahk-computer-use/issues/10).
 
-The user proposed recreating the Cloud9 icon with Adobe Illustrator's Pen tool using the official JPEG as the visual reference, then comparing the output with the official artwork. Testbench 2 should test only drawing the shape with the Pen tool and exporting with the requested parameters. The user wants to remove unrelated decisions, not selectively remove actions from timing. Supply explicit values and instructions for supporting settings. Measure the actor's task continuously, including every setup, appearance, drawing, saving, and export action it performs. Do not time individual steps or subtract selected steps. A fixed starter may establish the common initial state before the actor begins; independent grading follows the task. The actor selects the specified fill color rather than receiving a preconfigured fill. No benchmark trials were authorized or run during this inspection.
+The user proposed recreating the Cloud9 icon with Adobe Illustrator's Pen tool using the official JPEG as the visual reference, then comparing the output with the official artwork. The Illustrator benchmark should test only drawing the shape with the Pen tool and exporting with the requested parameters. The user wants to remove unrelated decisions, not selectively remove actions from timing. Supply explicit values and instructions for supporting settings. Measure the actor's task continuously, including every setup, appearance, drawing, saving, and export action it performs. Do not time individual steps or subtract selected steps. A fixed starter may establish the common initial state before the actor begins; independent grading follows the task. The actor selects the specified fill color rather than receiving a preconfigured fill. No benchmark trials were authorized or run during this inspection.
 
 The source of the official files is **http://c9.gg/logos**, recorded at the user's request. This URL must not appear in the actor prompt or starter document. It is provenance supplied by the user, not a web-source verification performed in this session.
 
@@ -88,8 +88,8 @@ The user's scope is Pen-tool drawing and export. Selecting the stated fill color
 
 Created starter (authorized by the user, then revised to remove the proposed reference layer):
 
-- `bench/assets/testbench-2/Cloud9-Pen-Starter.ai`: a fresh 800 × 800-point RGB document, one artboard named `Drawing`, one empty visible/unlocked/printable layer named `Drawing`.
-- `bench/assets/testbench-2/Cloud9-Reference.jpg`: a separate, byte-identical copy of the official 800 × 800 JPEG. It is not embedded or linked in the starter. The actor receives the two files plainly; no locked tracing reference is prepared.
+- `bench/assets/illustrator-pen-export/Cloud9-Pen-Starter.ai`: a fresh 800 × 800-point RGB document, one artboard named `Drawing`, one empty visible/unlocked/printable layer named `Drawing`.
+- `bench/assets/illustrator-pen-export/Cloud9-Reference.jpg`: a separate, byte-identical copy of the official 800 × 800 JPEG. It is not embedded or linked in the starter. The actor receives the two files plainly; no locked tracing reference is prepared.
 - Default appearance is white fill and black 1-point stroke. Do not preconfigure blue fill. State `#00AEEF` in the task and let the actor select it as part of the timed workflow. Specifying no stroke remains the proposed instruction matching the official artwork.
 - No artwork items, official vector paths, raster images, hidden solution layer, anchor guides, source URL, or brand-guideline text in the starter.
 - Stable viewport, document state, and input language remain preparation concerns for repeatable trials. The Chinese-IME shortcut issue is deferred at the user's request; settle it before benchmark trials rather than treating it as Pen-tool difficulty.
@@ -117,7 +117,7 @@ Confirmed decisions:
 
 Related decisions have been revisited: the starter remains a blank 800 × 800 RGB document; selecting appearance and executing export settings remain actor work; continuous task timing is unchanged. No reference placement or arrangement is forced in the starter. Whether an actor chooses to place the supplied raster as a drawing aid is not settled by this request; a submitted raster cannot substitute for the vector reconstruction.
 
-The starter and separate JPEG are now created. A runnable Testbench 2, final actor prompt, scoring thresholds, and benchmark trials are not part of this starter-file change.
+The starter and separate JPEG are now created. A runnable Illustrator benchmark, final actor prompt, scoring thresholds, and benchmark trials are not part of this starter-file change.
 
 ## Evidence and debugging
 

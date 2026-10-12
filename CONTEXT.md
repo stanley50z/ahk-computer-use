@@ -92,13 +92,28 @@ _Avoid_: zoom factor, ratio
 
 ### Measuring
 
-**Testbench 1**:
-The Calculator UI-task benchmark across all four configurations: Pi plus ACU, Claude Code plus ACU, Pi plus CUA, and Codex plus native computer use. One configuration's trial is one arm, not the complete benchmark.
-_Avoid_: using Testbench 1 to mean the ACU arm alone
+**Calculator**:
+The Calculator UI-task benchmark across five configurations: Pi plus ACU, CUA, or Codex computer use; Claude Code plus ACU or CUA. One configuration's trial is one arm, not the complete benchmark; historical reports call this Testbench 1.
+_Avoid_: Testbench 1 in current naming; using Calculator to mean the ACU arm alone
 
-**Task time**:
-The benchmark's primary measurement: from the actor's session start, when it holds the skill, to the end of its last computer-use call. Writing result evidence and the final answer come after it and are not part of the task.
-_Avoid_: wall time, which is the secondary process-level measurement and includes CLI startup, evidence writing, and the final answer
+**Adobe Illustrator Pen and Export**:
+The benchmark for reconstructing a reference image as editable Illustrator paths with the Pen tool, saving the AI file, and exporting a PNG, across the same five configurations. Historical reports call this Testbench 2 or TB2.
+_Avoid_: Testbench 2 or TB2 in current naming; treating one arm as the complete benchmark
+
+**Task tokens**:
+Cumulative API token usage for the actor's task attempt: input, cached input, and output. Reasoning is a subset of output, not an additional token charge.
+_Avoid_: final context length or monetary cost
+
+**Computer-use code share**:
+Estimated tokens in generated computer-use code and arguments as a percentage of recorded output tokens including reasoning. Replaying a script does not regenerate its source; emitting source or edits again does.
+_Avoid_: attributing an entire model response, its input context or its reasoning to a tool call
+
+**Computer-use call time**:
+Elapsed request-to-result time for an identified computer-use tool call, excluding model-response latency. Concurrent call totals use the union of their execution intervals; mixed shell calls include their setup and inspection work.
+_Avoid_: task end-to-end time or pure mouse-event latency
+
+**Task time (historical)**:
+The former measurement from session start through the last computer-use result. Kept in historical evidence, but no longer a benchmark ranking metric.
 
 **Jiggle test**:
 The experiment that measures how often a scripted click lands while something keeps moving the cursor. It settled the question of injection atomicity with a number.

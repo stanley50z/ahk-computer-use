@@ -12,8 +12,8 @@ def stream(elapsed, inner):
     return {'elapsed_s': elapsed, 'event': {'type': 'stream_event', 'event': inner}}
 
 
-def test_arms_list_claude_acu_second():
-    assert ARMS == ('pi-acu', 'claude-acu', 'pi-cua', 'codex-computer-use')
+def test_arms_group_comparisons_by_model_and_harness():
+    assert ARMS == ('pi-acu', 'pi-cua', 'pi-computer-use', 'claude-acu', 'claude-cua')
 
 
 def test_claude_metrics_time_responses_from_request_to_stop_and_count_final_usage_once():
@@ -63,11 +63,16 @@ def test_claude_run_without_a_final_result_is_incomplete_not_zero():
     assert result['tokens']['total'] == 10 and result['model_response_s'] is None
 
 
-def test_claude_audit_requires_init_and_transcript_evidence_and_rejects_pollution():
+@pytest.mark.parametrize('skill_name', ['acu', 'cua-driver'])
+def test_claude_audit_requires_init_and_transcript_evidence_and_rejects_pollution(skill_name):
     records = [{'elapsed_s': 1, 'event': INIT}]
     entries = [{'type': 'assistant', 'effort': 'low', 'requestedModel': 'claude-opus-5-5',
                 'message': {'model': 'claude-opus-5-5', 'content': [{'type': 'tool_use', 'name': 'Read', 'input': {'file_path': 'C:\\repo\\acu\\SKILL.md'}}]}}]
-    assert audit_claude_session(records, entries, 'C:/repo/acu')['passed']
+    selected = f'C:/repo/{skill_name}'
+    entries[0]['message']['content'][0]['input']['file_path'] = selected + '/SKILL.md'
+    audit = audit_claude_session(records, entries, selected)
+    assert audit['passed'] and audit['skills'] == [skill_name]
+    entries[0]['message']['content'][0]['input']['file_path'] = 'C:/repo/acu/SKILL.md'
     assert not audit_claude_session([], entries, 'C:/repo/acu')['passed']
     assert not audit_claude_session(records, [], 'C:/repo/acu')['passed']
     polluted = [{'elapsed_s': 1, 'event': {**INIT, 'skills': ['deep-research']}}]

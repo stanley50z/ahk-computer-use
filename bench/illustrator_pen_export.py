@@ -1,4 +1,4 @@
-"""TB2 pilot grading and maintainer-only Illustrator preparation/inspection.
+"""Adobe Illustrator Pen and Export PNG grading and maintainer-only Illustrator preparation/inspection.
 
 The JPEG fixes shape, scale and placement; #00AEEF fixes color independently.
 No registration or numeric shape threshold is applied to actor submissions.
@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 import shutil
 
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 
 
 # Shared mask classification tolerates the reference JPEG's lossy blue edges.
@@ -76,81 +76,46 @@ def shape_metrics(image, reference):
     return result
 
 
-# Independently inspect PNG pixels and saved-native evidence; pilot verdicts never manufacture a pass.
+# The exported PNG is the only actor deliverable; shape quality is measured, never a refinement/pass threshold.
 def verify_outputs(run_dir):
-    from bench.run import load_actor_json
-
     run_dir = Path(run_dir)
     plan = json.loads((run_dir / 'plan.json').read_text(encoding='utf-8'))
     reference_path = run_dir / 'grading/reference.jpg'
     if hashlib.sha256(reference_path.read_bytes()).hexdigest() != plan['grading']['reference_sha256']:
         raise ValueError('frozen grading reference fingerprint changed')
-    workspace = run_dir / 'workspace'
-    png, ai = workspace / 'Cloud9-Recreated.png', workspace / 'Cloud9-Recreated.ai'
-    report = {'passed': None, 'mode': 'pilot', 'export': {'passed': False, 'checks': {}},
-              'vector': {'passed': False}, 'shape': {'passed': None, 'registration': 'none'},
-              'method': {'status': 'review_required',
-                         'required_review': 'Review transcript and workspace scripts for Pen-tool creation; exclude Image Trace, generated/imported geometry, raster substitution and actor Illustrator scripting.'}}
-    result_path = workspace / 'result.json'
-    report['claim'] = load_actor_json(result_path) if result_path.is_file() else None
-    claim = report['claim']
-    manifest_problems = []
-    if not claim or claim.get('status') != 'completed':
-        manifest_problems.append('result.json missing or status is not completed')
-    else:
-        for field, expected in (('ai_file', ai), ('png_file', png)):
-            value = claim.get(field)
-            if not isinstance(value, str) or not value or (workspace / value).resolve() != expected.resolve():
-                manifest_problems.append(f'{field} must identify {expected.name} in the workspace')
-        if not isinstance(claim.get('input_method'), str) or not claim['input_method'].strip():
-            manifest_problems.append('input_method must be a nonempty string')
-        if not isinstance(claim.get('hiccups'), list) or not all(isinstance(item, str) for item in claim['hiccups']):
-            manifest_problems.append('hiccups must be an array of strings')
-    if manifest_problems:
-        report['passed'] = False
-        report['result_problems'] = manifest_problems
-    if png.is_file():
+    png = run_dir / 'workspace/Cloud9-Recreated.png'
+    report = {'passed': False, 'output': str(png), 'problems': [], 'checks': {}, 'quality': None}
+    if not png.is_file():
+        report['problems'].append('Cloud9-Recreated.png missing')
+        return report
+    try:
         with Image.open(png) as opened:
-            opened.load()
-            pixels = opened.convert('RGBA')
-            mask = foreground(pixels)
-            data = pixels.tobytes()
-            colors = list(zip(data[::4], data[1::4], data[2::4], data[3::4]))
-            background = [p for p, filled in zip(colors, mask) if not filled]
-            blue = [p[:3] for p, filled in zip(colors, mask) if filled]
-            # Interior blue must dominate; tolerate antialiasing, not an entirely different fill.
-            solid = sum(p == (0, 174, 239) for p in blue)
-            checks = {'png': opened.format == 'PNG', 'dimensions': opened.size == (800, 800),
-                      'opaque': pixels.getchannel('A').getextrema() == (255, 255),
-                      'white_background': bool(background) and sum(p == (255, 255, 255, 255) for p in background) / len(background) >= .99,
-                      'blue_fill': bool(blue) and solid / len(blue) >= .95,
-                      'non_interlaced': not opened.info.get('interlace', 0)}
-            dpi = opened.info.get('dpi')
-            # pHYs is optional: exact output dimensions on the fixed 800-point artboard establish scale.
-            checks['resolution_metadata'] = dpi is None or all(abs(value - 72) < .1 for value in dpi)
-            report['export'] = {'passed': all(checks.values()), 'checks': checks, 'dpi': dpi,
-                                'sha256': hashlib.sha256(png.read_bytes()).hexdigest()}
-            if checks['dimensions']:
+            checks = {'png': opened.format == 'PNG', 'dimensions': opened.size == (800, 800)}
+            report['checks'] = checks
+            if all(checks.values()):
+                opened.load()
+                pixels = opened.convert('RGBA')
+                mask = foreground(pixels)
+                data = pixels.tobytes()
+                colors = list(zip(data[::4], data[1::4], data[2::4], data[3::4]))
+                background = [p for p, filled in zip(colors, mask) if not filled]
+                blue = [p[:3] for p, filled in zip(colors, mask) if filled]
+                solid = sum(p == (0, 174, 239) for p in blue)
+                checks.update(opaque=pixels.getchannel('A').getextrema() == (255, 255),
+                              white_background=bool(background) and sum(p == (255, 255, 255, 255) for p in background) / len(background) >= .99,
+                              blue_fill=bool(blue) and solid / len(blue) >= .95,
+                              non_interlaced=not opened.info.get('interlace', 0))
+                dpi = opened.info.get('dpi')
+                checks['resolution_metadata'] = dpi is None or all(abs(value - 72) < .1 for value in dpi)
+                report['dpi'] = dpi
                 with Image.open(reference_path) as reference:
-                    report['shape'].update(shape_metrics(pixels, reference))
-    else:
-        report['export']['reason'] = 'Cloud9-Recreated.png missing'
-    native_path = run_dir / 'native-verification.json'
-    if ai.is_file() and native_path.is_file():
-        native = json.loads(native_path.read_text(encoding='utf-8'))
-        if native['ai_sha256'] != hashlib.sha256(ai.read_bytes()).hexdigest():
-            raise ValueError('saved AI changed after native inspection')
-        native['checks']['pdf_compatible'] = ai.read_bytes().startswith(b'%PDF-')
-        report['vector'] = {'passed': all(native['checks'].values()), 'native': native}
-        native_png = run_dir / 'grading/native-render.png'
-        if png.is_file() and native_png.is_file() and report['export']['checks'].get('dimensions'):
-            with Image.open(png) as submitted, Image.open(native_png) as rendered:
-                report['vector']['png_consistency'] = shape_metrics(submitted, rendered)
-                report['consistency'] = {'status': 'review_required', 'metrics': report['vector']['png_consistency']}
-    else:
-        report['vector']['reason'] = 'saved AI or independent native inspection missing'
-    if not report['export']['passed'] or not report['vector']['passed']:
-        report['passed'] = False
+                    report['quality'] = shape_metrics(pixels, reference)
+                report['quality']['registration'] = 'none'
+        report['sha256'] = hashlib.sha256(png.read_bytes()).hexdigest()
+        report['problems'] = [f'PNG check failed: {name}' for name, passed in checks.items() if not passed]
+    except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as error:
+        report['problems'].append(f'Cannot read exported PNG: {error}')
+    report['passed'] = not report['problems']
     return report
 
 

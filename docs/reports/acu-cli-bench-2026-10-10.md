@@ -1,6 +1,6 @@
 # ACU CLI benchmark rerun
 
-An ACU-only trial of Testbench 1, not a complete three-configuration benchmark. One user-authorized rerun of the first arm (`pi-acu`), using source `de19715` and the current CLI-only skill. Fresh Pi session, `openai/gpt-6.1-sol`, low reasoning, scenario v3. No parent coaching, automatic retry, or implementation/skill edits during the timed run.
+An ACU-only trial of the Calculator benchmark, not a complete three-configuration benchmark. One user-authorized rerun of the first arm (`pi-acu`), using source `de19715` and the current CLI-only skill. Fresh Pi session, `openai/gpt-6.1-sol`, low reasoning, scenario v3. No parent coaching, automatic retry, or implementation/skill edits during the timed run.
 
 Run: `20261010T050432Z-pi-acu-f39190` (UTC).
 

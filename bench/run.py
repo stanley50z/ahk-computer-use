@@ -22,23 +22,30 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-MODEL = 'gpt-6.1-sol'
+from bench.intervals import busy_seconds
+
+MODEL = 'gpt-6-astra'
 REASONING = 'low'
 TOOLS = ['read', 'bash', 'edit', 'write']
 CLAUDE_TOOLS = ['Read', 'Write', 'Edit', 'Bash']
-ARMS = ('pi-acu', 'claude-acu', 'pi-cua', 'codex-computer-use')
-SCENARIOS = ('calculator', 'testbench-2')
-# Claude Code runs only Claude models, so its ACU arm is the one exception to the GPT-6.1/low rule.
-ARM_MODELS = {'claude-acu': ('claude-opus-5-5', 'low')}
+ARMS = ('pi-acu', 'pi-cua', 'pi-computer-use', 'claude-acu', 'claude-cua')
+NATIVE_TOOLS = ['mcp__node_repl__js', 'mcp__node_repl__js_reset',
+                'mcp__node_repl__js_add_node_module_dir', 'mcp__node_repl__turn_ended']
+SCENARIOS = ('calculator', 'illustrator-pen-export')
+# Claude Code runs Opus; Pi comparisons hold GPT-6 Astra and low reasoning fixed.
+ARM_MODELS = {arm: ('claude-opus-5-5', 'low') for arm in ('claude-acu', 'claude-cua')}
 EXPRESSION = '98765 * 432 / 1234 * 56 / 789 + 6543 - 4321'
 EXPECTED = '4676.045886202710280949769213229720652488'  # normal precedence; the verifier compares to a millionth
 SKILLS = {
     'pi-acu': ROOT / 'acu',
     'claude-acu': ROOT / 'acu',
     'pi-cua': Path.home() / '.agents/skills/cua-driver',
+    'claude-cua': Path.home() / '.agents/skills/cua-driver',
 }
 # What a computer-use call looks like in each arm's tool arguments, or in a workspace script those arguments run.
-COMPUTER_USE_PATTERNS = {'pi-acu': r'\bacu run\b', 'claude-acu': r'\bacu run\b', 'pi-cua': r'cua-driver', 'codex-computer-use': r'\bsky\.'}
+COMPUTER_USE_PATTERNS = {'pi-acu': r'\bacu run\b', 'claude-acu': r'\bacu run\b',
+                         'pi-cua': r'cua-driver', 'claude-cua': r'cua-driver',
+                         'pi-computer-use': r'\bsky\.', 'codex-computer-use': r'\bsky\.'}  # Last entry replays archived trials only.
 # Saved login per harness: the source under the home directory and the private copy's name under agent-home.
 CREDENTIALS = {'pi': ('.pi/agent/auth.json', 'auth.json'), 'claude': ('.claude/.credentials.json', '.credentials.json'), 'codex': ('.codex/auth.json', 'auth.json')}
 
@@ -49,7 +56,7 @@ def harness(arm):
 
 # The shared cua-driver daemon is restarted only before the arm that uses it.
 def uses_cua_daemon(arm):
-    return arm == 'pi-cua'
+    return arm in ('pi-cua', 'claude-cua')
 
 
 def arm_model(arm):
@@ -57,9 +64,11 @@ def arm_model(arm):
 
 
 # The CLI is a public seam: only one explicitly selected skill and the four ordinary file/shell tools.
-def pi_command(run_dir, skill, prompt):
-    return ['pi', '-ne', '-ns', '-nc', '-np', '--no-themes', '--no-mcp',
-            '--skill', str(skill), '--tools', ','.join(TOOLS),
+def pi_command(run_dir, skill, prompt, *, native=False):
+    runtime = ['-e', 'builtin:mcp'] if native else ['--no-mcp']
+    tools = TOOLS + NATIVE_TOOLS if native else TOOLS
+    return ['pi', '-ne', '-ns', '-nc', '-np', '--no-themes', *runtime,
+            '--skill', str(skill), '--tools', ','.join(tools),
             '--model', f'openai/{MODEL}', '--thinking', 'low', '--offline',
             '--approve', '--session', str(run_dir / 'session.jsonl'),
             '--mode', 'json', '--print', prompt]
@@ -67,9 +76,10 @@ def pi_command(run_dir, skill, prompt):
 
 # Claude Code is a public seam too: safe mode drops CLAUDE.md, skills, hooks and plugins; the selected skill is
 # declared by path, like the Codex arm, and only the four ordinary file/shell tools exist.
-def claude_command(skill, prompt, session_id):
-    model, effort = ARM_MODELS['claude-acu']
-    declaration = (f'The only enabled skill is acu. Read {Path(skill) / "SKILL.md"} before desktop interaction. '
+def claude_command(skill, prompt, session_id, *, arm='claude-acu'):
+    model, effort = ARM_MODELS[arm]
+    skill_name = 'cua-driver' if uses_cua_daemon(arm) else 'acu'
+    declaration = (f'The only enabled skill is {skill_name}. Read {Path(skill) / "SKILL.md"} before desktop interaction. '
                    'No other skill or desktop automation route is enabled.')
     return ['claude', '-p', '--safe-mode', '--disable-slash-commands', '--strict-mcp-config',
             '--setting-sources', 'user', '--tools', ','.join(CLAUDE_TOOLS),
@@ -83,19 +93,6 @@ def argument_text(arguments):
     if isinstance(arguments, dict):
         return '\n'.join(str(value) for value in arguments.values() if value is not None)
     return '' if arguments is None else str(arguments)
-
-
-# Merge tool intervals instead of summing their durations when calls overlap.
-def busy_seconds(intervals):
-    end = None
-    total = 0.0
-    for start, finish in sorted(intervals):
-        if end is None or start >= end:
-            total += finish - start
-        elif finish > end:
-            total += finish - end
-        end = max(finish, end) if end is not None else finish
-    return total
 
 
 # Analyse final message usage once; streaming usage and turn_end repeat the same counts.
@@ -144,12 +141,13 @@ def analyse_pi(records, wall_s, reference_tps=None):
                 errors.append(message.get('errorMessage', message['stopReason']))
             current = None
         elif kind == 'tool_execution_start':
-            starts[event['toolCallId']] = (elapsed, event['toolName'], argument_text(event.get('args')))
+            starts[event['toolCallId']] = (elapsed, event['toolName'], event.get('args', {}))
         elif kind == 'tool_execution_end':
-            start, name, text = starts.pop(event['toolCallId'])
+            start, name, arguments = starts.pop(event['toolCallId'])
             intervals.append((start, elapsed))
             tools.append({'id': event['toolCallId'], 'name': name, 'start_s': start, 'end_s': elapsed, 'duration_s': elapsed - start,
-                          'is_error': event['isError'], 'reported_duration_ms': event.get('durationMs'), 'text': text})
+                          'is_error': event['isError'], 'reported_duration_ms': event.get('durationMs'),
+                          'arguments': arguments, 'text': argument_text(arguments)})
         elif kind == 'agent_settled':
             agent_end = elapsed
             completed = not event['aborted'] and not errors
@@ -159,7 +157,7 @@ def analyse_pi(records, wall_s, reference_tps=None):
               'tokens': tokens, 'effective_output_tps': tokens['output_including_reasoning'] / model_s if model_s is not None and model_s > 0 else None,
               'end_to_end_output_tps': tokens['output_including_reasoning'] / wall_s if wall_s > 0 else None,
               'model_turns': turns, 'tools': tools, 'model_errors': errors,
-              'agent_completed': completed, 'unfinished_tools': list(starts)}
+              'agent_completed': completed, 'token_counts_complete': completed, 'unfinished_tools': list(starts)}
     if reference_tps is not None:
         if reference_tps <= 0:
             raise ValueError('reference throughput must be positive')
@@ -177,15 +175,17 @@ def analyse_pi(records, wall_s, reference_tps=None):
 
 
 # Audit the actual persisted prompt, declarations and model state, not just intended launch flags.
-def audit_pi_session(entries, expected_skill):
+def audit_pi_session(entries, expected_skill, *, expected_model=MODEL):
     problems = []
+    expected_tools = set(TOOLS + (NATIVE_TOOLS if expected_skill == 'computer-use' else []))
+    declared_tools = set()
     saw_system = saw_model = saw_thinking = False
     sections = {}
     skills = []
     for entry in entries:
         if entry['type'] == 'model_change':
             saw_model = True
-            if (entry['provider'], entry['modelId']) != ('openai', MODEL):
+            if (entry['provider'], entry['modelId']) != ('openai', expected_model):
                 problems.append('model/provider changed')
         if entry['type'] == 'thinking_level_change':
             saw_thinking = True
@@ -203,16 +203,25 @@ def audit_pi_session(entries, expected_skill):
             for key in ('project_context', 'addendum'):
                 if sections.get(key):
                     problems.append(f'unexpected {key}')
-            if 'toolsAdded' in message and sorted(tool['name'] for tool in message['toolsAdded']) != sorted(TOOLS):
+            additions = {tool['name'] for tool in message.get('toolsAdded', [])}
+            if additions - expected_tools:
                 problems.append('unexpected declared tools')
+            declared_tools.update(additions)
+            declared_tools.difference_update(message.get('toolsRemoved', []))
+            if sections.get('mcp_servers') and expected_skill != 'computer-use':
+                problems.append('unexpected MCP servers')
         if message['role'] == 'assistant':
-            if message.get('model') != MODEL or message.get('thinkingLevel') != 'low':
+            if message.get('model') != expected_model or message.get('thinkingLevel') != 'low':
                 problems.append('assistant used wrong model/reasoning')
             for block in message.get('content', []):
+                if block['type'] == 'toolCall' and block['name'] not in expected_tools:
+                    problems.append(f'unexpected invoked tool: {block["name"]}')
                 if block['type'] == 'toolCall' and block['name'] == 'read':
                     path = block['arguments']['path'].replace('\\', '/')
                     if path.endswith('/SKILL.md') and f'/{expected_skill}/' not in path:
                         problems.append(f'other skill read: {path}')
+    if declared_tools != expected_tools:
+        problems.append('missing or changed tool declarations')
     if not all((saw_system, saw_model, saw_thinking)):
         problems.append('missing system/model/reasoning evidence')
     return {'passed': not problems, 'skills': skills, 'problems': sorted(set(problems))}
@@ -220,13 +229,13 @@ def audit_pi_session(entries, expected_skill):
 
 
 # Inspect Codex's persisted turn model and developer skill catalog; absent evidence fails explicitly.
-def audit_codex_session(entries):
+def audit_codex_session(entries, expected_model='gpt-6.1-sol'):
     problems = []
     contexts = [entry['payload'] for entry in entries if entry['type'] == 'turn_context']
     if not contexts:
         problems.append('no persisted turn_context evidence')
     for context in contexts:
-        if context.get('model') != MODEL or context.get('effort') != 'low':
+        if context.get('model') != expected_model or context.get('effort') != 'low':
             problems.append('wrong model/reasoning in native turn context')
     developer_texts = []
     for entry in entries:
@@ -292,15 +301,16 @@ def analyse_claude(records, wall_s, reference_tps=None):
             usage_by_message[message.get('id')] = message.get('usage', {})
             for block in message.get('content', []):
                 if block.get('type') == 'tool_use':
-                    tool_starts[block['id']] = (elapsed, block.get('name'), argument_text(block.get('input')))
+                    tool_starts[block['id']] = (elapsed, block.get('name'), block.get('input', {}))
         elif kind == 'user':
             content = event.get('message', {}).get('content')
             for block in content if isinstance(content, list) else []:
                 if block.get('type') == 'tool_result' and block.get('tool_use_id') in tool_starts:
-                    start, name, text = tool_starts.pop(block['tool_use_id'])
+                    start, name, arguments = tool_starts.pop(block['tool_use_id'])
                     intervals.append((start, elapsed))
                     tools.append({'id': block['tool_use_id'], 'name': name, 'start_s': start, 'end_s': elapsed,
-                                  'duration_s': elapsed - start, 'is_error': bool(block.get('is_error')), 'text': text})
+                                  'duration_s': elapsed - start, 'is_error': bool(block.get('is_error')),
+                                  'arguments': arguments, 'text': argument_text(arguments)})
         elif kind == 'result':
             agent_end = elapsed
             final = event
@@ -368,13 +378,12 @@ def audit_claude_session(records, entries, expected_skill_dir):
                 path = str(block.get('input', {}).get('file_path', '')).replace('\\', '/')
                 if path.endswith('/SKILL.md') and not path.casefold().startswith(expected):
                     problems.append(f'other skill read: {path}')
-    return {'passed': not problems, 'skills': ['acu'], 'problems': sorted(set(problems)),
+    return {'passed': not problems, 'skills': [Path(expected_skill_dir).name], 'problems': sorted(set(problems)),
             'evidence_kind': 'stream init event (model, tools, MCP, skills) and persisted transcript (effort, model, reads)',
             'limitation': 'Safe mode disables CLAUDE.md, hooks and plugins by flag; the stream lists no memory files, so that part is not independently evidenced.'}
 
 
-# The primary measurement: from the actor's session start, when it holds the skill, to the end of its last
-# computer-use call. Evidence files and the final answer come after and are not part of the task.
+# Historical end-to-end timing only. New benchmark scoring uses measure_efficiency; old evidence remains unchanged.
 def task_time(agent_start_s, tools, pattern, workspace):
     helpers = set()  # names a computer-use call defined; a persistent REPL lets later calls reach the route through them
 
@@ -445,8 +454,42 @@ def save_json(path, value):
     temporary.replace(path)
 
 
+# Resolve the installed vendor skill without modifying it or copying prior benchmark knowledge.
+def native_skill():
+    root = Path.home() / '.codex/plugins/cache/openai-bundled/computer-use'
+    versions = sorted((path for path in root.iterdir() if (path / 'skills/computer-use/SKILL.md').is_file()),
+                      key=lambda path: tuple(int(part) for part in path.name.split('.')))
+    if not versions:
+        raise FileNotFoundError(f'no installed computer-use skill under {root}')
+    return versions[-1] / 'skills/computer-use'
+
+
+# Reuse the installed native MCP runtime, but isolate its home and allow only the desktop service.
+def native_server(home, config=None, transport='sdk-helper'):
+    original = config if config is not None else tomllib.loads((Path.home() / '.codex/config.toml').read_text(encoding='utf-8'))
+    source = original['mcp_servers']['node_repl']
+    environment = dict(source.get('env', {}))
+    environment['CODEX_HOME'] = str(home)
+    environment['SKY_CUA_NATIVE_PIPE'] = '1' if transport == 'app-pipe' else '0'
+    if transport == 'app-pipe':
+        if not environment.get('SKY_CUA_NATIVE_PIPE_DIRECTORY'):
+            raise ValueError('the user configuration names no app-owned native pipe')
+    else:
+        environment.pop('SKY_CUA_NATIVE_PIPE_DIRECTORY', None)
+    environment.update(NODE_REPL_TRUSTED_SERVICES=json.dumps({'sky': '@oai/sky/service'}),
+                       BROWSER_USE_AVAILABLE_BACKENDS='', BROWSER_USE_TINYSKY_ENABLED='0',
+                       NODE_REPL_INSTRUCTIONS_USE_CASE_BROWSER='', NODE_REPL_INSTRUCTIONS_USE_CASE_CHROME='')
+    args = list(source.get('args', []))
+    # Match the former native Codex arm's explicit full-access mode. Without this supported runtime
+    # option the standalone MCP server sandboxes its kernel and SDK helper startup fails with spawn EPERM.
+    if '--disable-sandbox' not in args:
+        args.append('--disable-sandbox')
+    return {'command': source['command'], 'args': args, 'env': environment,
+            'exposure': 'direct', 'timeout': 120}
+
+
 # Prepare reproducible, offline profiles without credentials or a live desktop session.
-def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=None, native_skill_roots=None, native_builtin_root=None, native_transport='sdk-helper'):
+def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=None, native_transport='sdk-helper'):
     if scenario not in SCENARIOS:
         raise ValueError(f'unknown scenario: {scenario}')
     scenario_name = scenario
@@ -470,11 +513,27 @@ def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=No
     if harness(arm) == 'claude':
         skill = Path(skill) if skill is not None else SKILLS[arm]
         session_id = str(uuid.uuid4())
-        command = claude_command(skill, prompt, session_id)
+        command = claude_command(skill, prompt, session_id, arm=arm)
         environment = {'CLAUDE_CONFIG_DIR': str(home), 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1'}
-        skill_name = 'acu'
+        skill_name = 'cua-driver' if uses_cua_daemon(arm) else 'acu'
     elif harness(arm) == 'pi':
-        skill = Path(skill) if skill is not None else SKILLS[arm]
+        native = arm == 'pi-computer-use'
+        if native:
+            skill = Path(skill) if skill is not None else native_skill()
+            server = native_server(home, native_config, native_transport)
+            approved_apps = ['calc.exe', 'Calculator.exe', 'CalculatorApp.exe',
+                             'Microsoft.WindowsCalculator_8wekyb3d8bbwe!App'] if scenario_name == 'calculator' else ['Illustrator.exe']
+            if scenario_name == 'illustrator-pen-export':
+                adobe = Path(os.environ.get('ProgramFiles', 'C:/Program Files')) / 'Adobe'
+                for executable in adobe.glob('Adobe Illustrator*/Support Files/Contents/Windows/Illustrator.exe'):
+                    approved_apps.extend([str(executable), 'process:' + str(executable)])
+            bridge = {'command': server['command'], 'args': server['args'], 'approved_apps': approved_apps,
+                      'log_path': str(run_dir / 'native-approvals.jsonl')}
+            save_json(home / 'native-bridge.json', bridge)
+            server.update(command=sys.executable, args=[str(ROOT / 'bench/native_mcp.py'), str(home / 'native-bridge.json')])
+            save_json(home / 'mcp.json', {'mcpServers': {'node_repl': server}, 'autoEnableCodemode': False})
+        else:
+            skill = Path(skill) if skill is not None else SKILLS[arm]
         settings = {'packages': [], 'extensions': [], 'skills': [], 'prompts': [],
                     'cacheWarming': 'off', 'compaction': {'enabled': False},
                     'retry': {'enabled': False}, 'defaultTools': TOOLS}
@@ -483,65 +542,9 @@ def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=No
             if not Path(settings['shellPath']).is_file():
                 raise FileNotFoundError(settings['shellPath'])
         save_json(home / 'settings.json', settings)
-        command = pi_command(run_dir, skill, prompt)
+        command = pi_command(run_dir, skill, prompt, native=native)
         environment = {'PI_CODING_AGENT_DIR': str(home), 'PI_OFFLINE': '1'}
-        skill_name = 'acu' if arm == 'pi-acu' else 'cua-driver'
-    else:
-        original = native_config if native_config is not None else tomllib.loads((Path.home() / '.codex/config.toml').read_text(encoding='utf-8'))
-        node_repl = original['mcp_servers']['node_repl']
-        if skill is None:
-            native_root = Path.home() / '.codex/plugins/cache/openai-bundled/computer-use'
-            versions = sorted(p for p in native_root.iterdir() if (p / 'skills/computer-use/SKILL.md').is_file())
-            if not versions:
-                raise FileNotFoundError(f'no installed computer-use skill under {native_root}')
-            skill = versions[-1] / 'skills/computer-use'
-        else:
-            skill = Path(skill)
-        skill_name = 'computer-use'
-        native_env = dict(node_repl['env'])
-        native_env['CODEX_HOME'] = str(home)
-        if native_transport == 'app-pipe':
-            # The Codex Desktop app's own helper, reached through its named pipe; the app must be running at trial time.
-            if not native_env.get('SKY_CUA_NATIVE_PIPE_DIRECTORY'):
-                raise ValueError('the user configuration names no app-owned native pipe')
-            native_env['SKY_CUA_NATIVE_PIPE'] = '1'
-        else:
-            native_env['SKY_CUA_NATIVE_PIPE'] = '0'  # CLI uses the shipped SDK-owned helper, not an app-owned pipe.
-            native_env.pop('SKY_CUA_NATIVE_PIPE_DIRECTORY', None)
-        native_env['NODE_REPL_TRUSTED_SERVICES'] = json.dumps({'sky': '@oai/sky/service'})
-        native_env['BROWSER_USE_AVAILABLE_BACKENDS'] = ''
-        native_env['BROWSER_USE_TINYSKY_ENABLED'] = '0'
-        native_env['NODE_REPL_INSTRUCTIONS_USE_CASE_BROWSER'] = ''
-        native_env['NODE_REPL_INSTRUCTIONS_USE_CASE_CHROME'] = ''
-        developer = f'The only enabled skill is computer-use. Read {skill / "SKILL.md"} before desktop interaction. No other skill or desktop automation route is enabled.'
-        scalar = {'model': MODEL, 'model_reasoning_effort': 'low', 'approval_policy': 'never',
-                  'sandbox_mode': 'danger-full-access', 'project_doc_max_bytes': 0,
-                  'service_tier': 'default', 'developer_instructions': developer,
-                  'suppress_unstable_features_warning': True}
-        lines = [f'{key} = {json.dumps(value)}' for key, value in scalar.items()]
-        lines += ['[features]', 'skip_host_skill_discovery = true', 'hooks = false',
-                  'plugins = false', 'apps = false', 'memories = false', 'multi_agent = false',
-                  'computer_use = true', 'browser_use = false', 'browser_use_external = false',
-                  'in_app_browser = false', '[mcp_servers.node_repl]',
-                  f'command = {json.dumps(node_repl["command"])}', 'args = []', 'startup_timeout_sec = 120',
-                  '[mcp_servers.node_repl.env]']
-        lines += [f'{json.dumps(key)} = {json.dumps(value)}' for key, value in native_env.items()]
-        # The skip-host flag did not suppress discovery in the real CLI. Disable exact resources too.
-        roots = native_skill_roots if native_skill_roots is not None else [Path.home() / '.agents/skills', ROOT / '.agents/skills']
-        exclusions = {path for root in roots for path in Path(root).rglob('SKILL.md')}
-        builtin_root = Path(native_builtin_root) if native_builtin_root is not None else Path.home() / '.codex/skills/.system'
-        for source in builtin_root.rglob('SKILL.md'):
-            target = home / 'skills/.system' / source.relative_to(builtin_root)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(source, target)
-            exclusions.add(target)
-        for path in sorted({str(item) for source in exclusions for item in (source, source.parent)}):
-            lines += ['[[skills.config]]', f'path = {json.dumps(path)}', 'enabled = false']
-        (home / 'config.toml').write_text('\n'.join(lines) + '\n', encoding='utf-8')
-        command = ['codex', '--no-daemon', 'exec', '--strict-config', '--ignore-rules',
-                   '--skip-git-repo-check', '--json', '--model', MODEL,
-                   '-c', 'model_reasoning_effort="low"', '-C', str(workspace), prompt]
-        environment = {'CODEX_HOME': str(home)}
+        skill_name = 'computer-use' if native else ('cua-driver' if uses_cua_daemon(arm) else 'acu')
     skill_file = skill / 'SKILL.md'
     if not skill_file.is_file():
         raise FileNotFoundError(skill_file)
@@ -549,17 +552,20 @@ def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=No
             'skill_path': str(skill_file), 'skill_sha256': hashlib.sha256(skill_file.read_bytes()).hexdigest(),
             'scenario_version': heading.lstrip('# ').strip(), 'prompt_sha256': hashlib.sha256(prompt.encode('utf-8')).hexdigest(),
             'scenario_sha256': hashlib.sha256(scenario.encode('utf-8')).hexdigest(),
+            'measurement_policy': 'tokens-and-computer-use-v1',
             'workspace': str(workspace), 'run_dir': str(run_dir), 'command': command,
             'environment_overrides': environment, 'isolation': 'configuration/prompt, not OS sandbox',
             'runtime_validated': False}
     if session_id is not None:
         plan['session_id'] = session_id
-    if harness(arm) == 'codex':
+    if arm == 'pi-computer-use':
         plan['native_transport'] = native_transport
+        plan['mcp_config_sha256'] = hashlib.sha256((home / 'mcp.json').read_bytes()).hexdigest()
+        plan['native_bridge_sha256'] = hashlib.sha256((home / 'native-bridge.json').read_bytes()).hexdigest()
         if native_transport == 'app-pipe':
-            plan['native_pipe'] = native_env['SKY_CUA_NATIVE_PIPE_DIRECTORY']
-    if scenario_name == 'testbench-2':
-        assets = ROOT / 'bench/assets/testbench-2'
+            plan['native_pipe'] = server['env']['SKY_CUA_NATIVE_PIPE_DIRECTORY']
+    if scenario_name == 'illustrator-pen-export':
+        assets = ROOT / 'bench/assets/illustrator-pen-export'
         plan['assets'] = {}
         for name in ('Cloud9-Pen-Starter.ai', 'Cloud9-Reference.jpg'):
             shutil.copyfile(assets / name, workspace / name)
@@ -567,7 +573,11 @@ def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=No
         (run_dir / 'grading').mkdir()
         shutil.copyfile(assets / 'Cloud9-Reference.jpg', run_dir / 'grading/reference.jpg')
         plan['grading'] = {'reference_sha256': plan['assets']['Cloud9-Reference.jpg'],
-                           'registration': 'none', 'shape_pass_threshold': None, 'mode': 'pilot'}
+                           'registration': 'none', 'shape_pass_threshold': None, 'mode': 'image-only-single-attempt'}
+        plan['actor_deliverables'] = ['Cloud9-Recreated.png']
+        plan['skill_guidance_policy'] = 'benchmark-neutral-v1'
+        plan['trial_policy'] = {'attempts_per_configuration': 5, 'sort_by': 'total_api_tokens',
+                                'trim': 'lowest-and-highest-only-if-all-five-succeed', 'replace_failed_attempts': False}
     save_json(run_dir / 'plan.json', plan)
     return plan
 
@@ -741,7 +751,9 @@ def fingerprint(roots):
 # The roots an actor of this arm could tamper with: the repository (skill, launcher, bench) and its installed skill.
 def guarded_roots(plan):
     roots = [ROOT / 'acu', ROOT / 'bench', ROOT / 'tests', ROOT / 'README.md', ROOT / 'AGENTS.md', Path(plan['skill_path']).parent]
-    if plan.get('scenario') == 'testbench-2':
+    if plan.get('arm') == 'pi-computer-use':
+        roots += [Path(plan['run_dir']) / 'agent-home/mcp.json', Path(plan['run_dir']) / 'agent-home/native-bridge.json']
+    if plan.get('scenario') == 'illustrator-pen-export':
         run_dir = Path(plan['run_dir'])
         roots += [run_dir / 'grading/reference.jpg', run_dir / 'illustrator-identity.json',
                   run_dir / 'illustrator-before.json', run_dir / 'illustrator-preferences-before.json', run_dir / 'prompt.txt', run_dir / 'scenario.md']
@@ -817,7 +829,7 @@ def window_diff(before, after, application='calculator'):
 def conduct_audit(plan, before_probe, after_probe, before_files, after_files, tools):
     files = fingerprint_diff(before_files, after_files)
     outside, suspicious = transcript_writes(tools, plan['workspace'])
-    application = 'illustrator' if plan.get('scenario') == 'testbench-2' else 'calculator'
+    application = 'illustrator' if plan.get('scenario') == 'illustrator-pen-export' else 'calculator'
     windows = window_diff(before_probe, after_probe, application)
     problems = []
     if files['changed'] or files['added'] or files['removed']:
@@ -876,7 +888,7 @@ def verify_calculator(run_dir, before):
         hwnd, pid = actor_window(before, claimed, identity)
     except ValueError as error:
         return {'passed': False, 'reason': str(error), 'claim': claimed}
-    observed = acu_observer(run_dir, ROOT / 'bench/verify.ahk', hwnd)
+    observed = acu_observer(run_dir, ROOT / 'bench/calculator/verify.ahk', hwnd)
     displayed = re.search(r'^result=(.*)', observed, re.MULTILINE).group(1).strip()
     expression = re.search(r'^expression=(.*)', observed, re.MULTILINE).group(1).strip()
     number = re.search(r'[-−]?[\d,]+(?:\.\d+)?', displayed)
@@ -896,6 +908,9 @@ def verify_calculator(run_dir, before):
 
 # Run one authorized trial without an overall time limit; individual runtime/watchdog waits still apply.
 def run_trial(plan, reference_tps=None):
+    from bench.efficiency import measure_efficiency, token_count
+
+    token_count('')  # Load the pinned reference encoding before starting any desktop work.
     run_dir = Path(plan['run_dir'])
     arm = plan['arm']
     source, private_name = CREDENTIALS[harness(arm)]
@@ -914,12 +929,12 @@ def run_trial(plan, reference_tps=None):
         if os.name == 'nt' and pipe_name not in os.listdir('\\\\.\\pipe\\'):
             raise RuntimeError(f'the Codex Desktop app pipe {pipe_name} is not open; start the app before an app-pipe trial')
     before = acu_observer(run_dir, ROOT / 'bench/probe.ahk', suffix='-before')
-    tb2 = plan.get('scenario') == 'testbench-2'
+    is_illustrator = plan.get('scenario') == 'illustrator-pen-export'
     try:
-        if tb2:
-            from bench.testbench2 import prepare_desktop
+        if is_illustrator:
+            from bench.illustrator_pen_export import prepare_desktop
             prepare_desktop(plan, acu_observer)
-        before_actor = acu_observer(run_dir, ROOT / 'bench/probe.ahk', suffix='-before-actor') if tb2 else before
+        before_actor = acu_observer(run_dir, ROOT / 'bench/probe.ahk', suffix='-before-actor') if is_illustrator else before
         before_files = fingerprint(guarded_roots(plan))
         save_json(run_dir / 'fingerprint-before.json', before_files)
         shutil.copyfile(credential, private_auth)
@@ -928,7 +943,7 @@ def run_trial(plan, reference_tps=None):
             measurements = analyse_pi(records, wall, reference_tps)
             session_path = run_dir / 'session.jsonl'
             entries = read_jsonl(session_path) if session_path.is_file() else []
-            isolation = audit_pi_session(entries, plan['skill_names'][0])
+            isolation = audit_pi_session(entries, plan['skill_names'][0], expected_model=plan['model'])
         elif harness(arm) == 'claude':
             measurements = analyse_claude(records, wall, reference_tps)
             transcripts = sorted((run_dir / 'agent-home/projects').rglob('*.jsonl')) if (run_dir / 'agent-home/projects').is_dir() else []
@@ -938,18 +953,16 @@ def run_trial(plan, reference_tps=None):
             measurements = analyse_codex(records, wall)
             native_sessions = list((run_dir / 'agent-home/sessions').rglob('*.jsonl'))
             native_entries = [entry for path in native_sessions for entry in read_jsonl(path)]
-            isolation = audit_codex_session(native_entries)
+            isolation = audit_codex_session(native_entries, expected_model=plan['model'])
         measurements['capture'] = json.loads((run_dir / 'capture.json').read_text(encoding='utf-8'))
-        measurements.setdefault('token_counts_complete', measurements.get('agent_completed', False))
-        measurements['task'] = task_time(measurements.get('agent_start_s'), measurements.get('tools', []), COMPUTER_USE_PATTERNS[arm], plan['workspace'])
+        measurements['benchmark'] = measure_efficiency(measurements, arm)
         save_json(run_dir / 'metrics.json', measurements)
         save_json(run_dir / 'isolation.json', isolation)
         plan['runtime_validated'] = isolation['passed']
         save_json(run_dir / 'plan.json', plan)
-        if tb2:
-            from bench.testbench2 import dismiss_task_dialogs, inspect_native, verify_outputs
+        if is_illustrator:
+            from bench.illustrator_pen_export import dismiss_task_dialogs, verify_outputs
             dismiss_task_dialogs(run_dir, acu_observer)
-            inspect_native(run_dir, acu_observer)
             verification = verify_outputs(run_dir)
         else:
             verification = verify_calculator(run_dir, before)
@@ -958,8 +971,8 @@ def run_trial(plan, reference_tps=None):
         after_files = fingerprint(guarded_roots(plan))
         save_json(run_dir / 'fingerprint-after.json', after_files)
         conduct = conduct_audit(plan, before_actor, after_probe, before_files, after_files, measurements.get('tools', []))
-        if tb2:
-            from bench.testbench2 import native_observer
+        if is_illustrator:
+            from bench.illustrator_pen_export import native_observer
             documents = native_observer(run_dir, acu_observer, 'snapshot')['documents']
             protected = load_actor_json(run_dir / 'illustrator-before.json')
             changed = [doc for doc in protected if doc not in documents]
@@ -969,17 +982,19 @@ def run_trial(plan, reference_tps=None):
                 conduct['problems'].append('pre-existing Illustrator documents changed')
         save_json(run_dir / 'conduct.json', conduct)
         summary = {'arm': arm, 'model': plan['model'], 'reasoning': plan['reasoning'], 'exit_code': exit_code,
-                   'task_s': measurements['task']['task_s'], 'wall_s': wall,
+                   'benchmark': measurements['benchmark'],
+                   'diagnostics': {'wall_s': wall, 'note': 'Not a benchmark ranking metric.'},
                    'isolation_passed': isolation['passed'], 'task_passed': verification['passed'], 'conduct_passed': conduct['passed'],
                    'conduct_problems': conduct['problems'],
                    'passed': exit_code == 0 and isolation['passed'] and verification['passed'] and conduct['passed'] and measurements['capture']['passed'],
                    'metrics': measurements, 'evidence_dir': str(run_dir)}
-        if tb2:
-            automated = (exit_code == 0 and isolation['passed'] and conduct['passed'] and
-                         measurements['capture']['passed'] and verification['passed'] is not False)
-            summary.update(scenario='testbench-2', pilot_completed=automated,
-                           passed=None if automated else False,
-                           pending_reviews=['shape tolerance calibration', 'Pen-tool method review', 'saved AI/PNG agreement'])
+        if is_illustrator:
+            summary.update(scenario='illustrator-pen-export', output_image=verification['output'],
+                           quality=verification['quality'], problems=verification['problems'],
+                           safeguard_violations=conduct['problems'] + isolation['problems'])
+            for field in ('isolation_passed', 'task_passed', 'conduct_passed', 'conduct_problems'):
+                summary.pop(field)
+            # Pen-only/single-attempt compliance is reviewed from the session, never requested as an actor report.
         save_json(run_dir / 'summary.json', summary)
         return summary
     except Exception:
@@ -989,8 +1004,8 @@ def run_trial(plan, reference_tps=None):
         private_auth.unlink(missing_ok=True)
         ownership_file = run_dir / 'workspace/ownership.json'
         try:
-            if tb2:
-                from bench.testbench2 import cleanup_desktop
+            if is_illustrator:
+                from bench.illustrator_pen_export import cleanup_desktop
                 try:
                     if (run_dir / 'illustrator-identity.json').is_file():
                         cleanup = cleanup_desktop(run_dir, acu_observer)
@@ -1020,7 +1035,7 @@ def cleanup_calculator(run_dir, before, ownership_file):
         hwnd = None  # the actor opened nothing, or closed its own window already
         (run_dir / 'cleanup-note.txt').write_text(f'no window to close: {error}\n', encoding='utf-8')
     if hwnd is not None:
-        acu_observer(run_dir, ROOT / 'bench/cleanup.ahk', hwnd, pid)
+        acu_observer(run_dir, ROOT / 'bench/calculator/cleanup.ahk', hwnd, pid)
     after = acu_observer(run_dir, ROOT / 'bench/probe.ahk', suffix='-after')
     old = set(re.findall(r'^calculator=(\d+)', before, re.MULTILINE))
     remaining = set(re.findall(r'^calculator=(\d+)', after, re.MULTILINE)) - old
@@ -1046,11 +1061,14 @@ def run(plan, reference_tps=None):
             json.dump({'worker_pid': os.getpid(), 'started_at': datetime.now(timezone.utc).isoformat()}, handle)
         value = run_trial(plan, reference_tps)
         cleanup = load_actor_json(run_dir / 'cleanup.json')
-        value['cleanup_passed'] = cleanup.get('passed') is True and cleanup.get('cursor_scheme_restored') is True
-        if not value['cleanup_passed']:
+        cleanup_passed = cleanup.get('passed') is True and cleanup.get('cursor_scheme_restored') is True
+        if plan.get('scenario') == 'illustrator-pen-export':
+            if not cleanup_passed:
+                value['safeguard_violations'].append('cleanup failed or is unverified')
+        else:
+            value['cleanup_passed'] = cleanup_passed
+        if not cleanup_passed:
             value['passed'] = False
-            if 'pilot_completed' in value:
-                value['pilot_completed'] = False
         save_json(run_dir / 'summary.json', value)
         return value
     except Exception:
@@ -1058,7 +1076,11 @@ def run(plan, reference_tps=None):
         summary_path = run_dir / 'summary.json'
         if summary_path.is_file():
             value = load_actor_json(summary_path)
-            value.update(passed=False, cleanup_passed=False)
+            value['passed'] = False
+            if plan.get('scenario') == 'illustrator-pen-export':
+                value.setdefault('safeguard_violations', []).append('worker or cleanup failed; inspect crash.txt')
+            else:
+                value['cleanup_passed'] = False
             save_json(summary_path, value)
         raise
     finally:
@@ -1083,16 +1105,20 @@ def analyse_codex(records, wall_s):
         if event['type'] == 'item.started':
             starts[item['id']] = elapsed
         elif event['type'] == 'item.completed':
-            start = starts.pop(item['id'], elapsed)
-            text = item.get('command') if item['type'] == 'command_execution' else argument_text(item.get('arguments'))
-            intervals.append((start, elapsed))
+            start = starts.pop(item['id'], None)
+            arguments = {'command': item.get('command', '')} if item['type'] == 'command_execution' else item.get('arguments', {})
+            text = argument_text(arguments)
+            if start is not None:
+                intervals.append((start, elapsed))
             tools.append({'id': item['id'], 'name': item['type'] if item['type'] == 'command_execution' else f"{item.get('server')}.{item.get('tool')}",
-                          'start_s': start, 'end_s': elapsed, 'duration_s': elapsed - start, 'text': text or ''})
+                          'start_s': start, 'end_s': elapsed, 'duration_s': elapsed - start if start is not None else None,
+                          'text': text or '', 'arguments': arguments})
     timing = {'agent_start_s': agent_start, 'tool_busy_s': busy_seconds(intervals), 'tools': tools, 'unfinished_tools': list(starts)}
     if not completed:
         return {'wall_s': wall_s, 'tokens': None, 'model_response_s': None,
                 'effective_output_tps': None, 'end_to_end_output_tps': None, **timing,
-                'agent_completed': False, 'timing_limitation': 'No final Codex usage was reported; token totals are unknown, not zero.'}
+                'agent_completed': False, 'token_counts_complete': False,
+                'timing_limitation': 'No final Codex usage was reported; token totals are unknown, not zero.'}
     if len(completed) != 1:
         raise ValueError('expected exactly one Codex turn.completed usage record')
     usage = completed[0]['event']['usage']
@@ -1102,7 +1128,7 @@ def analyse_codex(records, wall_s):
             'model_response_s': None, 'effective_output_tps': None,
             'end_to_end_output_tps': usage['output_tokens'] / wall_s, **timing,
             'timing_limitation': 'Exec has no per-response model latency. End-to-end throughput includes tool time; do not treat it as decoding speed.',
-            'agent_completed': True}
+            'agent_completed': True, 'token_counts_complete': True}
 
 
 # Public CLI: prepare is read-only/offline; run is an explicit desktop operation.
@@ -1113,25 +1139,26 @@ def main():
     parser.add_argument('--scenario', choices=SCENARIOS, default='calculator')
     parser.add_argument('--run-dir', type=Path)
     parser.add_argument('--desktop-approved', action='store_true')
-    parser.add_argument('--reference-tps', type=float)
     parser.add_argument('--native-transport', choices=('sdk-helper', 'app-pipe'), default='sdk-helper',
-                        help="codex arm only: the shipped SDK helper (default) or the running Codex Desktop app's pipe")
+                        help="pi-computer-use only: the shipped SDK helper (default) or the running Codex Desktop app's pipe")
     args = parser.parse_args()
     if args.action == 'run' and not args.desktop_approved:
         parser.error('run requires approval for this specific desktop trial (--desktop-approved)')
     if args.action == 'analyse':
+        from bench.efficiency import measure_efficiency
+
         if not args.run_dir:
             parser.error('analyse requires --run-dir')
         prior = json.loads((args.run_dir / 'metrics.json').read_text(encoding='utf-8'))
         plan = json.loads((args.run_dir / 'plan.json').read_text(encoding='utf-8'))
         records = read_jsonl(args.run_dir / 'events.jsonl')
         if harness(plan['arm']) == 'pi':
-            value = analyse_pi(records, prior['wall_s'], args.reference_tps)
+            value = analyse_pi(records, prior['wall_s'])
         elif harness(plan['arm']) == 'claude':
-            value = analyse_claude(records, prior['wall_s'], args.reference_tps)
+            value = analyse_claude(records, prior['wall_s'])
         else:
             value = analyse_codex(records, prior['wall_s'])
-        value['task'] = task_time(value.get('agent_start_s'), value.get('tools', []), COMPUTER_USE_PATTERNS[plan['arm']], plan['workspace'])
+        value['benchmark'] = measure_efficiency(value, plan['arm'])
     else:
         directory = args.run_dir or ROOT / '.pi/bench' / f'{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{args.scenario}-{args.arm}-{uuid.uuid4().hex[:6]}'
         if args.action == 'run' and (directory / 'plan.json').is_file():
@@ -1142,7 +1169,7 @@ def main():
                 parser.error('a run directory cannot be reused; prepare a fresh trial')
         else:
             plan = prepare(args.arm, directory, scenario=args.scenario, native_transport=args.native_transport)
-        value = run(plan, args.reference_tps) if args.action == 'run' else plan
+        value = run(plan) if args.action == 'run' else plan
     print(json.dumps(value, ensure_ascii=False, indent=2))
     if args.action == 'run' and value['passed'] is False:
         raise SystemExit(1)

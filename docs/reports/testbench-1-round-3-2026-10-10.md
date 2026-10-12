@@ -1,4 +1,4 @@
-# Testbench 1, round 3: in-script looking, Opus 5.5 on the Claude arm
+# Calculator, round 3: in-script looking, Opus 5.5 on the Claude arm
 
 Fresh sequential trials of all four arms on 2026-10-10, 20:40 to 20:48 UTC, after two changes since [round 2](testbench-1-round-2-2026-10-10.md): `AcuTree` and `AcuScreenshot` became prelude functions callable from inside a script, with `acu run tree.ahk` resolving without a path, and the Claude arm moved from Haiku 5.5 at high effort to Opus 5.5 at low effort. Scenario v3, same hash as before. Source: working tree, uncommitted.
 

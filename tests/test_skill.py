@@ -49,7 +49,7 @@ def test_skill_teaches_window_discovery_before_control_lookup():
 
 
 def test_skill_is_self_contained_and_spends_turns_on_looking_not_ceremony():
-    """Guard the Testbench 1 findings: separate guide reads, write-then-run turns, blind sleeps, and the Click() claim."""
+    """Guard the Calculator benchmark findings: separate guide reads, write-then-run turns, blind sleeps, and the Click() claim."""
     text = SKILL_FILE.read_text(encoding="utf-8")
 
     assert "guides/" not in text, "everything an agent needs before its first script lives in the skill itself"
@@ -59,6 +59,8 @@ def test_skill_is_self_contained_and_spends_turns_on_looking_not_ceremony():
         assert required in text, f"skill must cover {required}"
     assert "AcuKeepForeground" not in text
     assert "restore skipped" not in text
+    assert not re.search(r'Illustrator|Adobe|Cloud9|Pen[- ]tool', text, re.IGNORECASE), 'the skill must not coach a benchmark workflow'
+    assert '!fe{Right}{Down}{Enter}' not in text, 'benchmark-specific menu recipes do not belong in ACU'
 
 
 def test_skill_names_only_files_that_exist_beside_it():

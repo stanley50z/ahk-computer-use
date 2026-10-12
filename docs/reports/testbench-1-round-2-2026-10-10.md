@@ -1,4 +1,4 @@
-# Testbench 1, round 2: four configurations
+# Calculator, round 2: four configurations
 
 Fresh sequential trials of all four arms on 2026-10-10, 15:58 to 16:10 UTC, after the ACU changes from the [round 1 latency analysis](testbench-1-latency-2026-10-10.md) and the new task-time measurement. Source: working tree after `dd5014d` (uncommitted). Scenario v3, same hash in every arm:
 

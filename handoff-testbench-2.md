@@ -1,19 +1,19 @@
-# Handoff: Testbench 2 and the ACU follow-up
+# Handoff: Adobe Illustrator Pen and Export (ACU follow-up)
 
-Historical handoff retained for preparation provenance. Its remaining-work and per-run approval notes are superseded by `docs/reports/testbench-2-first-run-2026-10-11.md`, `bench/README.md`, and the current project `AGENTS.md`. TB2 is now runnable; the first matched comparison measured a 28.0% median task-time reduction with higher median shape IoU. Numeric shape pass thresholds remain uncalibrated.
+Historical handoff retained for preparation provenance. Its remaining-work and per-run approval notes are superseded by `docs/reports/testbench-2-first-run-2026-10-11.md`, `bench/README.md`, and the current project `AGENTS.md`. The current scenario is `illustrator-pen-export`; see `bench/README.md` for commands. The Illustrator benchmark is now runnable; the first matched comparison measured a 28.0% median task-time reduction with higher median shape IoU. All four configurations were later exercised in [the four-configuration report](docs/reports/testbench-2-all-four-2026-10-11.md). Numeric shape pass thresholds remain uncalibrated.
 
-## Current state
+## State at handoff (historical)
 
 The conversation began with designing an Illustrator Pen-tool benchmark, produced starter assets, then addressed ACU friction found during exploration. The implementation and assets were committed and pushed to `origin/main` in `e9d33fd54f1aceb4752f23f488790cc02994a62a` (`feat: Preserve desktop state and prepare English input`). Local/upstream revisions matched and the working tree was clean before creating this handoff. This handoff itself is not committed.
 
-The likely next task is to finish Testbench 2's design and implementation. A runnable scenario, final actor prompt, scoring thresholds, and benchmark trials have not been completed. Follow the pointers below rather than reconstructing decisions from early proposals in the conversation.
+The likely next task is to finish the Illustrator benchmark's design and implementation. A runnable scenario, final actor prompt, scoring thresholds, and benchmark trials have not been completed. Follow the pointers below rather than reconstructing decisions from early proposals in the conversation.
 
 ## Read for the next task
 
 | Need | Authoritative pointer |
 | --- | --- |
-| Testbench 2 scope and confirmed user decisions | [Issue #10](https://github.com/stanley50z/ahk-computer-use/issues/10) |
-| The two files to give the actor, and verified starter contents | `bench/assets/testbench-2/README.md` |
+| Illustrator benchmark scope and confirmed user decisions | [Issue #10](https://github.com/stanley50z/ahk-computer-use/issues/10) |
+| The two files to give the actor, and verified starter contents | `bench/assets/illustrator-pen-export/README.md` |
 | Official package locations, guidelines, asset fingerprints, framing/color mismatches, and grading proposals | `docs/reports/testbench-2-source-inspection-2026-10-11.md` |
 | Existing benchmark profiles, isolation, continuous task-time definition, approval requirements, and cleanup | `bench/README.md`; inspect `bench/run.py` before extending the runner |
 | Current ACU usage | `acu/SKILL.md` and `README.md` |
@@ -22,7 +22,7 @@ The likely next task is to finish Testbench 2's design and implementation. A run
 
 Keep the source-inspection report and official vectors/guidelines in maintainer context. Actor handoff is the prepared starter and separate raster reference; provenance is not actor input. The latest starter decision replaced the earlier embedded/locked-reference proposal. Timing and appearance-setting decisions are recorded in issue #10 and the source report.
 
-## Continue carefully
+## Historical next steps (superseded)
 
 1. Read issue #10 and the starter README, then identify the remaining prompt, grading, and runner decisions. The source report's grading section is a proposal, not an approved numeric pass threshold.
 2. Resolve any decisions that affect what the actor must do before implementing the scenario. Do not assume the official raster/vector variants share framing or export settings; the source report documents their differences.

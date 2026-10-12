@@ -1,37 +1,82 @@
 # Computer-use test bench
 
-**Testbench 1 means the Calculator task as a whole, across all four configurations below.** An individual configuration is an arm, not "Testbench 1" by itself. A request to run Testbench 1 means fresh sequential trials of all four arms unless the user explicitly selects a subset.
+The benchmarks are **Calculator** (`calculator`, the default) and **Adobe Illustrator Pen and Export** (`illustrator-pen-export`). Each benchmark compares the five configurations below. An individual configuration is an arm; a request to run a benchmark means fresh sequential trials of all five arms unless the user explicitly selects a subset.
 
-Compare four fresh agent configurations, not a knowledgeable parent agent solving the task:
+Historical reports call these "Testbench 1" and "Testbench 2" (or "TB2"). Those are historical aliases, not current CLI identifiers; `--scenario testbench-2` is no longer accepted. Report titles and prose use the descriptive names; report filenames, recorded trial IDs, evidence paths and measurements retain their historical values. Saved trial evidence is unchanged. The Illustrator rename changes its human-readable heading and scenario identifier, not the v0.3 actor prompt body or input-file bytes.
 
-| Arm | Harness | Only computer-use skill/runtime | Status |
-| --- | --- | --- | --- |
-| `pi-acu` | Pi | Project ACU skill and CLI | v1.1, three trials after the `Send`/settle fixes: median 15.90 s (15.02 to 16.68), six responses each; the first v1.1 trial took 44.13 s on a `Send` modifier mistake |
-| `claude-acu` | Claude Code | Project ACU skill and CLI | v1.1 with Opus 5.5/low, four trials: median 17.0 s (16.18 to 19.54), four to five responses |
-| `pi-cua` | Pi | Installed `cua-driver` skill and CLI | v1.1, four trials: median 104.97 s (88.28 to 107.75); daemon restarted before each |
-| `codex-computer-use` | Codex CLI | Installed `computer-use` skill, native `@oai/sky` through `node_repl` | v1.1, four trials by keyboard: median 53.27 s (48.02 to 60.34) |
+## File structure
 
-The GPT harnesses use **GPT-6.1 (`gpt-6.1-sol`) at low reasoning**; Pi uses the `openai` provider. This supersedes the earlier GPT-6 Astra acceptance-test choice for this bench only. Claude Code runs only Claude models, so `claude-acu` is the one exception: **Opus 5.5 (`claude-opus-5-5`) at low effort**, by the user's decision on 2026-10-10 after round 2, which had used Haiku 5.5 at high effort. No automatic provider/model fallback or parent coaching. The user's standing desktop approval now permits fresh trials and reruns needed for TB2 and ACU improvement; it supersedes the previous per-run approval and no-retry rules. Preserve and classify interrupted/blocked attempts rather than folding them into successful-completion timing.
+```text
+bench/
+├── README.md
+├── __init__.py
+├── run.py                         Shared controller, profiles, timing and audits
+├── start.py                       Background trial entry point
+├── stop.py                        Cancellation and cleanup acknowledgement
+├── processes.py                   Owned child-process lifecycle
+├── native_mcp.py                  Codex computer-use app-approval MCP adapter
+├── probe.ahk                      Shared desktop/window observer
+├── restore_cursor.ahk             Shared post-trial cursor restoration
+├── calculator/
+│   ├── verify.ahk                 Calculator display verification
+│   └── cleanup.ahk                Owned Calculator window cleanup
+├── illustrator_pen_export.py      Illustrator preparation, grading and cleanup
+├── illustrator/                   Maintainer-only application automation
+│   ├── ensure.ahk
+│   ├── input-state.ahk
+│   ├── prepare-export.ahk
+│   ├── run-jsx.ahk
+│   ├── observer.jsx
+│   ├── dismiss-dialogs.ahk
+│   └── close.ahk
+├── scenarios/                     Actor task prompts
+│   ├── calculator.md
+│   └── illustrator-pen-export.md
+└── assets/
+    └── illustrator-pen-export/    Blank AI, reference JPEG and provenance notes
+```
 
-Round 1 (2026-10-10, three arms) is in [its report](../docs/reports/testbench-1-2026-10-10.md); round 2 (all four arms, after the ACU changes) in [round 2](../docs/reports/testbench-1-round-2-2026-10-10.md); round 3 (in-script AcuTree/AcuScreenshot, Opus 5.5 on the Claude arm) in [round 3](../docs/reports/testbench-1-round-3-2026-10-10.md). Archived runs keep their original metrics; `analyse` replays them with the current task-time definition into `metrics-replayed.json`.
+Shared trial machinery stays at the root; application-specific AHK/JSX scripts live in their application folder. `illustrator_pen_export.py` coordinates those scripts and checks the submitted files. Maintainer observers run outside actor timing and are not tools available to the actor.
 
-Specification: [issue #8](https://github.com/stanley50z/ahk-computer-use/issues/8). History: [first Calculator trials](../docs/reports/bench-calculator-2026-10-09.md). Comparison: [three-arm pilot and cursor incident](../docs/reports/computer-use-comparison-2026-10-09.md). Earlier ACU-only result: [CLI-only trial](../docs/reports/acu-cli-bench-2026-10-10.md). Round 1: [Testbench 1, three configurations](../docs/reports/testbench-1-2026-10-10.md). Time attribution and the subsequent overall-deadline removal: [latency analysis](../docs/reports/testbench-1-latency-2026-10-10.md). Latest complete benchmark: [scenario v1.1, all four configurations](../docs/reports/testbench-1-v1.1-2026-10-11.md). Earlier: [interim prompt](../docs/reports/testbench-1-v4-2026-10-11.md), and the last v1.0 run, [round 3](../docs/reports/testbench-1-round-3-2026-10-10.md).
+Generated transcripts, screenshots, metrics, logs and crash reports belong in `.pi/bench/<run-id>/`, not here. Written comparison reports live in `docs/reports/`.
 
-The user reported an invisible cursor after the earlier comparison. The latest complete Testbench 1 exercised identity-checked window/process cleanup and saved cursor-scheme restoration after all three arms. CUA's task-specific named CLI lifecycle was additionally ended explicitly outside timing; the shared daemon was preserved. The cursor check remains an OS showing-flag check, not pixel-level visibility proof, and the earlier incident's precise cause is still unproven.
+## Comparison configurations
+
+Compare five fresh configurations, grouped by a fixed model and harness. Compare ACU, CUA and Codex computer use within Pi; compare ACU and CUA within Claude Code. Do not use a knowledgeable parent session as the actor:
+
+| Arm | Harness / model | Only computer-use skill/runtime |
+| --- | --- | --- |
+| `pi-acu` | Pi / GPT-6 Astra, low reasoning | Project ACU skill and CLI |
+| `pi-cua` | Pi / GPT-6 Astra, low reasoning | Installed `cua-driver` skill and CLI |
+| `pi-computer-use` | Pi / GPT-6 Astra, low reasoning | Codex computer use: installed `computer-use` skill and `@oai/sky` through `node_repl` MCP |
+| `claude-acu` | Claude Code / Opus 5.5, low effort | Project ACU skill and CLI |
+| `claude-cua` | Claude Code / Opus 5.5, low effort | Installed `cua-driver` skill and CLI |
+
+The user selected **GPT-6 Astra (`openai/gpt-6-astra`) at low reasoning** for the three Pi arms and retained **Opus 5.5 (`claude-opus-5-5`) at low effort** for Claude Code. This replaces the GPT-6.1/four-arm comparison for new trials; historical manifests and reports retain their original models and arm names. The standalone `codex-computer-use` arm is no longer a launch option. Its archived events remain analysable; Pi now hosts the Codex computer-use runtime for the matched GPT comparison.
+
+No automatic provider/model fallback or parent coaching. Standing desktop approval covers needed tests and fresh reruns. Preserve failed/interrupted attempts separately from completed task timings. Existing prompts/assets, correctness checks, isolation and owned-resource cleanup remain unchanged. The measurement policy below supersedes elapsed task-time ranking.
+
+[Five-profile integration validation](../docs/reports/benchmark-five-arm-integration-2026-10-11.md) records the Pi + Codex computer-use compatibility work and focused Calculator trials. These are integration checks, not a repeated performance study or a new Illustrator comparison.
+
+Round 1 (2026-10-10, three arms) is in [its report](../docs/reports/testbench-1-2026-10-10.md); round 2 (all four arms, after the ACU changes) in [round 2](../docs/reports/testbench-1-round-2-2026-10-10.md); round 3 (in-script AcuTree/AcuScreenshot, Opus 5.5 on the Claude arm) in [round 3](../docs/reports/testbench-1-round-3-2026-10-10.md). Archived runs keep their original metrics; `analyse` prints a new-policy analysis from their original events without rewriting those files.
+
+Specification: [issue #8](https://github.com/stanley50z/ahk-computer-use/issues/8). History: [first Calculator trials](../docs/reports/bench-calculator-2026-10-09.md). Comparison: [three-arm pilot and cursor incident](../docs/reports/computer-use-comparison-2026-10-09.md). Earlier ACU-only result: [CLI-only trial](../docs/reports/acu-cli-bench-2026-10-10.md). Round 1: [Calculator, three configurations](../docs/reports/testbench-1-2026-10-10.md). Time attribution and the subsequent overall-deadline removal: [latency analysis](../docs/reports/testbench-1-latency-2026-10-10.md). Latest complete benchmark: [scenario v1.1, all four configurations](../docs/reports/testbench-1-v1.1-2026-10-11.md). Earlier: [interim prompt](../docs/reports/testbench-1-v4-2026-10-11.md), and the last v1.0 run, [round 3](../docs/reports/testbench-1-round-3-2026-10-10.md).
+
+The user reported an invisible cursor after the earlier comparison. The latest complete Calculator benchmark exercised identity-checked window/process cleanup and saved cursor-scheme restoration after all three arms. CUA's task-specific named CLI lifecycle was additionally ended explicitly outside timing; the shared daemon was preserved. The cursor check remains an OS showing-flag check, not pixel-level visibility proof, and the earlier incident's precise cause is still unproven.
 
 ## Isolation
 
 Each run gets a new workspace, config directory, session and evidence folder under `.pi/bench/`. No global settings or discovery links are modified.
 
-- Pi disables discovered extensions, MCP, other skills, context files, prompt templates and themes. Only the selected skill and `read,bash,edit,write` are enabled. The isolated agent directory contains no `AGENTS.md`, `SYSTEM.md` or `APPEND_SYSTEM.md`. Cache warming and automatic retry/compaction are off; provider-side prompt caching still occurs and is measured.
-- Claude Code runs with a fresh `CLAUDE_CONFIG_DIR`, `--safe-mode` (no CLAUDE.md, skills, hooks, plugins or MCP), `--disable-slash-commands`, `--strict-mcp-config`, user-only setting sources, and exactly `Read,Write,Edit,Bash`. The ACU skill is declared by path in an appended system prompt, as the Codex arm declares its skill. The stream's init event is audited for model, tools, MCP servers and skills, and the persisted transcript for effort, model and skill reads; the stream lists no memory files, so the CLAUDE.md exclusion rests on the flag. Claude Code's Bash tool uses Git Bash on Windows, like Pi.
-- Codex uses a fresh `CODEX_HOME`, no shared agent daemon, no hooks/plugins/apps/memories/browser runtime, zero project-document budget and ignored exec-policy rules. The skip-host-discovery flag proved insufficient in the installed CLI; exact host/project/builtin skill files and directories are now explicitly disabled. Only the native node runtime is configured, with `sky` as its only trusted service. The CLI uses the shipped SDK-owned Windows helper transport, not a stale app-owned native pipe. The corresponding installed skill is declared explicitly. Actual model/reasoning and skill declarations are audited from the persisted native rollout; missing evidence fails the audit rather than assuming isolation succeeded.
-- Saved login credentials (Pi `auth.json`, Codex `auth.json`, Claude Code `.credentials.json`) are copied into the private config only while running, then deleted in `finally`. Do not commit or share a run directory while a run is active. Commands and manifests contain credential paths, never credential values.
+- Pi disables discovered extensions, other skills, context files, prompt templates and themes. ACU/CUA arms also disable MCP; only the selected skill and `read,bash,edit,write` are enabled. The Codex computer-use arm explicitly enables only `builtin:mcp`, one run-local `node_repl` server and its four direct tools, alongside those same file/shell tools. Codemode/tool search and other MCP servers remain disabled. The isolated agent directory contains no `AGENTS.md`, `SYSTEM.md` or `APPEND_SYSTEM.md`. Cache warming and automatic retry/compaction are off; provider-side prompt caching still occurs and is measured.
+- Claude Code runs with a fresh `CLAUDE_CONFIG_DIR`, `--safe-mode` (no CLAUDE.md, skills, hooks, plugins or MCP), `--disable-slash-commands`, `--strict-mcp-config`, user-only setting sources, and exactly `Read,Write,Edit,Bash`. Only the selected ACU or CUA skill is declared by path in an appended system prompt. The stream's init event is audited for model, tools, MCP servers and skills, and the persisted transcript for effort, model and skill reads; the stream lists no memory files, so the CLAUDE.md exclusion rests on the flag. Claude Code's Bash tool uses Git Bash on Windows, like Pi.
+- Pi + Codex computer use reuses the installed vendor `node_repl` executable, `@oai/sky` service and unmodified skill. Only `sky` is trusted; browser backends are disabled. Its fresh run-local `CODEX_HOME` is for the Codex computer-use runtime, not a Codex actor. The supported `--disable-sandbox` server flag matches the former Codex CLI arm's explicit full-access mode; without it the standalone MCP kernel returns `spawn EPERM` launching the helper. Pi lacks MCP form elicitation, so `native_mcp.py` forwards tool traffic unchanged and answers only recognized low-risk app-use approvals on the scenario's exact app allowlist, under standing user authorization. Unknown apps, URL elicitations, high-risk/audio and unrelated requests are declined. Decisions go to `native-approvals.jsonl`; crashes to `native-approvals.crash.txt`. This adapter and its overhead are part of the measured profile. It never implements or replaces the desktop helper protocol.
+- Saved login credentials (Pi `auth.json` and Claude Code `.credentials.json`) are copied into the private config only while running, then deleted in `finally`. Do not commit or share a run directory while a run is active. Commands and manifests contain credential paths, never credential values.
 - This is **configuration and prompt isolation, not an OS security sandbox**. The shell is capable of arbitrary commands; method compliance also needs transcript/script review. The desktop remains shared. Run one controller at a time on an idle desktop.
 
-Installed versions at initial setup: Pi 1.1.0; Codex CLI 0.162.0; cua-driver 0.34.0; native computer-use skill build 26.901.51231; Claude Code 2.1.295 when the `claude-acu` arm was added. ACU source was `eae5264`. Plans save the exact selected skill path, skill SHA-256, scenario SHA-256, launch command and configuration paths.
+Installed versions at initial setup: Pi 1.1.0; Codex CLI 0.162.0; cua-driver 0.34.0; Codex computer-use skill build 26.901.51231; Claude Code 2.1.295 when the `claude-acu` arm was added. ACU source was `eae5264`. Plans save the exact selected skill path, skill SHA-256, scenario SHA-256, launch command and configuration paths.
 
-## Testbench 1: Calculator
+## Calculator
 
 Scenario **v1.1** (2026-10-11, by the user's decision) is the task plus the result file, with every safeguard sentence removed. The actor receives exactly:
 
@@ -45,36 +90,47 @@ When done, write result.json in the workspace with these fields: observed_result
 
 The answer with normal precedence is 4676.0458…; left-to-right evaluation gives a different number, which is how a mode mistake shows. The file's first line is its title and version for people; `prepare` sends only the body and writes the exact text to `prompt.txt` in the run directory, with `prompt_sha256` and `scenario_version` in `plan.json`. Nothing is said about input routes, skill reading, ownership files, preserving other windows, or leaving the window open: whether an actor needs those guards is unknown, so none is added back without the user's approval. Instead the bench runs a **conduct audit** around every trial and records it in `conduct.json`: a SHA-256 fingerprint of `acu/`, `bench/`, `tests/`, the READMEs and the arm's installed skill directory, taken before and after, so any edit to the skill or tool is caught whatever route made it; the transcript's write/edit tool calls, which must stay inside the workspace, plus a heuristic list of shell commands pairing a write verb with an outside path; and a window diff, flagging pre-existing visible windows that vanished and new non-Calculator windows left open. Changed guarded files, an outside write tool call, a closed pre-existing window or a leftover window fail the trial (`conduct_passed` in `summary.json`); the heuristic command list is reported only. This is detection after the fact, not prevention. The bench therefore finds the actor's window itself, the one visible Calculator that appeared during the trial, reads its display, and closes only that window; `result.json` is required, `ownership.json` is honoured when written. None or several new Calculator windows is an explicit failure, never a guess. The bench records which input routes each workspace script used in `verification.json` for the report; it does not fail a trial for any route.
 
-Scripts remain in the actor's workspace. The independent observer runs **outside agent timing**, reads the actor's window (claimed, or the one new Calculator), captures it, and checks the display against a fixed reference. It uses the same observer for every arm; it is not an extra tool available to the actor.
+Scripts remain in the actor's workspace. The independent observer runs **outside actor token/call measurements**, reads the actor's window (claimed, or the one new Calculator), captures it, and checks the display against a fixed reference. It uses the same observer for every arm; it is not an extra tool available to the actor.
 
-Cleanup protects every pre-existing top-level handle, including hidden windows, and checks the independently observed native PID again before closing, and validates an actor-provided PID when present. It never kills a shared frame host. Unclaimed or ambiguous windows cause an explicit cleanup failure; they are not automatically closed. Windows agent descendants are contained in a job object before execution and terminated/verified even if their parent exits first. Broker-launched application windows are handled separately. `finished.json` distinguishes worker exit from successful cleanup. After owned controllers/windows stop, cleanup reloads the saved Windows cursor scheme and checks the OS showing flag. Cursor-restoration evidence is required; a cleanup exception also clears an overall-pass summary. The mitigation passed user-confirmed emergency recovery, quiet checks, and the latest complete Testbench 1. Before a CUA arm, the worker restarts the shared `cua-driver` daemon (`stop`, then `autostart kick`) outside actor timing and records `daemon-restart.json`, by the user's decision on 2026-10-10: the daemon remembers ended session labels, every fresh actor had named its first session after the scenario, and each trial after the first paid a rejected call of 4 to 11 s. After a CUA arm, also end only its newly created named CLI lifecycle outside actor timing, checking the public result; the worker does not automatically end daemon-backed CLI sessions. No other shared service is stopped. These cleanup checks are not a visual guarantee.
+Cleanup protects every pre-existing top-level handle, including hidden windows, and checks the independently observed native PID again before closing, and validates an actor-provided PID when present. It never kills a shared frame host. Unclaimed or ambiguous windows cause an explicit cleanup failure; they are not automatically closed. Windows agent descendants are contained in a job object before execution and terminated/verified even if their parent exits first. Broker-launched application windows are handled separately. `finished.json` distinguishes worker exit from successful cleanup. After owned controllers/windows stop, cleanup reloads the saved Windows cursor scheme and checks the OS showing flag. Cursor-restoration evidence is required; a cleanup exception also clears an overall-pass summary. The mitigation passed user-confirmed emergency recovery, quiet checks, and the latest complete Calculator benchmark. Before either CUA arm, the worker restarts the shared `cua-driver` daemon (`stop`, then `autostart kick`) outside actor timing and records `daemon-restart.json`, by the user's decision on 2026-10-10: the daemon remembers ended session labels, every fresh actor had named its first session after the scenario, and each trial after the first paid a rejected call of 4 to 11 s. After a CUA arm, also end only its newly created named CLI lifecycle outside actor timing, checking the public result; the worker does not automatically end daemon-backed CLI sessions. No other shared service is stopped. These cleanup checks are not a visual guarantee.
 
 Versions: **v1.0** is the button-only prompt that rounds 1 to 3 used, with the expression `128+465*12387/138473-12343` and the evidence-file protocol in the prompt (its 2026-10-09 drafts tightened ownership and then allowed semantic Invoke alongside pointer clicks; the archived run directories keep each draft and its hash). A one-round interim text that listed allowed input routes, and whose title line "Calculator buttons" was sent to the actors, is recorded in [its report](../docs/reports/testbench-1-v4-2026-10-11.md) and superseded. **v1.1** is the two-line task above with a new expression. Comparisons across versions are across prompts and expressions. Preserve original verdicts and prompt hashes; this is not an exact-prompt statistical comparison.
 
-## Testbench 2: Illustrator Pen-tool reconstruction
+## Adobe Illustrator Pen and Export
 
-Use `--scenario testbench-2`; Calculator remains the default. The frozen actor prompt is [v0.3](scenarios/testbench-2.md). Actor inputs are only copies of the [blank AI and separate JPEG](assets/testbench-2/README.md), with hashes in `plan.json`. The JPEG fixes framing and shape; `#00AEEF` fixes color independently of lossy JPEG pixels. Reference provenance, official vectors, guidelines and inspection evidence stay outside the actor workspace.
+Use `--scenario illustrator-pen-export`. The [v0.4 task](scenarios/illustrator-pen-export.md) asks for **one drawing attempt and one exported PNG**. No `result.json`, report, or editable-AI save is required from the actor. The blank starter and separate JPEG remain the only inputs; provenance, official vectors and maintainer inspection stay outside actor context.
 
-Before timing, the maintainer observer binds/starts one Illustrator instance, snapshots pre-existing documents and PNG preferences, opens the blank starter, resets the Getting Started workspace, and sets a 100% viewport. This reset changes panel layout, not document artwork. A blank calibration export through the actual Export As/PNG dialogs commits repeatable 72 ppi, Art Optimized, white, non-interlaced options; preference API writes alone do not reliably update Illustrator's cached dialog state. English input is verified on the exact destination. The actor still performs appearance selection, Pen drawing, saving, export and any filename correction inside continuous task time.
+The actor approximates the reference with the Pen tool and exports the first completed attempt. Full redraws, restarting completed sections and repeated visual-refinement passes are prohibited. Correcting an accidental click or retrying input that did not register is allowed. The actor receives concrete appearance/export settings, not grading thresholds or advice on how to construct the geometry.
 
-The actor may place the JPEG as a tracing aid but must remove it from the submitted AI. Every anchor/handle is a visually authored literal coordinate; mapping/replaying those inputs is allowed, contour/parametric point generators and vector imports are not. Each trial needs post-run transcript/script review; a matching PNG alone cannot establish method compliance.
+The checker reads `workspace/Cloud9-Recreated.png` directly. It reports whether the requested PNG was produced with the specified format/dimensions/appearance, its quality measurements, and observed problems. It never reads an actor manifest or requires saved AI. Unaligned foreground IoU and boundary error are **post-run observations**, not shape pass thresholds or a signal sent back to the actor. Incorrect/missing PNGs fail completion; a rough but valid first-attempt export is not failed merely for a lower quality score.
 
-The independent observer opens a copy of the saved AI, checks editable paths, appearance, RGB/single-artboard dimensions, PDF compatibility, and renders it independently. PNG verification checks dimensions, opacity, white background, solid blue, interlacing and resolution metadata. Frozen-reference shape metrics are unaligned foreground IoU and symmetric boundary Manhattan distances; submissions are never resized or registered after the fact. Saved-AI/PNG consistency is reported separately. The result manifest must contain the requested fields and identify the inspected output files.
+The compact run summary contains the output image, extracted metrics, and safeguard violations, with one completion outcome. Detailed logs remain debugging evidence, not extra actor obligations. Review the full session for Pen-only/one-attempt compliance; record violations in the maintainer's round manifest before aggregation. Pixels alone cannot prove the method.
 
-This is an exploratory pilot: `passed: null` means structural/export checks completed but shape calibration and method/consistency review are still pending, not an overall pass. Hard failures remain `passed: false`. `pilot_completed` records successful automated execution, not an uncalibrated shape verdict.
+Preparation and post-run cleanup remain maintainer work: common blank document/viewport, export defaults and English input; preserve pre-existing documents, close only task-owned resources, restore the cursor scheme. Cleanup must **never repair or advance an actor's task**. Issue [#14](https://github.com/stanley50z/ahk-computer-use/issues/14) concerns an ownerless Color Picker missed by the post-run observer after a CUA trial. It is not a Codex computer-use workaround. No vendor behavior is patched to make a blocked attempt succeed.
 
-Cleanup cancels only recognized new dialogs in the bound process, closes only task document paths after native revalidation, restores the recorded PNG preferences, and closes Illustrator only if that trial started it and no documents remain. Pre-existing documents, including unsaved ones, are protected; missing/renamed or unclaimed documents make cleanup fail explicitly. Conduct fingerprints include the frozen reference and pre-existing on-disk documents, with native geometry/appearance summaries for in-memory change detection. Illustrator-owned panels/task bars are task UI; exact `SysShadow` menu/tooltip shadows in its surviving process are not user windows. Main frames and unrelated applications remain protected. This audit is evidence, not an OS sandbox or exhaustive proof of unchanged complex artwork.
+### Neutral skill policy
 
-[First runs and ACU improvement](../docs/reports/testbench-2-first-run-2026-10-11.md): three fresh Claude+ACU baseline versus three fresh final trials, same Opus 5.5/low, v0.3 prompt and JPEG. Median task time **369.36 → 265.93 s (28.0% lower)**; median foreground IoU **0.94655 → 0.96836**. Intermediate variants and exclusions are retained in the report. This small sample is task-specific evidence, not a statistical-significance claim or comparison across all four arms.
+ACU skills/prompts must not contain Illustrator-, Pen-tool-, or benchmark-specific recipes, menu shortcuts, geometry advice or solutions. General input, focus, popup and sparse professional-application UI-tree guidance is allowed. Earlier runs used application-specific skill guidance; they remain historical development evidence, **not a neutral baseline for v0.4**. New prompt and skill hashes identify this reset.
 
-Offline preparation and an authorized background trial:
+### Five attempts per configuration
+
+A full round is exactly **25 attempts: five for each of the five configurations**, regardless of success. No replacement/retry attempts are added to fill failed slots. Preserve all histories, images and failures, including the runs excluded from averages.
+
+- If all five attempts in a configuration succeed: sort by total API tokens, drop the lowest and highest, and average **all metrics over those same three retained runs**. Ties use the persisted trial start order (`run-attempt.json`), not a reordered manifest.
+- If any attempt fails: exclude failures, do **not** trim, and average all successful attempts. Four successes means an average of four; one success means one.
+- With zero successes, there is no aggregate.
+- Missing metric values remain unknown; do not substitute zero or silently use different subsets per metric. If five successes lack a complete token sorting key, trimming/aggregation is unavailable until resolved.
+- Code share is descriptive. It is never used to declare success or select which runs to keep.
+
+`bench/aggregate.py` is offline and never launches/retries a trial. Its maintainer-authored manifest has an `attempts` array of 25 entries, in original trial order. Each entry contains a `run_dir` (absolute or relative to the manifest) and an explicit `safeguard_violations` array from session review; `[]` means no reviewed violation. This JSON is controller bookkeeping, **not a deliverable requested from the actor**. Recorded or reviewed violations exclude that attempt from averages.
 
 ```bash
-uv run python bench/run.py prepare --scenario testbench-2 --arm claude-acu
-uv run python bench/start.py --scenario testbench-2 --arm claude-acu --desktop-approved
+uv run python bench/aggregate.py ".pi/rounds/round.json" > ".pi/rounds/aggregate.json"
 ```
 
-Use the same scenario flag for the other arms. Runtime PNG grading needs Pillow, included in the project's `uv` dev environment. Maintainer scripts under `bench/illustrator/` may use JSX to prepare/inspect/clean documents; that permission does not extend to actor artwork generation.
+The extractor requires finished v0.4 runs stamped `benchmark-neutral-v1`, matching prompt/assets, matched models/reasoning within each harness, and matched skill/policy within each configuration. Historical tuned protocols are rejected even when their hashes match one another. It preserves the raw evidence and lists failed, trimmed and retained runs. Errors persist beside the manifest as `*.aggregate-crash.txt`.
+
+**The next full round is paused until the user announces PC availability.** Current preparation/validation is offline only. See [v0.4 preparation notes](../docs/reports/illustrator-single-attempt-policy-2026-10-12.md). The existing metric policy, five models/runtime configurations and safety gates are otherwise unchanged.
 
 ## Commands
 
@@ -84,16 +140,17 @@ Offline preparation only; no credentials copied and no desktop operation:
 python bench/run.py prepare --arm pi-acu
 python bench/run.py prepare --arm claude-acu
 python bench/run.py prepare --arm pi-cua
-python bench/run.py prepare --arm codex-computer-use
+python bench/run.py prepare --arm pi-computer-use
+python bench/run.py prepare --arm claude-cua
 ```
 
-With desktop authorization (the current TB2 work has standing approval), start in the background without opening another terminal:
+With desktop authorization (the current Illustrator benchmark work has standing approval), start in the background without opening another terminal:
 
 ```bash
 python bench/start.py --arm pi-acu --desktop-approved
 ```
 
-Replace the arm only when the corresponding task/run is authorized. `start.py` prints the run directory and worker PID. For the native arm, `--native-transport app-pipe` uses the running ChatGPT/Codex desktop app's own computer-use pipe instead of the shipped SDK helper; the worker refuses to start if that pipe is not open. The default remains the SDK helper. There is no overall actor time limit. Stop a stalled or unwanted run explicitly with `stop.py`; per-script watchdogs and backend request/startup timeouts remain separate protections. A run directory is never reused for another trial.
+Replace the arm only when the corresponding task/run is authorized. `start.py` prints the run directory and worker PID. For `pi-computer-use`, `--native-transport app-pipe` uses the running ChatGPT/Codex desktop app's own computer-use pipe instead of the shipped SDK helper; the worker refuses to start if that pipe is not open. The default remains the SDK helper. There is no overall actor time limit. Stop a stalled or unwanted run explicitly with `stop.py`; per-script watchdogs and backend request/startup timeouts remain separate protections. A run directory is never reused for another trial.
 
 Stop only that run, allowing its worker to terminate owned processes and perform cleanup:
 
@@ -109,41 +166,54 @@ python bench/run.py run --arm pi-acu --desktop-approved
 
 No benchmark server or new fixed localhost port is required. Existing CUA/Codex host services are not stopped by this bench.
 
-## Measurements and estimates
+## Benchmark measurements
 
-- **Task time**, the primary measurement: from the actor's session start (Pi `agent_start`, Claude Code `init`, Codex `thread.started`), when it holds the skill, to the receipt of its last computer-use tool call's result. A call counts as computer use when its arguments, or a workspace script those arguments run, contain the arm's route: `acu run`, `cua-driver`, or `sky.`. Writing `ownership.json` inside a computer-use call is inside the task; writing `result.json` and the final answer afterwards are not, because they only let the bench check the result. Recorded in `metrics.json` under `task` and in `summary.json` as `task_s`.
-- **Wall time**: spawning the actor CLI through process exit; includes CLI startup and shutdown, evidence writing and the final answer, excludes observer/cleanup and parent analysis. Secondary.
-- **Agent elapsed time**: Pi `agent_start` through `agent_settled`.
-- **Model response time**: sum of authoritative Pi assistant `durationMs`. Pi's `message_start` can arrive after the request has begun, so its receipt interval alone undercounts latency. Claude Code exposes no server-side duration, so its responses are timed from the `requesting` status event to `message_stop` receipt; the result's `duration_api_ms` is kept beside it as a cross-check.
-- **Tool busy time**: union of tool-execution receipt intervals, not a sum that double-counts parallel calls. Each call also retains the harness's duration where supplied.
-- **Tokens**: final assistant usage summed once, never repeated streaming/turn-end totals. Pi uncached input, cache reads/writes, output, reasoning subset and total are separate. Reasoning is already in output and is not added twice. These are cumulative API usage across turns, not final context length.
-- **Effective response throughput**: output tokens / full model-response seconds, including hidden reasoning. This includes queueing, prefill and first-token wait; it is not a pure decoding-rate measurement. End-to-end output tokens / wall seconds is recorded separately.
-- **First visible delta**: receipt timing corrected using full response duration; includes the wait before observable text/tool arguments. It is not provider-side first-token telemetry.
+The comparison policy is **tokens-and-computer-use-v1**, by the user's decision. End-to-end task time, provider response time and tokens-per-second estimates are **not benchmark ranking metrics**. Old reports retain their original measurements; raw process/response timestamps remain diagnostic evidence.
 
-Reanalyse saved Pi events without launching an agent or touching the desktop:
+Report these values for each task attempt, alongside correctness and quality:
+
+1. **Total API tokens:** cumulative input + cache reads/writes + output, using the harness's recorded usage. Show the breakdown. Reasoning is already included in output and must not be added twice. This is token consumption, not money or final context length.
+2. **Computer-use code share:** estimated tokens in generated computer-use code/arguments divided by **recorded output tokens including reasoning**, multiplied by 100. Use only code payloads, not all tokens of responses that happened to invoke a tool. Input/context tokens are not the denominator.
+3. **Computer-use call duration:** request-to-result duration for every identified execution call; report both their sum and their busy-time union so overlapping calls are not double-counted. Model-response latency is outside these intervals.
+
+`metrics.json` and `summary.json` expose these under `benchmark`. New summaries no longer use `task_s`; their process wall time is explicitly diagnostic. `plan.json` freezes the policy name. Source is `bench/efficiency.py`.
+
+### Attribution and its limits
+
+The numerator uses the fixed **tiktoken / o200k_base reference encoding**, with tokenizer version recorded. It is an estimate, not a claim to match Astra's or Opus's billing tokenizer. Model/tokenizer differences limit precision. A higher code share does not automatically mean better work: bloated or failed code can have a high share.
+
+Attribution uses captured structured tool arguments. It follows Write/Edit source, shell heredocs and script edits, Python helper imports/subprocess command prefixes, and persistent Codex computer-use JavaScript helpers. It does not rely on the final workspace contents, so moving/deleting a helper after execution does not erase its provenance.
+
+- A source payload is counted once when identified calls use it, even if the script runs repeatedly. Newly re-emitted source and edits still consume generated tokens; old edit-match text is not counted as newly generated code.
+- Read results, reasoning, prose/final answers, and standalone result-file writes are excluded. Mentioning `cua-driver` in a result JSON string does not make that write a computer-use call.
+- Mixed shell/code invocation payloads are counted as a unit, including their inline script creation and ancillary code. Their execution durations likewise include shell/setup/inspection overhead. These are **top-level tool-call durations**, not isolated mouse-event latency or runtime CPU time.
+- Static attribution is reviewable, not a general interpreter or instruction-level execution trace. Unsupported/ambiguous forms carry review notes and withhold the percentage; known token/span totals remain available as partial evidence. Inspect the token payload ledger and selected call IDs before making close comparisons.
+- Incomplete/unknown output usage produces no percentage, not zero. Interrupted requests may have unreported tokens; recorded totals then describe only known usage. Unfinished tool spans are marked incomplete.
+- Failed/blocked attempts remain failed/blocked. Lower tokens or shorter call durations cannot turn them into successful completions.
+
+The code-token ledger retains source call IDs, token estimates, text lengths and hashes. The call ledger retains each selected request/result span and error indication. Actual ACU script launches and CUA subprocess invocations can be batched inside one host tool call; do not confuse these units.
+
+### Reanalyse without rerunning the desktop
+
+Install the project dev dependencies with `uv sync`, then:
 
 ```bash
-python bench/run.py analyse --run-dir "C:/path/to/run" --reference-tps 100
+uv run python bench/run.py analyse --run-dir "C:/path/to/run" > "C:/path/to/new-analysis.json"
 ```
 
-Two deliberately rough counterfactuals are returned:
+This regenerates the new measurements from original events and does **not** overwrite the saved `metrics.json` or historical verdicts. The old `--reference-tps` CLI normalization is removed. Archived Codex CLI events remain readable as historical evidence.
 
-1. Whole-response effective-rate normalization: `wall - model-response seconds + output tokens / reference TPS`. This scales queueing/prefill too; do not call it pure decoding normalization.
-2. Visible-output normalization retaining first-visible-delta wait: replace only measured post-first-delta time with non-reasoning output / reference visible TPS. This preserves the observed initial wait and hidden reasoning delay, but chunking/receipt timing still makes it an estimate.
-
-100 TPS is an illustrative reference, not a measured machine baseline. Failed/blocked attempts estimate only that attempt, never full-task completion time.
-
-Codex `exec --json` provides final aggregate usage but no authoritative per-response model duration. Its end-to-end throughput is recorded. For the completed native pilot, a separate receipt-timestamp audit computes tool busy time and residual agent time minus tools as **estimated model plus orchestration time**; its rate and normalization are explicitly estimates, not exact decoding telemetry. Do not silently compare wall-inclusive throughput against Pi's response-only denominator. If no final native usage arrives, totals are unknown, not zero.
+See [token/call-time policy and replay results](../docs/reports/benchmark-token-policy-2026-10-11.md) for the recorded Illustrator attempts under this policy.
 
 ## Evidence and debugging
 
-ACU's per-script cursor-position and foreground restoration was removed after the archived Testbench 1 runs, by [issue #11](https://github.com/stanley50z/ahk-computer-use/issues/11). New scripts leave desktop state in place and prepare English input automatically. The bench's post-trial owned-resource cleanup and saved-cursor-scheme reload remain unchanged. Preserve the archived skill fingerprints and measurements rather than treating older trials as runs of the new runtime.
+ACU's per-script cursor-position and foreground restoration was removed after the archived Calculator benchmark runs, by [issue #11](https://github.com/stanley50z/ahk-computer-use/issues/11). New scripts leave desktop state in place and prepare English input automatically. The bench's post-trial owned-resource cleanup and saved-cursor-scheme reload remain unchanged. Preserve the archived skill fingerprints and measurements rather than treating older trials as runs of the new runtime.
 
 Every run preserves:
 
 - `plan.json`, frozen `scenario.md`, selected configuration and skill/scenario fingerprints;
-- `stdout.jsonl`, `events.jsonl` with monotonic receipt timestamps, `stderr.log`, `session.jsonl` for Pi, the Claude Code transcript under `agent-home/projects/`, or native rollouts under `agent-home/sessions/`;
-- `metrics.json`, `isolation.json`, `verification.json`, `summary.json`;
+- `stdout.jsonl`, `events.jsonl` with monotonic receipt timestamps, `stderr.log`, `session.jsonl` for Pi, the Claude Code transcript under `agent-home/projects/`, or archived Codex CLI rollouts under `agent-home/sessions/`;
+- `metrics.json` and `summary.json` with `benchmark` token/code-share/call-duration ledgers, plus `isolation.json` and `verification.json`;
 - `workspace/` with original actor scripts, ownership and result files;
 - screenshots and `observer-*.log` outside actor timing;
 - `state.json`, `launch.json`, `capture.json`, `cleanup.json`, `finished.json`;
@@ -159,4 +229,4 @@ Focused quiet checks:
 python -m pytest tests/test_bench*.py -q
 ```
 
-These tests exercise profiles, usage/timing, ownership checks, native audit parsing, cancellation and descendant cleanup using ordinary Python stand-ins. They do not launch AutoHotkey, open applications, or interact with the desktop. Real desktop evidence comes from explicitly approved trials, not a routine full integration suite.
+These tests exercise profiles, usage/timing, ownership checks, Codex computer-use audit parsing, cancellation and descendant cleanup using ordinary Python stand-ins. They do not launch AutoHotkey, open applications, or interact with the desktop. Real desktop evidence comes from explicitly approved trials, not a routine full integration suite.

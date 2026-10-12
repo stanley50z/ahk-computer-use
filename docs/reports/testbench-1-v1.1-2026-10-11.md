@@ -1,4 +1,4 @@
-# Testbench 1 on scenario v1.1: the task alone, with a conduct audit
+# Calculator on scenario v1.1: the task alone, with a conduct audit
 
 First run of the minimal prompt, 2026-10-11 03:02 to 03:09 UTC, source `5315008` plus the window-diff fix below. The actors received exactly:
 

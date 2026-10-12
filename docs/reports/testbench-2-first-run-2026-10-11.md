@@ -1,8 +1,8 @@
-# Testbench 2 first runs and ACU improvement
+# Adobe Illustrator Pen and Export first runs and ACU improvement
 
 ## Result
 
-The runnable TB2 pilot now completes the Illustrator task with fresh isolated actors. A matched three-trial Claude+ACU comparison achieved the requested measurable improvement:
+The runnable Illustrator benchmark pilot now completes the Illustrator task with fresh isolated actors. A matched three-trial Claude+ACU comparison achieved the requested measurable improvement:
 
 | Median measurement | Baseline | Final ACU | Change |
 | --- | ---: | ---: | ---: |
@@ -23,7 +23,7 @@ Specification: [issue #10](https://github.com/stanley50z/ahk-computer-use/issues
 
 - Native Claude Code arm `claude-acu`, `claude-opus-5-5`, low effort.
 - Fresh workspace, configuration, credentials copy, session and transcript for every trial. No parent coaching inside a trial or reuse of a knowledgeable actor.
-- Exact TB2 v0.3 actor prompt and its SHA-256, recorded in every `plan.json`/`prompt.txt`.
+- Exact Illustrator benchmark v0.3 actor prompt and its SHA-256, recorded in every `plan.json`/`prompt.txt`.
 - Blank 800 × 800-point RGB starter, ordinary white-fill/black-stroke defaults; the actor selects `#00AEEF`, no stroke and 100% opacity.
 - Separate supplied JPEG, SHA-256 `715a4a7e15cb0e5ecc3452ef53585971eb7cb9ca5e61334c10bf1de443333231`. No output resizing, auto-alignment or registration.
 - Common Getting Started workspace, 100% starting viewport, actual GUI calibration export, and verified English input before the actor starts.
@@ -88,7 +88,7 @@ The skill adds generic guidance on target/owned-dialog handling, current-directo
 
 ## Runnable benchmark and verification
 
-`bench/run.py` / `bench/start.py` accept `--scenario calculator|testbench-2`; Calculator remains the default. Offline preparation copies only actor assets into the fresh workspace, freezes the grading JPEG outside it, and records hashes. Existing isolation, task-time and process ownership machinery is reused.
+`bench/run.py` / `bench/start.py` accept `--scenario calculator|illustrator-pen-export`; Calculator remains the default. Offline preparation copies only actor assets into the fresh workspace, freezes the grading JPEG outside it, and records hashes. Existing isolation, task-time and process ownership machinery is reused.
 
 Maintainer-only JSX opens/prepares/inspects/closes task documents through Illustrator's Other Script UI. A real blank GUI export commits repeatable PNG options because preference setters alone do not reliably update the cached dialog state. Export settings can change again during actor workflows; the actor is still instructed to select all required settings.
 
@@ -135,7 +135,7 @@ Interrupted runs and cleanup failures are preserved with later `recovery-cleanup
 
 - Calibrate numeric shape acceptance on known-good and deliberately incorrect outputs before declaring future trials overall pass/fail.
 - Continue explicit post-run method and saved-AI/PNG agreement review, or build a separate reliable audit when evidence supports it.
-- Extend the actual TB2 comparison to the other arms when that is the requested next experiment. The runner supports them, but this measured improvement is Claude+ACU only.
+- Extend the actual Illustrator benchmark comparison to the other arms when that is the requested next experiment. The runner supports them, but this measured improvement is Claude+ACU only.
 - Application-dependent issues #12/#13 remain outside this benchmark implementation except where the measured input behavior directly required the opt-in helpers.
 
 No commit/push is implied by these results; the work is left in the requested checkout.
