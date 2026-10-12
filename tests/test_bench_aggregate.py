@@ -57,28 +57,36 @@ def test_exactly_three_unique_attempts_are_required():
 
 
 def test_cli_reads_three_attempts_per_arm_and_keeps_safeguard_failures_out(tmp_path):
+    import hashlib
     import json
     import subprocess
     import sys
     from bench.run import ARMS, ROOT
 
     entries = []
+    template = 'Workspace: <WORKSPACE>\nScratch folder: <WORKSPACE>/scratch\nFinal output: <WORKSPACE>/Cloud9-Recreated.png\n'
     for arm in ARMS:
         for index in range(3):
             folder = tmp_path / arm / str(index)
             folder.mkdir(parents=True)
+            workspace = folder / 'workspace'
+            prompt = template.replace('<WORKSPACE>', workspace.as_posix())
+            (folder/'prompt-template.txt').write_text(template, encoding='utf-8')
+            (folder/'prompt.txt').write_text(prompt, encoding='utf-8')
             plan = {'arm':arm,'model':'gpt-6-astra' if arm.startswith('pi-') else 'claude-opus-5-5','reasoning':'low','scenario':'illustrator-pen-export',
-                    'prompt_sha256':'revisable','skill_sha256':'skill-' + arm,
+                    'workspace':str(workspace), 'prompt_sha256':hashlib.sha256(prompt.encode('utf-8')).hexdigest(),
+                    'prompt_template_sha256':hashlib.sha256(template.encode('utf-8')).hexdigest(), 'skill_sha256':'skill-' + arm,
                     'assets':{'reference':'fixed'},'measurement_policy':'tokens-and-computer-use-v1',
-                    'scenario_version':'Adobe Illustrator Pen and Export v0.5',
+                    'scenario_version':'Adobe Illustrator Pen and Export v0.6',
                     'skill_guidance_policy':'benchmark-neutral-v1',
                     'trial_policy':{'attempts_per_configuration':3,'aggregation':'all-successes','replace_failed_attempts':False}}
             (folder/'plan.json').write_text(json.dumps(plan),encoding='utf-8')
             (folder/'run-attempt.json').write_text(json.dumps({'started_at':f'2026-10-12T10:00:0{index}+00:00'}),encoding='utf-8')
             (folder/'finished.json').write_text(json.dumps({'worker_finished':True,
                 'cleanup':{'passed':True,'cursor_scheme_restored':True}}),encoding='utf-8')
+            output = workspace / ('Cloud9-Recreated-Drawing.PNG' if arm == 'claude-cua' else 'Cloud9-Recreated.png')
             (folder/'summary.json').write_text(json.dumps({'passed':True,'quality':{'foreground_iou':.9},
-                'safeguard_violations':[]}),encoding='utf-8')
+                'output_image':str(output), 'safeguard_violations':[]}),encoding='utf-8')
             (folder/'metrics.json').write_text(json.dumps({'benchmark':{'token_counts_complete':True,
                 'api_tokens':{'total':100 if arm=='claude-cua' else (index+1)*10,'output_including_reasoning':5},
                 'code_tokens':{'estimated_tokens':2,'output_share_percent_estimate':40,'review_required':False},
@@ -86,9 +94,9 @@ def test_cli_reads_three_attempts_per_arm_and_keeps_safeguard_failures_out(tmp_p
                                 'attribution_complete':True,'durations_complete':True}}}),encoding='utf-8')
             (folder/'events.jsonl').write_text('{}\n',encoding='utf-8')
             (folder/'workspace').mkdir()
-            (folder/'workspace/Cloud9-Recreated.png').write_bytes(b'fixture; independently checked by the collector')
+            output.write_bytes(b'fixture; independently checked by the collector')
             entries.append({'run_dir':str(folder.relative_to(tmp_path)), 'safeguard_violations':
-                            ['Image Trace used'] if arm=='pi-acu' and index==0 else []})
+                            ['Pen tool not used'] if arm=='pi-acu' and index==0 else []})
     (tmp_path/'pi-acu/0/metrics.json').write_text('{interrupted metrics', encoding='utf-8')
     interrupted = tmp_path/'pi-cua/0'
     (interrupted/'summary.json').unlink()
@@ -111,11 +119,24 @@ def test_cli_reads_three_attempts_per_arm_and_keeps_safeguard_failures_out(tmp_p
     assert provider_row['unexpected_failure']['kind']=='unexpected_provider_failure'
     assert groups['claude-acu']['sample_size']==3
     assert groups['claude-acu']['averages']['total_api_tokens']==20
+    assert groups['claude-cua']['sample_size']==3, 'different rendered paths and a normal artboard suffix do not break matched aggregation'
+    assert next(row for row in json.loads(result.stdout)['attempts'] if row['arm']=='claude-cua')['output_image'].endswith('Cloud9-Recreated-Drawing.PNG')
     manifest.write_text(json.dumps({'attempts':entries[::-1]}),encoding='utf-8')
     reordered=subprocess.run([sys.executable,str(ROOT/'bench/aggregate.py'),str(manifest)],
                              capture_output=True,text=True,encoding='utf-8',timeout=20)
     assert reordered.returncode==0,reordered.stderr
     assert json.loads(reordered.stdout)['configurations']['claude-cua']['retained_ids'] == groups['claude-cua']['retained_ids']
+    # A controller-recorded suffix does not authorize grading an output outside its own workspace.
+    summary_path = tmp_path/'claude-cua/2/summary.json'
+    summary = json.loads(summary_path.read_text(encoding='utf-8'))
+    recorded_output = summary['output_image']
+    summary['output_image'] = str(tmp_path/'outside/Cloud9-Recreated-Drawing.png')
+    summary_path.write_text(json.dumps(summary), encoding='utf-8')
+    outside=subprocess.run([sys.executable,str(ROOT/'bench/aggregate.py'),str(manifest)],
+                           capture_output=True,text=True,encoding='utf-8',timeout=20)
+    assert outside.returncode!=0 and 'inside this workspace' in outside.stderr
+    summary['output_image'] = recorded_output
+    summary_path.write_text(json.dumps(summary), encoding='utf-8')
     # Mixing prompt/model/skill revisions cannot produce a supposedly matched aggregate.
     plan_path=tmp_path/'claude-acu/2/plan.json'
     plan=json.loads(plan_path.read_text(encoding='utf-8'))
@@ -125,12 +146,21 @@ def test_cli_reads_three_attempts_per_arm_and_keeps_safeguard_failures_out(tmp_p
                          capture_output=True,text=True,encoding='utf-8',timeout=20)
     assert stale.returncode!=0 and 'three-attempt' in stale.stderr
     plan['trial_policy']['attempts_per_configuration']=3
-    plan['prompt_sha256']='other'
+    plan['prompt_template_sha256']='other'
     plan_path.write_text(json.dumps(plan),encoding='utf-8')
     mixed=subprocess.run([sys.executable,str(ROOT/'bench/aggregate.py'),str(manifest)],
                          capture_output=True,text=True,encoding='utf-8',timeout=20)
     assert mixed.returncode!=0 and 'matched' in mixed.stderr
-    plan['prompt_sha256']='revisable';plan['scenario_version']='Adobe Illustrator Pen and Export v0.4 (single attempt)'
+    plan['prompt_template_sha256']=hashlib.sha256(template.encode('utf-8')).hexdigest()
+    # Even a correctly hashed rendered prompt must be the exact expansion of the frozen common template.
+    changed_prompt = (tmp_path/'claude-acu/2/prompt.txt').read_text(encoding='utf-8') + 'Different instruction\n'
+    (tmp_path/'claude-acu/2/prompt.txt').write_text(changed_prompt, encoding='utf-8')
+    plan['prompt_sha256']=hashlib.sha256(changed_prompt.encode('utf-8')).hexdigest()
+    plan_path.write_text(json.dumps(plan), encoding='utf-8')
+    changed=subprocess.run([sys.executable,str(ROOT/'bench/aggregate.py'),str(manifest)],
+                           capture_output=True,text=True,encoding='utf-8',timeout=20)
+    assert changed.returncode!=0 and 'template' in changed.stderr
+    plan['scenario_version']='Adobe Illustrator Pen and Export v0.5'
     for index in range(3):
         (tmp_path/f'claude-acu/{index}/plan.json').write_text(json.dumps(plan),encoding='utf-8')
     historical=subprocess.run([sys.executable,str(ROOT/'bench/aggregate.py'),str(manifest)],

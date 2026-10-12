@@ -1,6 +1,6 @@
 """Adobe Illustrator Pen and Export PNG grading and maintainer-only Illustrator preparation/inspection.
 
-The JPEG fixes shape, scale and placement; #00AEEF fixes color independently.
+The lossless PNG fixes reference shape, scale, placement and #00AEEF color.
 No registration or numeric shape threshold is applied to actor submissions.
 """
 
@@ -16,7 +16,7 @@ import shutil
 from PIL import Image, UnidentifiedImageError
 
 
-# Shared mask classification tolerates the reference JPEG's lossy blue edges.
+# Shared mask classification includes antialiased blue edges in references and exported drawings.
 def foreground(image):
     data = image.convert('RGBA').tobytes()
     return bytearray(r < 128 and g > 100 and b > 150 and a > 127
@@ -76,15 +76,30 @@ def shape_metrics(image, reference):
     return result
 
 
+# Grading and aggregation share the requested basename and ordinary artboard suffixes, case-insensitively.
+def is_requested_png(path):
+    name = Path(path).name.casefold()
+    return name == 'cloud9-recreated.png' or (name.startswith('cloud9-recreated-')
+            and name.endswith('.png') and len(name) > len('cloud9-recreated-.png'))
+
+
 # The exported PNG is the only actor deliverable; shape quality is measured, never a pass threshold.
 def verify_outputs(run_dir):
     run_dir = Path(run_dir)
     plan = json.loads((run_dir / 'plan.json').read_text(encoding='utf-8'))
-    reference_path = run_dir / 'grading/reference.jpg'
+    reference_path = run_dir / 'grading/reference.png'
     if hashlib.sha256(reference_path.read_bytes()).hexdigest() != plan['grading']['reference_sha256']:
         raise ValueError('frozen grading reference fingerprint changed')
     png = run_dir / 'workspace/Cloud9-Recreated.png'
     report = {'passed': False, 'output': str(png), 'problems': [], 'checks': {}, 'quality': None}
+    if not png.is_file():
+        exports = sorted(path for path in png.parent.iterdir() if path.is_file() and is_requested_png(path))
+        if len(exports) > 1:
+            report['problems'].append('Ambiguous artboard-suffixed PNG exports')
+            return report
+        if exports:
+            png = exports[0]
+            report['output'] = str(png)
     if not png.is_file():
         report['problems'].append('Cloud9-Recreated.png missing')
         return report

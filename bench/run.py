@@ -517,8 +517,12 @@ def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=No
     (run_dir / 'scenario.md').write_text(scenario, encoding='utf-8')
     # The first line is the file's own title and version, for people. The actor receives only the body.
     heading, _, prompt = scenario.partition('\n')
-    prompt = prompt.strip() + '\n'
+    template = prompt.strip() + '\n'
+    prompt = template.replace('<WORKSPACE>', workspace.as_posix())
+    (run_dir / 'prompt-template.txt').write_text(template, encoding='utf-8')
     (run_dir / 'prompt.txt').write_text(prompt, encoding='utf-8')
+    if scenario_name == 'illustrator-pen-export':
+        (workspace / 'scratch').mkdir()
     model, reasoning = arm_model(arm)
     session_id = None
     if harness(arm) == 'claude':
@@ -562,6 +566,7 @@ def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=No
     plan = {'arm': arm, 'scenario': scenario_name, 'model': model, 'reasoning': reasoning, 'skill_names': [skill_name],
             'skill_path': str(skill_file), 'skill_sha256': hashlib.sha256(skill_file.read_bytes()).hexdigest(),
             'scenario_version': heading.lstrip('# ').strip(), 'prompt_sha256': hashlib.sha256(prompt.encode('utf-8')).hexdigest(),
+            'prompt_template_sha256': hashlib.sha256(template.encode('utf-8')).hexdigest(),
             'scenario_sha256': hashlib.sha256(scenario.encode('utf-8')).hexdigest(),
             'measurement_policy': 'tokens-and-computer-use-v1',
             'workspace': str(workspace), 'run_dir': str(run_dir), 'command': command,
@@ -578,12 +583,12 @@ def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=No
     if scenario_name == 'illustrator-pen-export':
         assets = ROOT / 'bench/assets/illustrator-pen-export'
         plan['assets'] = {}
-        for name in ('Cloud9-Pen-Starter.ai', 'Cloud9-Reference.jpg'):
+        for name in ('Cloud9-Pen-Starter.ai', 'Cloud9-Reference.png'):
             shutil.copyfile(assets / name, workspace / name)
             plan['assets'][name] = hashlib.sha256((workspace / name).read_bytes()).hexdigest()
         (run_dir / 'grading').mkdir()
-        shutil.copyfile(assets / 'Cloud9-Reference.jpg', run_dir / 'grading/reference.jpg')
-        plan['grading'] = {'reference_sha256': plan['assets']['Cloud9-Reference.jpg'],
+        shutil.copyfile(assets / 'Cloud9-Reference.png', run_dir / 'grading/reference.png')
+        plan['grading'] = {'reference_sha256': plan['assets']['Cloud9-Reference.png'],
                            'registration': 'none', 'shape_pass_threshold': None, 'mode': 'image-only'}
         plan['actor_deliverables'] = ['Cloud9-Recreated.png']
         plan['skill_guidance_policy'] = 'benchmark-neutral-v1'
@@ -766,8 +771,9 @@ def guarded_roots(plan):
         roots += [Path(plan['run_dir']) / 'agent-home/mcp.json', Path(plan['run_dir']) / 'agent-home/native-bridge.json']
     if plan.get('scenario') == 'illustrator-pen-export':
         run_dir = Path(plan['run_dir'])
-        roots += [run_dir / 'grading/reference.jpg', run_dir / 'illustrator-identity.json',
-                  run_dir / 'illustrator-before.json', run_dir / 'illustrator-preferences-before.json', run_dir / 'prompt.txt', run_dir / 'scenario.md']
+        roots += [run_dir / 'grading/reference.png', run_dir / 'illustrator-identity.json',
+                  run_dir / 'illustrator-before.json', run_dir / 'illustrator-preferences-before.json',
+                  run_dir / 'prompt.txt', run_dir / 'prompt-template.txt', run_dir / 'scenario.md']
         roots += [Path(path) for path in plan.get('protected_document_files', [])]
     return [root for root in roots if root.exists()]
 
@@ -845,7 +851,7 @@ def conduct_audit(plan, before_probe, after_probe, before_files, after_files, to
     problems = []
     if files['changed'] or files['added'] or files['removed']:
         problems.append('guarded files changed')
-    if outside:
+    if outside and application == 'calculator':
         problems.append('write tool used outside the workspace')
     if windows['closed_preexisting']:
         problems.append('pre-existing windows closed')
@@ -853,7 +859,8 @@ def conduct_audit(plan, before_probe, after_probe, before_files, after_files, to
         problems.append(f'new non-{application.capitalize()} windows left open')
     return {'passed': not problems, 'problems': problems, 'guarded_files': files, 'guarded_roots': [str(r) for r in guarded_roots(plan)],
             'writes_outside_workspace': outside, 'suspicious_commands': suspicious, 'windows': windows,
-            'note': 'Detection after the fact, not prevention. suspicious_commands is a heuristic and does not fail the trial by itself; guarded_files is authoritative.'}
+            'note': ('Detection after the fact, not prevention. suspicious_commands is a heuristic and does not fail the trial by itself; '
+                     'Illustrator scratch locations are observations, not disqualifiers. guarded_files is authoritative.')}
 
 
 # A finished worker does not imply successful cleanup.

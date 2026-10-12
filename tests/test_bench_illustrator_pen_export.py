@@ -12,7 +12,24 @@ from PIL import Image
 from bench.run import ROOT, prepare
 
 
-def test_illustrator_pen_export_prepare_freezes_only_actor_assets_and_jpeg_grading_reference(tmp_path):
+def test_lossless_reference_png_preserves_the_previous_reference_framing(tmp_path):
+    from bench.illustrator_pen_export import shape_metrics, verify_outputs
+
+    path = ROOT / 'bench/assets/illustrator-pen-export/Cloud9-Reference.png'
+    with Image.open(path) as reference:
+        assert reference.format == 'PNG'
+        assert reference.mode == 'RGB' and reference.size == (800, 800)
+        assert reference.getpixel((0, 0)) == (255, 255, 255)
+        assert reference.getpixel((417, 230)) == (0, 174, 239)
+        # Independent bounds recorded from the former reference; preparation must not change its framing.
+        assert shape_metrics(reference, reference)['foreground_bounds'] == [143, 206, 693, 585]
+    directory = tmp_path / 'trial'
+    prepare('pi-acu', directory, scenario='illustrator-pen-export')
+    (directory / 'workspace/Cloud9-Recreated.png').write_bytes(path.read_bytes())
+    assert verify_outputs(directory)['passed'], 'the prepared reference must itself satisfy the PNG appearance/export checks'
+
+
+def test_illustrator_pen_export_prepare_freezes_png_and_resolves_task_paths(tmp_path):
     skill = tmp_path / 'acu'
     skill.mkdir()
     (skill / 'SKILL.md').write_text('---\nname: acu\ndescription: fixture\n---\n', encoding='utf-8')
@@ -26,23 +43,31 @@ def test_illustrator_pen_export_prepare_freezes_only_actor_assets_and_jpeg_gradi
     assert plan['trial_policy'] == {'attempts_per_configuration': 3, 'aggregation': 'all-successes',
                                     'replace_failed_attempts': False}
     assert sorted(p.name for p in (directory / 'workspace').iterdir()) == [
-        'Cloud9-Pen-Starter.ai', 'Cloud9-Reference.jpg']
-    for name in ('Cloud9-Pen-Starter.ai', 'Cloud9-Reference.jpg'):
+        'Cloud9-Pen-Starter.ai', 'Cloud9-Reference.png', 'scratch']
+    assert (directory / 'workspace/scratch').is_dir()
+    for name in ('Cloud9-Pen-Starter.ai', 'Cloud9-Reference.png'):
         data = (ROOT / 'bench/assets/illustrator-pen-export' / name).read_bytes()
         assert (directory / 'workspace' / name).read_bytes() == data
         assert plan['assets'][name] == hashlib.sha256(data).hexdigest()
-    reference = directory / 'grading/reference.jpg'
-    assert reference.read_bytes() == (directory / 'workspace/Cloud9-Reference.jpg').read_bytes()
+    reference = directory / 'grading/reference.png'
+    assert reference.read_bytes() == (directory / 'workspace/Cloud9-Reference.png').read_bytes()
     prompt = (directory / 'prompt.txt').read_text(encoding='utf-8')
     assert '#00AEEF' in prompt and '72 ppi' in prompt
-    assert 'Pen tool' in prompt and 'remove' in prompt
+    assert 'Pen tool' in prompt and 'then export' in prompt
+    assert 'Use the supplied computer-use tool for every interaction with Adobe Illustrator.' in prompt
     assert 'c9.gg' not in prompt and 'guidelines' not in prompt.lower()
-    assert 'Image Trace' in prompt and 'scripting' in prompt
-    assert 'one drawing attempt' not in prompt.lower()
-    assert 'do not redraw' not in prompt.lower()
-    assert 'first completed attempt' not in prompt.lower()
-    assert 'refinement' not in prompt.lower()
-    assert 'After drawing' in prompt
+    for removed in ('visually', 'by eye', 'parametric', 'literal positions', 'Image Trace',
+                    'no stroke', 'opacity', 'rename', 'Keep all task-created', '800 × 800-point'):
+        assert removed not in prompt
+    workspace = (directory / 'workspace').as_posix()
+    assert f'Workspace: {workspace}\nScratch folder: {workspace}/scratch\nFinal output: {workspace}/Cloud9-Recreated.png' in prompt
+    assert prompt.endswith('Only the PNG is required. Stop after exporting.\n')
+    assert '<WORKSPACE>' not in prompt
+    assert prompt in plan['command']
+    template = (directory / 'prompt-template.txt').read_text(encoding='utf-8')
+    assert '<WORKSPACE>' in template
+    assert plan['prompt_template_sha256'] == hashlib.sha256(template.encode('utf-8')).hexdigest()
+    assert plan['prompt_sha256'] == hashlib.sha256(prompt.encode('utf-8')).hexdigest()
     assert 'Color Picker' not in prompt, 'do not prescribe an appearance-control route'
     assert 'result.json' not in prompt and 'Cloud9-Recreated.ai' not in prompt
     assert 'Cloud9-Recreated.png' in prompt
@@ -59,12 +84,12 @@ def test_cli_prepares_illustrator_pen_export_without_desktop_approval(tmp_path):
     assert completed.returncode == 0, completed.stderr
     plan = json.loads(completed.stdout)
     assert plan['scenario'] == 'illustrator-pen-export'
-    assert plan['scenario_version'] == 'Adobe Illustrator Pen and Export v0.5'
-    # The task changed, but the prepared starter and separate reference bytes stay fixed.
+    assert plan['scenario_version'] == 'Adobe Illustrator Pen and Export v0.6'
+    # The blank starter is unchanged; the new reference is derived from the official lossless PNG.
     assert plan['prompt_sha256'] != 'b6b38f65c7675f11b27fd94fa0fcbef75d38208c441a6914727ef97a6f3c254b'
     assert plan['assets'] == {
         'Cloud9-Pen-Starter.ai': 'd2197b639dd7c9d4528962f8252bdbb0e6d250551f16675324ea95e2e0d99445',
-        'Cloud9-Reference.jpg': '715a4a7e15cb0e5ecc3452ef53585971eb7cb9ca5e61334c10bf1de443333231',
+        'Cloud9-Reference.png': '03dd860809cbfa143c35b50bd78fbdb8e43346e47d76e9aba5afc94a4e00a32c',
     }
     assert not (directory / 'state.json').exists()
 
@@ -101,7 +126,8 @@ def test_preparation_leaves_export_settings_and_artifact_creation_to_the_actor(t
     prepared = prepare_desktop(plan, observer)
     assert prepared['window']['maximized'] is True
     assert json.loads((directory / 'illustrator-preferences-before.json').read_text(encoding='utf-8')) == preferences
-    assert not list(directory.rglob('*.png'))
+    assert not (directory / 'grading/blank-calibration.png').exists()
+    assert not (directory / 'workspace/Cloud9-Recreated.png').exists()
     assert not (directory / 'illustrator-export-options.json').exists()
 
 
@@ -147,12 +173,33 @@ def test_image_only_output_succeeds_without_an_ai_or_manifest_and_quality_is_obs
     assert verify_outputs(directory)['passed'] is False
 
 
+@pytest.mark.parametrize('suffix', ['-01', '-Drawing'])
+def test_image_grading_accepts_a_unique_artboard_suffix_without_renaming(tmp_path, suffix):
+    from bench.illustrator_pen_export import verify_outputs
+
+    directory = tmp_path / 'trial'
+    prepare('pi-acu', directory, scenario='illustrator-pen-export')
+    output = directory / f'workspace/Cloud9-Recreated{suffix}.png'
+    image = Image.new('RGB', (800, 800), 'white')
+    image.paste((0, 174, 239), (100, 100, 200, 200))
+    image.save(output, dpi=(72, 72))
+    verdict = verify_outputs(directory)
+    assert verdict['passed'] is True, verdict
+    assert verdict['output'] == str(output)
+    assert output.is_file()
+    assert not (directory / 'workspace/Cloud9-Recreated.png').exists(), 'verification must not repair/rename actor work'
+    image.save(directory / 'workspace/Cloud9-Recreated-Other.png')
+    ambiguous = verify_outputs(directory)
+    assert ambiguous['passed'] is False
+    assert 'ambiguous' in ' '.join(ambiguous['problems']).lower()
+
+
 def test_image_grading_refuses_a_modified_frozen_reference(tmp_path):
     from bench.illustrator_pen_export import verify_outputs
 
     directory = tmp_path / 'trial'
     prepare('pi-acu', directory, scenario='illustrator-pen-export')
-    (directory / 'grading/reference.jpg').write_bytes(b'changed')
+    (directory / 'grading/reference.png').write_bytes(b'changed')
     with pytest.raises(ValueError, match='reference'):
         verify_outputs(directory)
 
@@ -183,6 +230,12 @@ def test_illustrator_pen_export_conduct_accepts_illustrator_not_a_new_calculator
     before = 'window=1 pid=5\n'
     clean = conduct_audit(plan, before, 'window=1 pid=5\nwindow=9 pid=8\nwindow=10 pid=8\nillustrator=9\npid=8\n', {}, {}, [])
     assert clean['passed']
+    outside = [{'name': 'write', 'text': str(tmp_path.parent / 'helper.py') + '\nprint(1)'}]
+    scratch = conduct_audit(plan, before, 'window=1 pid=5\nwindow=9 pid=8\nillustrator=9\npid=8\n', {}, {}, outside)
+    assert scratch['passed'], 'the scratch-folder hint is not a location restriction'
+    assert scratch['writes_outside_workspace'], 'retain diagnostic evidence without a hidden disqualifier'
+    guarded = conduct_audit(plan, before, before, {'protected': 'original'}, {'protected': 'changed'}, outside)
+    assert not guarded['passed'] and guarded['problems'] == ['guarded files changed']
     stray = conduct_audit(plan, before, 'window=1 pid=5\nwindow=9 pid=8\ncalculator=9\npid=8\n', {}, {}, [])
     assert not stray['passed']
     shadow_before = 'window=1 pid=5\nwindow=2 pid=8\nwindow=3 pid=8\nclass=2 SysShadow\nclass=3 illustrator\nillustrator=3\npid=8\n'

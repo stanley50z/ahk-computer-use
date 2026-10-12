@@ -1,6 +1,7 @@
 """Offline aggregation of three attempts per configuration; never launches or retries a trial."""
 
 import argparse
+import hashlib
 import json
 import math
 import statistics
@@ -71,6 +72,7 @@ def comparison_statistics(benchmark, quality):
 # Load a maintainer-authored manifest after session review; no JSON is requested from the actor.
 def aggregate_round(manifest_path):
     from bench.run import ARMS
+    from bench.illustrator_pen_export import is_requested_png
 
     manifest_path = Path(manifest_path).resolve()
     manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
@@ -90,11 +92,21 @@ def aggregate_round(manifest_path):
             raise ValueError(f'attempt has not finished: {run}')
         if plan['scenario'] != 'illustrator-pen-export' or plan['arm'] not in ARMS:
             raise ValueError('this round must contain the five Illustrator configurations')
-        if plan.get('scenario_version') != 'Adobe Illustrator Pen and Export v0.5' or plan.get('skill_guidance_policy') != 'benchmark-neutral-v1':
-            raise ValueError('round requires the neutral v0.5 baseline; historical protocols are not eligible')
+        if plan.get('scenario_version') != 'Adobe Illustrator Pen and Export v0.6' or plan.get('skill_guidance_policy') != 'benchmark-neutral-v1':
+            raise ValueError('round requires the neutral v0.6 baseline; historical protocols are not eligible')
         if plan.get('trial_policy') != TRIAL_POLICY:
             raise ValueError('round requires the three-attempt all-successes trial policy')
-        identity = {key: plan[key] for key in ('model', 'reasoning', 'scenario', 'scenario_version', 'prompt_sha256', 'skill_sha256', 'assets', 'measurement_policy', 'skill_guidance_policy', 'trial_policy')}
+        workspace = Path(plan['workspace']).resolve()
+        if workspace != (run / 'workspace').resolve():
+            raise ValueError('prepared workspace does not belong to this attempt')
+        template = (run / 'prompt-template.txt').read_text(encoding='utf-8')
+        prompt = (run / 'prompt.txt').read_text(encoding='utf-8')
+        if hashlib.sha256(template.encode('utf-8')).hexdigest() != plan['prompt_template_sha256']:
+            raise ValueError('unmatched frozen prompt template fingerprint')
+        if (hashlib.sha256(prompt.encode('utf-8')).hexdigest() != plan['prompt_sha256']
+                or prompt != template.replace('<WORKSPACE>', workspace.as_posix())):
+            raise ValueError('rendered prompt does not match its frozen template and workspace')
+        identity = {key: plan[key] for key in ('model', 'reasoning', 'scenario', 'scenario_version', 'prompt_template_sha256', 'skill_sha256', 'assets', 'measurement_policy', 'skill_guidance_policy', 'trial_policy')}
         attempt_record = json.loads((run / 'run-attempt.json').read_text(encoding='utf-8'))
         started_at = datetime.fromisoformat(attempt_record['started_at'])
         if started_at.tzinfo is None:
@@ -112,7 +124,11 @@ def aggregate_round(manifest_path):
             violations.append('cleanup failed or is unverified')
         violations = list(dict.fromkeys(violations))
         passed = summary is not None and summary.get('passed') is True and not violations and not unexpected_failure
-        if passed and (not (run / 'events.jsonl').is_file() or not (run / 'workspace/Cloud9-Recreated.png').is_file()):
+        output = (summary or {}).get('output_image')
+        image = Path(output).resolve() if output else None
+        if image is not None and (image.parent != workspace or not is_requested_png(image)):
+            raise ValueError('recorded output must be a requested PNG export inside this workspace')
+        if passed and (not (run / 'events.jsonl').is_file() or image is None or not image.is_file()):
             raise ValueError(f'successful attempt is missing session history or its output image: {run}')
         statistics_row, metric_error = None, None
         metrics_path = run / 'metrics.json'
@@ -131,14 +147,13 @@ def aggregate_round(manifest_path):
         row = {'id': str(run), 'started_at': started_at, 'passed': passed, 'statistics': statistics_row,
                'safeguard_violations': violations, 'unexpected_failure': unexpected_failure}
         groups.setdefault(plan['arm'], []).append(row)
-        image = run / 'workspace/Cloud9-Recreated.png'
         attempts.append({'run_dir': str(run), 'arm': plan['arm'], 'passed': passed,
-                         'output_image': str(image) if image.is_file() else None,
+                         'output_image': str(image) if image is not None and image.is_file() else None,
                          'statistics': statistics_row, 'metric_error': metric_error, 'safeguard_violations': violations,
                          'unexpected_failure': unexpected_failure})
     if set(groups) != set(ARMS):
         raise ValueError('a full round requires all five configurations, with three attempts each')
-    if len({identity['prompt_sha256'] for identity in identities.values()}) != 1 or len({json.dumps(identity['assets'], sort_keys=True) for identity in identities.values()}) != 1:
+    if len({identity['prompt_template_sha256'] for identity in identities.values()}) != 1 or len({json.dumps(identity['assets'], sort_keys=True) for identity in identities.values()}) != 1:
         raise ValueError('unmatched prompts/assets between configurations')
     for attempts_in_group in groups.values():
         if len({attempt['started_at'] for attempt in attempts_in_group}) != len(attempts_in_group):
