@@ -1,4 +1,4 @@
-; Commit one blank calibration export through the real dialogs: Illustrator caches PNG options beyond its preference API.
+; Explicit maintainer fixture check only, not normal trial setup: export the blank starter through the real dialogs.
 hwnd := Integer(A_Args[1])
 pid := Integer(A_Args[2])
 target := "ahk_id " hwnd

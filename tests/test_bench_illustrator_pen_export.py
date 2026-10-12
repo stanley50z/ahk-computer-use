@@ -21,10 +21,10 @@ def test_illustrator_pen_export_prepare_freezes_only_actor_assets_and_jpeg_gradi
     assert plan['scenario'] == 'illustrator-pen-export'
     assert plan['grading']['shape_pass_threshold'] is None
     assert plan['grading']['registration'] == 'none'
-    assert plan['grading']['mode'] == 'image-only-single-attempt'
+    assert plan['grading']['mode'] == 'image-only'
     assert plan['actor_deliverables'] == ['Cloud9-Recreated.png']
-    assert plan['trial_policy']['attempts_per_configuration'] == 5
-    assert plan['trial_policy']['replace_failed_attempts'] is False
+    assert plan['trial_policy'] == {'attempts_per_configuration': 3, 'aggregation': 'all-successes',
+                                    'replace_failed_attempts': False}
     assert sorted(p.name for p in (directory / 'workspace').iterdir()) == [
         'Cloud9-Pen-Starter.ai', 'Cloud9-Reference.jpg']
     for name in ('Cloud9-Pen-Starter.ai', 'Cloud9-Reference.jpg'):
@@ -38,8 +38,12 @@ def test_illustrator_pen_export_prepare_freezes_only_actor_assets_and_jpeg_gradi
     assert 'Pen tool' in prompt and 'remove' in prompt
     assert 'c9.gg' not in prompt and 'guidelines' not in prompt.lower()
     assert 'Image Trace' in prompt and 'scripting' in prompt
-    assert 'one drawing attempt' in prompt
-    assert 'do not redraw' in prompt.lower()
+    assert 'one drawing attempt' not in prompt.lower()
+    assert 'do not redraw' not in prompt.lower()
+    assert 'first completed attempt' not in prompt.lower()
+    assert 'refinement' not in prompt.lower()
+    assert 'After drawing' in prompt
+    assert 'Color Picker' not in prompt, 'do not prescribe an appearance-control route'
     assert 'result.json' not in prompt and 'Cloud9-Recreated.ai' not in prompt
     assert 'Cloud9-Recreated.png' in prompt
     assert not (directory / 'agent-home/auth.json').exists()
@@ -55,7 +59,7 @@ def test_cli_prepares_illustrator_pen_export_without_desktop_approval(tmp_path):
     assert completed.returncode == 0, completed.stderr
     plan = json.loads(completed.stdout)
     assert plan['scenario'] == 'illustrator-pen-export'
-    assert plan['scenario_version'] == 'Adobe Illustrator Pen and Export v0.4 (single attempt)'
+    assert plan['scenario_version'] == 'Adobe Illustrator Pen and Export v0.5'
     # The task changed, but the prepared starter and separate reference bytes stay fixed.
     assert plan['prompt_sha256'] != 'b6b38f65c7675f11b27fd94fa0fcbef75d38208c441a6914727ef97a6f3c254b'
     assert plan['assets'] == {
@@ -63,6 +67,42 @@ def test_cli_prepares_illustrator_pen_export_without_desktop_approval(tmp_path):
         'Cloud9-Reference.jpg': '715a4a7e15cb0e5ecc3452ef53585971eb7cb9ca5e61334c10bf1de443333231',
     }
     assert not (directory / 'state.json').exists()
+
+
+def test_preparation_leaves_export_settings_and_artifact_creation_to_the_actor(tmp_path, monkeypatch):
+    from bench.illustrator_pen_export import prepare_desktop
+
+    programs = tmp_path / 'programs'
+    executable = programs / 'Adobe/Adobe Illustrator Fixture/Support Files/Contents/Windows/Illustrator.exe'
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    monkeypatch.setenv('ProgramFiles', str(programs))
+    directory = tmp_path / 'trial'
+    plan = prepare('pi-acu', directory, scenario='illustrator-pen-export')
+    preferences = {'ResolutionR': 144, 'AntiAlias': 2, 'BackgroundTransparent': True, 'Interlaced': True}
+
+    # Only the external desktop boundary is simulated; the real preparation code and files are used.
+    def observer(run_dir, script, *args, **kwargs):
+        if script.name == 'ensure.ahk':
+            return 'illustrator=10\npid=20\nstarted=1\n'
+        if script.name == 'window.ahk':
+            args[2].write_text('{"maximized":true,"monitor":1,"bounds":[-8,-8,1936,1056],"work_area":[0,0,1920,1040]}', encoding='utf-8')
+            return ''
+        if script.name == 'run-jsx.ahk':
+            config = json.loads(args[0].read_text(encoding='utf-8').split('\n', 1)[0].removeprefix('var config = ').removesuffix(';'))
+            result = {'documents': [], 'png_preferences': preferences} if config['phase'] == 'snapshot' else {
+                'documents': [{'path': str(directory / 'workspace/Cloud9-Pen-Starter.ai')}], 'zoom': 1}
+            args[1].write_text(json.dumps(result), encoding='utf-8')
+            return ''
+        if script.name == 'input-state.ahk':
+            return ''
+        pytest.fail(f'Normal preparation must not export or modify export options: {script.name}')
+
+    prepared = prepare_desktop(plan, observer)
+    assert prepared['window']['maximized'] is True
+    assert json.loads((directory / 'illustrator-preferences-before.json').read_text(encoding='utf-8')) == preferences
+    assert not list(directory.rglob('*.png'))
+    assert not (directory / 'illustrator-export-options.json').exists()
 
 
 def test_image_only_output_succeeds_without_an_ai_or_manifest_and_quality_is_observational(tmp_path):
@@ -154,7 +194,8 @@ def test_illustrator_pen_export_conduct_accepts_illustrator_not_a_new_calculator
 @pytest.mark.desktop
 def test_illustrator_pen_export_real_illustrator_preparation_and_owned_document_cleanup(tmp_path):
     from bench.run import acu_observer
-    from bench.illustrator_pen_export import prepare_desktop, inspect_native, verify_outputs, cleanup_desktop
+    from bench.illustrator_pen_export import prepare_desktop, inspect_native, verify_outputs, cleanup_desktop, dismiss_task_dialogs
+    from concurrent.futures import ThreadPoolExecutor
 
     directory = ROOT / '.pi/illustrator-pen-export-validation' / f'native-check-{uuid4().hex[:8]}'
     plan = prepare('pi-acu', directory, scenario='illustrator-pen-export')
@@ -162,13 +203,31 @@ def test_illustrator_pen_export_real_illustrator_preparation_and_owned_document_
     try:
         prepared = prepare_desktop(plan, acu_observer)
         assert prepared['zoom'] == 1
-        assert prepared['png_preferences']['ResolutionR'] == 72
-        assert prepared['export_options']['anti_aliasing'] == 'Art Optimized (Supersampling)'
-        assert prepared['png_preferences']['AntiAlias'] == 1
+        assert prepared['window']['maximized'] is True
+        before_preferences = json.loads((directory / 'illustrator-preferences-before.json').read_text(encoding='utf-8'))
+        assert prepared['png_preferences'] == before_preferences
+        assert not (directory / 'grading/blank-calibration.png').exists()
+        assert not (directory / 'illustrator-export-options.json').exists()
         assert prepared['workspace'] == 'Getting Started'
         assert any(d['name'] == 'Cloud9-Pen-Starter.ai' for d in prepared['documents'])
         identity = json.loads((directory / 'illustrator-identity.json').read_text(encoding='utf-8'))
         workspace = directory / 'workspace'
+        window_check = directory / 'check-initial-window.ahk'
+        window_check.write_text(
+            f'target := "ahk_id {identity["hwnd"]}"\n'
+            'if WinGetMinMax(target) != 1\n    throw Error("Prepared Illustrator is not maximized")\n'
+            'MonitorGetWorkArea MonitorGetPrimary(), &left, &top, &right, &bottom\n'
+            'WinGetPos &x, &y, &width, &height, target\n'
+            'if x > left || y > top || x+width < right || y+height < bottom\n'
+            '    throw Error("Prepared Illustrator does not cover the primary work area")\n', encoding='utf-8')
+        acu_observer(directory, window_check)
+        # Optional maintainer fixture check, never part of normal trial preparation.
+        calibration = directory / 'grading/blank-calibration.png'
+        acu_observer(directory, ROOT / 'bench/illustrator/prepare-export.ahk', identity['hwnd'], identity['pid'],
+                     calibration, directory / 'fixture-export-options.json', timeout=40)
+        with Image.open(calibration) as blank:
+            assert blank.size == (800, 800)
+            assert blank.convert('RGBA').getextrema() == ((255, 255),) * 4
         screenshot = directory / 'blank-desktop.png'
         acu_observer(directory, ROOT / 'acu/screenshot.ahk', 'fullscreen', '--max', 0, '--out', screenshot)
         with Image.open(screenshot) as desktop:
@@ -248,6 +307,59 @@ def test_illustrator_pen_export_real_illustrator_preparation_and_owned_document_
             'if !opened || WinGetTitle("ahk_id " opened) != "Export"\n'
             '    throw Error("Export As menu recipe did not open Export As")\n', encoding='utf-8')
         acu_observer(directory, menu_script)
+        dismiss_task_dialogs(directory, acu_observer)
+
+        # Exercise the actual ownerless-picker failure, not a substitute owned Save As dialog.
+        picker_result = directory / 'picker-result.json'
+        picker_script = directory / 'picker-fixture.jsx'
+        picker_script.write_text('var config = ' + json.dumps({'result': str(picker_result)}) + ';\n' +
+            (ROOT / 'tests/scripts/illustrator_color_picker.jsx').read_text(encoding='utf-8'), encoding='utf-8')
+        picker_state = directory / 'picker-state.json'
+        picker_probe = directory / 'observe-ownerless-picker.ahk'
+        picker_probe.write_text(
+            f'pid := {identity["pid"]}\n'
+            'dialog := AcuWaitUntil(() => WinExist("Color Picker ahk_class #32770 ahk_pid " pid), 10000)\n'
+            'if !dialog\n    throw Error("Fixture Color Picker did not appear")\n'
+            'owner := DllCall("GetWindow", "ptr", dialog, "uint", 4, "ptr")\n'
+            'FileAppend \'{"hwnd":\' dialog \',"owner":\' owner \'}\', A_Args[1], "UTF-8-RAW"\n'
+            'if owner != 0\n    throw Error("Fixture did not reproduce the ownerless Color Picker")\n', encoding='utf-8')
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            opening = executor.submit(acu_observer, directory, ROOT / 'bench/illustrator/run-jsx.ahk',
+                                      picker_script, picker_result, identity['hwnd'], identity['pid'],
+                                      suffix='-picker-fixture', timeout=45)
+            try:
+                acu_observer(directory, picker_probe, picker_state, timeout=15)
+                picker = json.loads(picker_state.read_text(encoding='utf-8'))
+                protected = directory / 'protected-picker-probe.log'
+                protected.write_text((directory / 'observer-probe-before.log').read_text(encoding='utf-8') +
+                                     f'\nhiddenwindow={picker["hwnd"]} pid={identity["pid"]}\n', encoding='utf-8')
+                with pytest.raises(RuntimeError, match='dismiss-dialogs'):
+                    acu_observer(directory, ROOT / 'bench/illustrator/dismiss-dialogs.ahk',
+                                 identity['hwnd'], identity['pid'], protected, suffix='-protected-picker')
+                preserved = directory / 'check-picker-preserved.ahk'
+                preserved.write_text(f'if !WinExist("ahk_id {picker["hwnd"]}")\n'
+                                     '    throw Error("Pre-existing picker was cancelled")\n', encoding='utf-8')
+                acu_observer(directory, preserved)
+            finally:
+                # The genuine baseline does not contain this fixture-created picker; cancel it, never accept it.
+                try:
+                    acu_observer(directory, ROOT / 'bench/illustrator/dismiss-dialogs.ahk',
+                                 identity['hwnd'], identity['pid'], directory / 'observer-probe-before.log',
+                                 suffix='-ownerless-picker')
+                finally:
+                    # Test-resource teardown also works when the production cancellation regresses.
+                    # It cannot make the regression pass: the production cancelled= log is asserted below.
+                    if picker_state.exists():
+                        recorded = json.loads(picker_state.read_text(encoding='utf-8'))
+                        release = directory / 'release-fixture-picker.ahk'
+                        release.write_text(f'target := "ahk_id {recorded["hwnd"]}"\n'
+                            f'if WinExist(target) && WinGetPID(target) = {identity["pid"]} && WinGetTitle(target) = "Color Picker" {{\n'
+                            '    UIA.ElementFromHandle(target).FindElement({Type:"Button", Name:"Cancel"}).Invoke()\n'
+                            '    if !WinWaitClose(target, , 3)\n        throw Error("Fixture picker remains open")\n}\n', encoding='utf-8')
+                        acu_observer(directory, release)
+                    opening.result(timeout=55)
+        assert json.loads(picker_result.read_text(encoding='utf-8')) == {'closed': True}
+        assert f'cancelled={picker["hwnd"]} Color Picker' in (directory / 'observer-dismiss-dialogs-ownerless-picker.log').read_text(encoding='utf-8')
     finally:
         if (directory / 'illustrator-identity.json').exists():
             try:

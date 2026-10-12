@@ -6,12 +6,9 @@ if !WinExist(target) || WinGetPID(target) != pid || WinGetProcessName(target) !=
     throw Error("Illustrator identity changed")
 protected := FileRead(A_Args[3], "UTF-8")
 allowed := Map("Save As", true, "Illustrator Options", true, "PNG Options", true, "Export", true, "Open", true,
-               "Locate script file to execute", true, "Eyedropper Options", true)
+               "Locate script file to execute", true, "Eyedropper Options", true, "Color Picker", true)
 loop {
-    candidates := []
-    for candidate in WinGetList("ahk_class #32770 ahk_pid " pid)
-        if DllCall("IsWindowEnabled", "ptr", candidate) && DllCall("GetAncestor", "ptr", candidate, "uint", 3, "ptr") = hwnd
-            candidates.Push(candidate)
+    candidates := TaskDialogs(pid, hwnd)
     if candidates.Length = 0 {
         if !DllCall("IsWindowEnabled", "ptr", hwnd)
             throw Error("Unknown Illustrator modal state; refusing cancellation")
@@ -24,6 +21,16 @@ loop {
     if RegExMatch(protected, "m)^(?:window|hiddenwindow)=" dialog " pid=") || !allowed.Has(title)
         throw Error("Pre-existing or unrecognized Illustrator dialog; refusing cancellation: " title)
     root := UIA.ElementFromHandle(dialog)
+    if title = "Color Picker" {
+        if DllCall("GetWindow", "ptr", dialog, "uint", 4, "ptr") != 0
+            throw Error("Unrecognized Color Picker owner; refusing cancellation")
+        ; The observed ownerless picker has these distinct controls; title/PID alone is insufficient.
+        for name in ["OK", "Cancel", "Color Swatches"]
+            if root.FindElements({Type:"Button", Name:name}).Length != 1
+                throw Error("Unrecognized Illustrator Color Picker; refusing cancellation")
+    }
+    if !WinExist("ahk_id " dialog) || WinGetPID("ahk_id " dialog) != pid || WinGetTitle("ahk_id " dialog) != title
+        throw Error("Illustrator dialog identity changed before cancellation")
     errors := root.FindElements({Type:"Text", AutomationId:"ContentText"})
     if errors.Length = 1 && InStr(errors[1].Name, "The file name is not valid.") {
         FileAppend "file_dialog_error=" errors[1].Name "`n", "*"
@@ -38,14 +45,22 @@ loop {
     if !WinWaitClose("ahk_id " dialog, , 3)
         throw Error("Task dialog did not close: " title)
     FileAppend "cancelled=" dialog " " title "`n", "*"
-    if !AcuWaitUntil(() => (DllCall("IsWindowEnabled", "ptr", hwnd) && !WinGetList("ahk_class #32770 ahk_pid " pid).Length) || EnabledTaskDialog(pid, hwnd), 3000)
+    if !AcuWaitUntil(() => DllCall("IsWindowEnabled", "ptr", hwnd) || TaskDialogs(pid, hwnd).Length, 3000)
         throw Error("Illustrator did not return from its task dialog")
 }
 
-; A nested file error can leave its parent disabled briefly after disappearing.
-EnabledTaskDialog(pid, owner) {
-    for candidate in WinGetList("ahk_class #32770 ahk_pid " pid)
-        if DllCall("IsWindowEnabled", "ptr", candidate) && DllCall("GetAncestor", "ptr", candidate, "uint", 3, "ptr") = owner
-            return true
-    return false
+; Include the known ownerless Color Picker even when Illustrator leaves its main frame enabled.
+; Baseline protection, ambiguity refusal and UIA identity validation happen before any action above.
+TaskDialogs(pid, owner) {
+    candidates := []
+    for candidate in WinGetList("ahk_class #32770 ahk_pid " pid) {
+        if !DllCall("IsWindowEnabled", "ptr", candidate)
+            continue
+        owned := DllCall("GetAncestor", "ptr", candidate, "uint", 3, "ptr") = owner
+        picker := WinGetTitle("ahk_id " candidate) = "Color Picker"
+            && DllCall("GetWindow", "ptr", candidate, "uint", 4, "ptr") = 0
+        if owned || picker
+            candidates.Push(candidate)
+    }
+    return candidates
 }

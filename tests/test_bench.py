@@ -42,6 +42,45 @@ def test_metrics_count_final_usage_once_and_do_not_double_count_reasoning():
     assert result['model_turns'][0]['first_visible_delta_s'] == 1
 
 
+def test_controller_preserves_provider_failure_before_malformed_transcript_and_cleanup_error(tmp_path, monkeypatch):
+    import json
+    import sys
+    from bench import run as bench
+
+    plan = bench.prepare('pi-acu', tmp_path / 'trial')
+    directory = tmp_path / 'trial'
+    credential = tmp_path / 'fixture-auth.json'
+    credential.write_text('{}', encoding='utf-8')
+    monkeypatch.setitem(bench.CREDENTIALS, 'pi', (str(credential), 'auth.json'))
+    (directory / 'session.jsonl').write_text('{truncated transcript', encoding='utf-8')
+    error = 'OpenAI Responses stream ended before a terminal response event'
+    events = [{'type': 'agent_start'}, {'type': 'message_start', 'message': {'role': 'assistant'}},
+              {'type': 'message_end', 'message': {'role': 'assistant', 'stopReason': 'error', 'errorMessage': error,
+               'usage': {'input': 10, 'output': 0, 'totalTokens': 10}, 'content': []}},
+              {'type': 'agent_settled', 'aborted': False}]
+    emitter = tmp_path / 'provider-fixture.py'
+    emitter.write_text('from pathlib import Path\n'
+                       'with Path("invocations.txt").open("a") as log: log.write("once\\n")\n' +
+                       '\n'.join('print(' + repr(json.dumps(event)) + ', flush=True)' for event in events), encoding='utf-8')
+    plan['command'] = [sys.executable, str(emitter)]
+
+    # Simulate only the external desktop boundary; capture, analysis, transcript IO and finally cleanup are real.
+    def observer(run_dir, script, *args, **kwargs):
+        if script.name == 'restore_cursor.ahk':
+            raise RuntimeError('fixture cleanup failed')
+        assert script.name == 'probe.ahk'
+        return ''
+
+    monkeypatch.setattr(bench, 'acu_observer', observer)
+    with pytest.raises(RuntimeError, match='fixture cleanup failed'):
+        bench.run_trial(plan)
+    assert json.loads((directory / 'failure.json').read_text(encoding='utf-8')) == {
+        'kind': 'unexpected_provider_failure', 'errors': [error]}
+    assert (directory / 'workspace/invocations.txt').read_text(encoding='utf-8') == 'once\n'
+    assert not (directory / 'agent-home/auth.json').exists()
+    assert json.loads((directory / 'capture.json').read_text(encoding='utf-8'))['process_tree_stopped']
+
+
 def test_model_timing_includes_wait_before_pi_emits_message_start():
     records = [
         {'elapsed_s': 2, 'event': {'type': 'message_start', 'message': {'role': 'assistant'}}},
@@ -67,12 +106,19 @@ def test_isolation_audit_rejects_extra_skills_context_and_wrong_reasoning():
     assert not audit_pi_session([*entries, {'type': 'thinking_level_change', 'thinkingLevel': 'high'}], 'acu')['passed']
 
 
-def test_failed_or_aborted_model_run_is_not_reported_as_success():
+@pytest.mark.parametrize('error', ['quota', '503 subscription_sharing_user_unavailable',
+                                  'OpenAI Responses stream ended before a terminal response event'])
+def test_provider_failure_is_unexpected_not_a_model_or_desktop_failure(error):
     records = [{'elapsed_s': 1, 'event': {'type': 'agent_start'}},
                {'elapsed_s': 2, 'event': {'type': 'message_start', 'message': {'role': 'assistant'}}},
-               {'elapsed_s': 3, 'event': {'type': 'message_end', 'message': {'role': 'assistant', 'content': [], 'usage': {'input': 10, 'output': 0, 'totalTokens': 10}, 'stopReason': 'error', 'errorMessage': 'quota', 'durationMs': 1000}}},
+               {'elapsed_s': 3, 'event': {'type': 'message_end', 'message': {'role': 'assistant', 'content': [], 'usage': {'input': 10, 'output': 0, 'totalTokens': 10}, 'stopReason': 'error', 'errorMessage': error, 'durationMs': 1000}}},
                {'elapsed_s': 3, 'event': {'type': 'agent_settled', 'aborted': True}}]
     result = analyse_pi(records, wall_s=3)
     assert not result['agent_completed']
-    assert result['model_errors'] == ['quota']
+    assert result['model_errors'] == [error]
+    assert result['unexpected_failure'] == {'kind': 'unexpected_provider_failure', 'errors': [error]}
+    assert result['token_counts_complete'] is False
     assert result['effective_output_tps'] == 0
+
+    records[2]['event']['message']['stopReason'] = 'aborted'
+    assert analyse_pi(records, wall_s=3)['unexpected_failure'] is None, 'user interruption is not a provider failure'

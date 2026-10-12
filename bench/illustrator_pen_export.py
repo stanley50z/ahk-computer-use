@@ -76,7 +76,7 @@ def shape_metrics(image, reference):
     return result
 
 
-# The exported PNG is the only actor deliverable; shape quality is measured, never a refinement/pass threshold.
+# The exported PNG is the only actor deliverable; shape quality is measured, never a pass threshold.
 def verify_outputs(run_dir):
     run_dir = Path(run_dir)
     plan = json.loads((run_dir / 'plan.json').read_text(encoding='utf-8'))
@@ -181,16 +181,10 @@ def prepare_desktop(plan, observer):
     save_json(run_dir / 'illustrator-preferences-before.json', snapshot['png_preferences'])
     plan['protected_document_files'] = [doc['path'] for doc in before if doc['path'] and Path(doc['path']).is_file()]
     save_json(run_dir / 'plan.json', plan)
+    window_state = run_dir / 'illustrator-window.json'
+    observer(run_dir, ROOT / 'bench/illustrator/window.ahk', identity['hwnd'], identity['pid'], window_state)
     prepared = native_observer(run_dir, observer, 'prepare', starter=str(run_dir / 'workspace/Cloud9-Pen-Starter.ai'))
-    calibration = run_dir / 'grading/blank-calibration.png'
-    export_options = run_dir / 'illustrator-export-options.json'
-    observer(run_dir, ROOT / 'bench/illustrator/prepare-export.ahk', identity['hwnd'], identity['pid'],
-             calibration, export_options, timeout=40)
-    with Image.open(calibration) as blank:
-        if blank.size != (800, 800) or blank.convert('RGBA').getextrema() != ((255, 255),) * 4:
-            raise ValueError('Blank calibration export is not an opaque white 800 x 800 PNG')
-    prepared['export_options'] = json.loads(export_options.read_text(encoding='utf-8'))
-    prepared['png_preferences'] = native_observer(run_dir, observer, 'snapshot')['png_preferences']
+    prepared['window'] = json.loads(window_state.read_text(encoding='utf-8'))
     save_json(run_dir / 'illustrator-prepared.json', prepared)
     observer(run_dir, ROOT / 'bench/illustrator/input-state.ahk', identity['hwnd'], identity['pid'])
     return prepared

@@ -24,7 +24,8 @@ bench/
 ├── illustrator/                   Maintainer-only application automation
 │   ├── ensure.ahk
 │   ├── input-state.ahk
-│   ├── prepare-export.ahk
+│   ├── window.ahk                  Initial primary-monitor maximization
+│   ├── prepare-export.ahk          Explicit maintainer fixture check only
 │   ├── run-jsx.ahk
 │   ├── observer.jsx
 │   ├── dismiss-dialogs.ahk
@@ -98,39 +99,45 @@ Versions: **v1.0** is the button-only prompt that rounds 1 to 3 used, with the e
 
 ## Adobe Illustrator Pen and Export
 
-Use `--scenario illustrator-pen-export`. The [v0.4 task](scenarios/illustrator-pen-export.md) asks for **one drawing attempt and one exported PNG**. No `result.json`, report, or editable-AI save is required from the actor. The blank starter and separate JPEG remain the only inputs; provenance, official vectors and maintainer inspection stay outside actor context.
+Use `--scenario illustrator-pen-export`. The [v0.5 task](scenarios/illustrator-pen-export.md) asks for a Pen drawing and **one exported PNG**, with ordinary revisions and redraws allowed. No `result.json`, report, or editable-AI save is required from the actor. The blank starter and separate JPEG remain the only inputs; provenance, official vectors and maintainer inspection stay outside actor context.
 
-The actor approximates the reference with the Pen tool and exports the first completed attempt. Full redraws, restarting completed sections and repeated visual-refinement passes are prohibited. Correcting an accidental click or retrying input that did not register is allowed. The actor receives concrete appearance/export settings, not grading thresholds or advice on how to construct the geometry.
+The actor approximates the reference with the Pen tool, then sets the required blue fill, no stroke and opacity before exporting. The starter remains white-fill/black-stroke; preparation does not supply the target color. No particular color-control route is required. The v0.4 single-drawing-attempt, no-redraw and no-refinement restrictions are removed. The actor receives concrete appearance/export settings, not grading thresholds or geometry advice. The completed v0.4 round remains historical evidence under its original rules; do not pool it with v0.5.
 
-The checker reads `workspace/Cloud9-Recreated.png` directly. It reports whether the requested PNG was produced with the specified format/dimensions/appearance, its quality measurements, and observed problems. It never reads an actor manifest or requires saved AI. Unaligned foreground IoU and boundary error are **post-run observations**, not shape pass thresholds or a signal sent back to the actor. Incorrect/missing PNGs fail completion; a rough but valid first-attempt export is not failed merely for a lower quality score.
+The checker reads `workspace/Cloud9-Recreated.png` directly. It reports whether the requested PNG was produced with the specified format/dimensions/appearance, its quality measurements, and observed problems. It never reads an actor manifest or requires saved AI. Unaligned foreground IoU and boundary error are **post-run observations**, not shape pass thresholds or a signal sent back to the actor. Incorrect/missing PNGs fail completion; a rough but valid export is not failed merely for a lower quality score.
 
-The compact run summary contains the output image, extracted metrics, and safeguard violations, with one completion outcome. Detailed logs remain debugging evidence, not extra actor obligations. Review the full session for Pen-only/one-attempt compliance; record violations in the maintainer's round manifest before aggregation. Pixels alone cannot prove the method.
+The compact run summary contains the output image, extracted metrics, and safeguard violations, with one completion outcome. Detailed logs remain debugging evidence, not extra actor obligations. Review the full session for Pen-only compliance; record violations in the maintainer's round manifest before aggregation. Pixels alone cannot prove the method.
 
-Preparation and post-run cleanup remain maintainer work: common blank document/viewport, export defaults and English input; preserve pre-existing documents, close only task-owned resources, restore the cursor scheme. Cleanup must **never repair or advance an actor's task**. Issue [#14](https://github.com/stanley50z/ahk-computer-use/issues/14) concerns an ownerless Color Picker missed by the post-run observer after a CUA trial. It is not a Codex computer-use workaround. No vendor behavior is patched to make a blocked attempt succeed.
+Preparation and post-run cleanup remain maintainer work: a common blank document, primary-monitor maximized window, centered 100% document view and English input; preserve pre-existing documents, close only task-owned resources, restore the cursor scheme. `illustrator-window.json` and `observer-window.log` record initial geometry. Normalization runs before actor startup only; it does not repair later actor/runtime resizing. The exact cause of later upper-left-quarter resizing is not established by this setup change.
+
+Normal trials no longer perform a blank calibration export or preset PNG export preferences. The earlier live check verified cached dialog settings, but also changed the export directory to `grading/`. The starter already has a recorded blank-export validation; a maintainer may explicitly recheck it using the desktop-marked fixture test, which retains `grading/blank-calibration.png` and `fixture-export-options.json`. Export settings remain actor work. The original PNG preferences are still snapshotted and restored during cleanup.
+
+Cleanup must **never repair or advance an actor's task**. Cleanup recognizes the ownerless Color Picker from [#14](https://github.com/stanley50z/ahk-computer-use/issues/14) only in the exact Illustrator PID, with the standard dialog class/title, an enabled newly observed handle absent from the visible/hidden baseline, and unique OK/Cancel/Color Swatches controls. It refuses ambiguous or unrecognized dialogs and invokes only Cancel for the picker. This also works when the main frame remains enabled; pre-existing pickers stay protected. The marked desktop integration check exercises the real picker and protected-handle refusal; live validation of this fix is still deferred. Its evidence stays under `.pi/illustrator-pen-export-validation/native-check-*/`: `observer-dismiss-dialogs-protected-picker.log`, `observer-dismiss-dialogs-ownerless-picker.log`, `picker-state.json`, and `picker-result.json`; a JSX fixture error writes `picker-result.json.crash.txt`. It is not a Codex computer-use workaround. No vendor behavior is patched to make a blocked attempt succeed.
 
 ### Neutral skill policy
 
-ACU skills/prompts must not contain Illustrator-, Pen-tool-, or benchmark-specific recipes, menu shortcuts, geometry advice or solutions. General input, focus, popup and sparse professional-application UI-tree guidance is allowed. Earlier runs used application-specific skill guidance; they remain historical development evidence, **not a neutral baseline for v0.4**. New prompt and skill hashes identify this reset.
+ACU skills/prompts must not contain Illustrator-, Pen-tool-, or benchmark-specific recipes, menu shortcuts, geometry advice or solutions. General input, focus, popup and sparse professional-application UI-tree guidance is allowed. Earlier runs used application-specific skill guidance; they remain historical development evidence, **not a neutral baseline**. New prompt and skill hashes identify this reset.
 
-### Five attempts per configuration
+### Three trials per configuration
 
-A full round is exactly **25 attempts: five for each of the five configurations**, regardless of success. No replacement/retry attempts are added to fill failed slots. Preserve all histories, images and failures, including the runs excluded from averages.
+A full round is exactly **15 trials: three for each of the five configurations**, regardless of success. No replacement/retry trials are added to fill failed or interrupted slots. This supersedes the earlier five-trial/conditional-trimming policy for new rounds; historical results are unchanged.
 
-- If all five attempts in a configuration succeed: sort by total API tokens, drop the lowest and highest, and average **all metrics over those same three retained runs**. Ties use the persisted trial start order (`run-attempt.json`), not a reordered manifest.
-- If any attempt fails: exclude failures, do **not** trim, and average all successful attempts. Four successes means an average of four; one success means one.
-- With zero successes, there is no aggregate.
-- Missing metric values remain unknown; do not substitute zero or silently use different subsets per metric. If five successes lack a complete token sorting key, trimming/aggregation is unavailable until resolved.
+- Average **every successful trial**. Never drop the lowest/highest token runs or the best/worst images.
+- Use the same successful cohort for every metric: three successes means an average of three, two means two, one means one.
+- Failed and interrupted trials remain in the evidence but are excluded from averages. With zero successes, there is no aggregate.
+- Missing metric values remain unknown; do not substitute zero or silently use different subsets per metric. Unknown tokens do not prevent reporting another metric that is complete for the whole successful cohort.
 - Code share is descriptive. It is never used to declare success or select which runs to keep.
 
-`bench/aggregate.py` is offline and never launches/retries a trial. Its maintainer-authored manifest has an `attempts` array of 25 entries, in original trial order. Each entry contains a `run_dir` (absolute or relative to the manifest) and an explicit `safeguard_violations` array from session review; `[]` means no reviewed violation. This JSON is controller bookkeeping, **not a deliverable requested from the actor**. Recorded or reviewed violations exclude that attempt from averages.
+`bench/aggregate.py` is offline and never launches/retries a trial. Its maintainer-authored manifest has an `attempts` array of 15 entries, in original trial order. Each entry contains a `run_dir` (absolute or relative to the manifest) and an explicit `safeguard_violations` array from session review; `[]` means no reviewed violation. This JSON is controller bookkeeping, **not a deliverable requested from the actor**. Recorded or reviewed violations exclude that attempt from averages.
 
 ```bash
 uv run python bench/aggregate.py ".pi/rounds/round.json" > ".pi/rounds/aggregate.json"
 ```
 
-The extractor requires finished v0.4 runs stamped `benchmark-neutral-v1`, matching prompt/assets, matched models/reasoning within each harness, and matched skill/policy within each configuration. Historical tuned protocols are rejected even when their hashes match one another. It preserves the raw evidence and lists failed, trimmed and retained runs. Errors persist beside the manifest as `*.aggregate-crash.txt`.
+The extractor requires finished v0.5 runs stamped `benchmark-neutral-v1`, matching prompt/assets, matched models/reasoning within each harness, and matched skill/policy within each configuration. Historical protocols, including the neutral but single-attempt v0.4 protocol, are rejected even when their hashes match one another. Plans must also match the three-trial/all-successes policy; stale five-trial profiles are rejected. It preserves the raw evidence and lists failed and retained runs, without trimming. Errors persist beside the manifest as `*.aggregate-crash.txt`.
 
-**The next full round is paused until the user announces PC availability.** Current preparation/validation is offline only. See [v0.4 preparation notes](../docs/reports/illustrator-single-attempt-policy-2026-10-12.md). The existing metric policy, five models/runtime configurations and safety gates are otherwise unchanged.
+Terminal provider-response errors are **unexpected provider failures**, not evidence that the model, harness or desktop runtime cannot perform the task. They can terminate the actor session. The controller never resumes, retries, switches provider/model, or replaces the slot. `failure.json` is written before verification/cleanup, so a later observer failure cannot hide the provider error; summaries and offline analysis expose `unexpected_failure`. Aggregation lists `unexpected_failure_ids` separately while retaining the fixed three-slot/no-replacement rule. The existing `failures` count means unsuccessful slots of any cause, not a runtime fault count. Ordinary tool errors and user aborts are not provider failures.
+
+**The next full round and desktop validation are paused until the user announces PC availability.** Current v0.5 checks are offline only. See [the completed v0.4 round](../docs/reports/illustrator-pen-export-neutral-round-2026-10-12.md) and [v0.5 scope, issue #20](https://github.com/stanley50z/ahk-computer-use/issues/20). The metric policy, five configurations, three scheduled trials per configuration, PNG-only deliverable and neutral skill rule remain unchanged.
 
 ## Commands
 
@@ -217,7 +224,7 @@ Every run preserves:
 - `workspace/` with original actor scripts, ownership and result files;
 - screenshots and `observer-*.log` outside actor timing;
 - `state.json`, `launch.json`, `capture.json`, `cleanup.json`, `finished.json`;
-- `worker.log`, `crash.txt` or `capture-crash.txt` with tracebacks on failure.
+- `worker.log`, `crash.txt` or `capture-crash.txt` with tracebacks on failure; `failure.json` for an observed terminal provider error, independent of later cleanup errors.
 
 Interrupted runs retain raw events and report terminal failure. Usage for an unfinished model request can be unavailable; reported completed-message tokens are a lower bound, not a complete total. Evidence can contain screen content and should be treated as sensitive.
 

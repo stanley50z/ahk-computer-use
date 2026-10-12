@@ -1,4 +1,4 @@
-"""Offline aggregation of five attempts per configuration; never launches or retries a trial."""
+"""Offline aggregation of three attempts per configuration; never launches or retries a trial."""
 
 import argparse
 import json
@@ -12,32 +12,26 @@ from datetime import datetime
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
-# Trim by total API tokens only when all five succeed; otherwise average every success without trimming.
+TRIAL_POLICY = {'attempts_per_configuration': 3, 'aggregation': 'all-successes', 'replace_failed_attempts': False}
+
+
+# Average every successful trial over one shared cohort; no token sorting or trimming.
 def aggregate_configuration(attempts):
-    if len(attempts) != 5:
-        raise ValueError('exactly five attempts are required for each configuration')
-    if len({attempt['id'] for attempt in attempts}) != 5:
+    count = TRIAL_POLICY['attempts_per_configuration']
+    if len(attempts) != count:
+        raise ValueError('exactly three attempts are required for each configuration')
+    if len({attempt['id'] for attempt in attempts}) != count:
         raise ValueError('attempt IDs must be unique')
     if any(type(attempt['passed']) is not bool for attempt in attempts):
         raise ValueError('each attempt needs a reviewed boolean outcome')
     successful = [attempt for attempt in attempts if attempt['passed']]
-    result = {'attempts': 5, 'successes': len(successful), 'failures': 5-len(successful),
+    result = {'attempts': count, 'successes': len(successful), 'failures': count-len(successful),
               'failed_ids': [attempt['id'] for attempt in attempts if not attempt['passed']],
-              'trimmed_ids': [], 'retained_ids': [], 'sample_size': 0, 'averages': None, 'missing_metrics': []}
+              'unexpected_failure_ids': [attempt['id'] for attempt in attempts if not attempt['passed'] and attempt.get('unexpected_failure')],
+              'retained_ids': [], 'sample_size': 0, 'averages': None, 'missing_metrics': []}
     if not successful:
         result['reason'] = 'no successful attempts'
         return result
-    if len(successful) == 5:
-        totals = [attempt['statistics'].get('total_api_tokens') for attempt in successful]
-        if any(value is None for value in totals):
-            result['reason'] = 'cannot trim: a successful attempt has unknown total API tokens'
-            return result
-        if any(isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) for value in totals):
-            raise ValueError('total API tokens must be finite numbers')
-        # Python's stable sort preserves the original trial order for ties, independent of other metrics.
-        ordered = sorted(successful, key=lambda attempt: attempt['statistics']['total_api_tokens'])
-        result['trimmed_ids'] = [ordered[0]['id'], ordered[-1]['id']]
-        successful = ordered[1:-1]
     result['retained_ids'] = [attempt['id'] for attempt in successful]
     result['sample_size'] = len(successful)
     result['averages'] = {}
@@ -96,9 +90,11 @@ def aggregate_round(manifest_path):
             raise ValueError(f'attempt has not finished: {run}')
         if plan['scenario'] != 'illustrator-pen-export' or plan['arm'] not in ARMS:
             raise ValueError('this round must contain the five Illustrator configurations')
-        if plan.get('scenario_version') != 'Adobe Illustrator Pen and Export v0.4 (single attempt)' or plan.get('skill_guidance_policy') != 'benchmark-neutral-v1':
-            raise ValueError('round requires the neutral single-attempt v0.4 baseline; historical tuned runs are not eligible')
-        identity = {key: plan[key] for key in ('model', 'reasoning', 'scenario', 'scenario_version', 'prompt_sha256', 'skill_sha256', 'assets', 'measurement_policy', 'skill_guidance_policy')}
+        if plan.get('scenario_version') != 'Adobe Illustrator Pen and Export v0.5' or plan.get('skill_guidance_policy') != 'benchmark-neutral-v1':
+            raise ValueError('round requires the neutral v0.5 baseline; historical protocols are not eligible')
+        if plan.get('trial_policy') != TRIAL_POLICY:
+            raise ValueError('round requires the three-attempt all-successes trial policy')
+        identity = {key: plan[key] for key in ('model', 'reasoning', 'scenario', 'scenario_version', 'prompt_sha256', 'skill_sha256', 'assets', 'measurement_policy', 'skill_guidance_policy', 'trial_policy')}
         attempt_record = json.loads((run / 'run-attempt.json').read_text(encoding='utf-8'))
         started_at = datetime.fromisoformat(attempt_record['started_at'])
         if started_at.tzinfo is None:
@@ -108,12 +104,14 @@ def aggregate_round(manifest_path):
         identities[plan['arm']] = identity
         summary_path = run / 'summary.json'
         summary = json.loads(summary_path.read_text(encoding='utf-8')) if summary_path.is_file() else None
+        failure_path = run / 'failure.json'
+        unexpected_failure = json.loads(failure_path.read_text(encoding='utf-8')) if failure_path.is_file() else (summary or {}).get('unexpected_failure')
         cleanup = finished.get('cleanup', {})
         violations = list(violations) + ((summary or {}).get('safeguard_violations') or [])
         if cleanup.get('passed') is not True or cleanup.get('cursor_scheme_restored') is not True:
             violations.append('cleanup failed or is unverified')
         violations = list(dict.fromkeys(violations))
-        passed = summary is not None and summary.get('passed') is True and not violations
+        passed = summary is not None and summary.get('passed') is True and not violations and not unexpected_failure
         if passed and (not (run / 'events.jsonl').is_file() or not (run / 'workspace/Cloud9-Recreated.png').is_file()):
             raise ValueError(f'successful attempt is missing session history or its output image: {run}')
         statistics_row, metric_error = None, None
@@ -131,14 +129,15 @@ def aggregate_round(manifest_path):
         else:
             metric_error = 'failed before extracted metrics were recorded'
         row = {'id': str(run), 'started_at': started_at, 'passed': passed, 'statistics': statistics_row,
-               'safeguard_violations': violations}
+               'safeguard_violations': violations, 'unexpected_failure': unexpected_failure}
         groups.setdefault(plan['arm'], []).append(row)
         image = run / 'workspace/Cloud9-Recreated.png'
         attempts.append({'run_dir': str(run), 'arm': plan['arm'], 'passed': passed,
                          'output_image': str(image) if image.is_file() else None,
-                         'statistics': statistics_row, 'metric_error': metric_error, 'safeguard_violations': violations})
+                         'statistics': statistics_row, 'metric_error': metric_error, 'safeguard_violations': violations,
+                         'unexpected_failure': unexpected_failure})
     if set(groups) != set(ARMS):
-        raise ValueError('a full round requires all five configurations, with five attempts each')
+        raise ValueError('a full round requires all five configurations, with three attempts each')
     if len({identity['prompt_sha256'] for identity in identities.values()}) != 1 or len({json.dumps(identity['assets'], sort_keys=True) for identity in identities.values()}) != 1:
         raise ValueError('unmatched prompts/assets between configurations')
     for attempts_in_group in groups.values():
@@ -150,7 +149,7 @@ def aggregate_round(manifest_path):
             raise ValueError('unmatched model/reasoning within a harness comparison')
     if len({identity['measurement_policy'] for identity in identities.values()}) != 1:
         raise ValueError('unmatched measurement policies between configurations')
-    return {'policy': 'five-attempts-trim-only-if-all-succeed-v1', 'attempts': attempts,
+    return {'policy': 'three-attempts-all-successes-v1', 'attempts': attempts,
             'configurations': {arm: aggregate_configuration(groups[arm]) for arm in ARMS}}
 
 

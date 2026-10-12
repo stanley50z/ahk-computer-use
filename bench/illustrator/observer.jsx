@@ -93,8 +93,6 @@
             if (rect[2] - rect[0] !== 800 || rect[1] - rect[3] !== 800) throw new Error('Starter dimensions changed');
             doc.activate();
             if (!app.switchWorkspace('Getting Started') || !app.resetWorkspace()) throw new Error('Cannot establish the benchmark workspace');
-            setPngPreferences({ResolutionR: 72, AntiAlias: 1, BackgroundTransparent: false, Interlaced: false,
-                               'Background/red': 65535, 'Background/green': 65535, 'Background/blue': 65535});
             doc.views[0].zoom = 1;
             doc.views[0].centerPoint = [(rect[0] + rect[2]) / 2, (rect[1] + rect[3]) / 2];
             app.redraw();

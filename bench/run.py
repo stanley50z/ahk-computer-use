@@ -99,7 +99,7 @@ def argument_text(arguments):
 def analyse_pi(records, wall_s, reference_tps=None):
     tokens = dict(input_uncached=0, cache_read=0, cache_write=0,
                   output_including_reasoning=0, reasoning_subset=None, total=0)
-    turns, tools, intervals, errors = [], [], [], []
+    turns, tools, intervals, errors, provider_errors = [], [], [], [], []
     current = None
     starts = {}
     agent_start = agent_end = None
@@ -138,7 +138,10 @@ def analyse_pi(records, wall_s, reference_tps=None):
                           'response_model': message.get('responseModel'),
                           'thinking': message.get('thinkingLevel'), 'stop_reason': message['stopReason']})
             if message['stopReason'] in ('error', 'aborted'):
-                errors.append(message.get('errorMessage', message['stopReason']))
+                error = message.get('errorMessage', message['stopReason'])
+                errors.append(error)
+                if message['stopReason'] == 'error':
+                    provider_errors.append(error)  # Provider-response failure, not a desktop tool result.
             current = None
         elif kind == 'tool_execution_start':
             starts[event['toolCallId']] = (elapsed, event['toolName'], event.get('args', {}))
@@ -157,7 +160,8 @@ def analyse_pi(records, wall_s, reference_tps=None):
               'tokens': tokens, 'effective_output_tps': tokens['output_including_reasoning'] / model_s if model_s is not None and model_s > 0 else None,
               'end_to_end_output_tps': tokens['output_including_reasoning'] / wall_s if wall_s > 0 else None,
               'model_turns': turns, 'tools': tools, 'model_errors': errors,
-              'agent_completed': completed, 'token_counts_complete': completed, 'unfinished_tools': list(starts)}
+              'agent_completed': completed, 'token_counts_complete': completed, 'unfinished_tools': list(starts),
+              'unexpected_failure': {'kind': 'unexpected_provider_failure', 'errors': provider_errors} if provider_errors else None}
     if reference_tps is not None:
         if reference_tps <= 0:
             raise ValueError('reference throughput must be positive')
@@ -265,7 +269,7 @@ def audit_codex_session(entries, expected_model='gpt-6.1-sol'):
 def analyse_claude(records, wall_s, reference_tps=None):
     tokens = dict(input_uncached=0, cache_read=0, cache_write=0,
                   output_including_reasoning=0, reasoning_subset=None, total=0)
-    turns, tools, intervals, errors = [], [], [], []
+    turns, tools, intervals, errors, provider_errors = [], [], [], [], []
     usage_by_message, tool_starts = {}, {}
     agent_start = agent_end = request_start = None
     current = None
@@ -280,7 +284,11 @@ def analyse_claude(records, wall_s, reference_tps=None):
                 request_start = elapsed
         elif kind == 'stream_event':
             inner = event['event']
-            if inner['type'] == 'message_start':
+            if inner['type'] == 'error':
+                error = json.dumps(inner['error'], ensure_ascii=False)
+                errors.append(error)
+                provider_errors.append(error)
+            elif inner['type'] == 'message_start':
                 current = {'start_s': request_start if request_start is not None else elapsed, 'first_visible_delta_s': None,
                            'message_id': inner['message'].get('id'), 'model': inner['message'].get('model'), 'delta_usage': None}
             elif current is None:
@@ -315,7 +323,9 @@ def analyse_claude(records, wall_s, reference_tps=None):
             agent_end = elapsed
             final = event
             if event.get('is_error') or event.get('subtype') != 'success':
-                errors.append(str(event.get('result') or event.get('subtype')))
+                reported = event.get('errors') or [str(event.get('result') or event.get('subtype'))]
+                errors.extend(reported)
+                provider_errors.extend(error for error in reported if error.lstrip().lower().startswith('api error:'))
     if final is not None and final.get('usage'):
         usage = final['usage']
         tokens.update(input_uncached=usage.get('input_tokens', 0), cache_read=usage.get('cache_read_input_tokens', 0),
@@ -337,7 +347,8 @@ def analyse_claude(records, wall_s, reference_tps=None):
               'end_to_end_output_tps': tokens['output_including_reasoning'] / wall_s if wall_s > 0 else None,
               'reported_api_duration_s': final['duration_api_ms'] / 1000 if final and 'duration_api_ms' in final else None,
               'model_turns': turns, 'tools': tools, 'model_errors': errors, 'agent_completed': completed,
-              'unfinished_tools': list(tool_starts), 'token_counts_complete': final is not None and bool(final.get('usage')),
+              'unexpected_failure': {'kind': 'unexpected_provider_failure', 'errors': list(dict.fromkeys(provider_errors))} if provider_errors else None,
+              'unfinished_tools': list(tool_starts), 'token_counts_complete': final is not None and bool(final.get('usage')) and not provider_errors,
               'timing_basis': 'Receipt intervals from the request status event to message_stop; Claude Code exposes no per-response server duration.'}
     if reference_tps is not None:
         if reference_tps <= 0:
@@ -573,11 +584,11 @@ def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=No
         (run_dir / 'grading').mkdir()
         shutil.copyfile(assets / 'Cloud9-Reference.jpg', run_dir / 'grading/reference.jpg')
         plan['grading'] = {'reference_sha256': plan['assets']['Cloud9-Reference.jpg'],
-                           'registration': 'none', 'shape_pass_threshold': None, 'mode': 'image-only-single-attempt'}
+                           'registration': 'none', 'shape_pass_threshold': None, 'mode': 'image-only'}
         plan['actor_deliverables'] = ['Cloud9-Recreated.png']
         plan['skill_guidance_policy'] = 'benchmark-neutral-v1'
-        plan['trial_policy'] = {'attempts_per_configuration': 5, 'sort_by': 'total_api_tokens',
-                                'trim': 'lowest-and-highest-only-if-all-five-succeed', 'replace_failed_attempts': False}
+        from bench.aggregate import TRIAL_POLICY
+        plan['trial_policy'] = dict(TRIAL_POLICY)
     save_json(run_dir / 'plan.json', plan)
     return plan
 
@@ -941,16 +952,23 @@ def run_trial(plan, reference_tps=None):
         records, wall, exit_code = capture(executable_command(plan['command']), plan['workspace'], environment, run_dir)
         if harness(arm) == 'pi':
             measurements = analyse_pi(records, wall, reference_tps)
+        elif harness(arm) == 'claude':
+            measurements = analyse_claude(records, wall, reference_tps)
+        else:
+            measurements = analyse_codex(records, wall)
+        # Persist before transcript IO, grading or cleanup so a later failure cannot hide the provider error.
+        unexpected_failure = measurements.get('unexpected_failure')
+        if unexpected_failure:
+            save_json(run_dir / 'failure.json', unexpected_failure)
+        if harness(arm) == 'pi':
             session_path = run_dir / 'session.jsonl'
             entries = read_jsonl(session_path) if session_path.is_file() else []
             isolation = audit_pi_session(entries, plan['skill_names'][0], expected_model=plan['model'])
         elif harness(arm) == 'claude':
-            measurements = analyse_claude(records, wall, reference_tps)
             transcripts = sorted((run_dir / 'agent-home/projects').rglob('*.jsonl')) if (run_dir / 'agent-home/projects').is_dir() else []
             entries = [entry for path in transcripts for entry in read_jsonl(path)]
             isolation = audit_claude_session(records, entries, Path(plan['skill_path']).parent)
         else:
-            measurements = analyse_codex(records, wall)
             native_sessions = list((run_dir / 'agent-home/sessions').rglob('*.jsonl'))
             native_entries = [entry for path in native_sessions for entry in read_jsonl(path)]
             isolation = audit_codex_session(native_entries, expected_model=plan['model'])
@@ -986,7 +1004,8 @@ def run_trial(plan, reference_tps=None):
                    'diagnostics': {'wall_s': wall, 'note': 'Not a benchmark ranking metric.'},
                    'isolation_passed': isolation['passed'], 'task_passed': verification['passed'], 'conduct_passed': conduct['passed'],
                    'conduct_problems': conduct['problems'],
-                   'passed': exit_code == 0 and isolation['passed'] and verification['passed'] and conduct['passed'] and measurements['capture']['passed'],
+                   'passed': exit_code == 0 and measurements['agent_completed'] and isolation['passed'] and verification['passed'] and conduct['passed'] and measurements['capture']['passed'],
+                   'unexpected_failure': unexpected_failure,
                    'metrics': measurements, 'evidence_dir': str(run_dir)}
         if is_illustrator:
             summary.update(scenario='illustrator-pen-export', output_image=verification['output'],
@@ -994,7 +1013,7 @@ def run_trial(plan, reference_tps=None):
                            safeguard_violations=conduct['problems'] + isolation['problems'])
             for field in ('isolation_passed', 'task_passed', 'conduct_passed', 'conduct_problems'):
                 summary.pop(field)
-            # Pen-only/single-attempt compliance is reviewed from the session, never requested as an actor report.
+            # Pen-only compliance is reviewed from the session, never requested as an actor report.
         save_json(run_dir / 'summary.json', summary)
         return summary
     except Exception:

@@ -63,6 +63,19 @@ def test_claude_run_without_a_final_result_is_incomplete_not_zero():
     assert result['tokens']['total'] == 10 and result['model_response_s'] is None
 
 
+def test_claude_reports_provider_api_errors_without_mislabeling_harness_limits():
+    error = 'API Error: 529 {"error":{"type":"overloaded_error","message":"Overloaded"}}'
+    records = [{'elapsed_s': 1, 'event': INIT}, {'elapsed_s': 2, 'event': {
+        'type': 'result', 'subtype': 'error_during_execution', 'is_error': True, 'errors': [error],
+        'usage': {'input_tokens': 10, 'output_tokens': 5}}}]
+    result = analyse_claude(records, wall_s=2)
+    assert result['unexpected_failure'] == {'kind': 'unexpected_provider_failure', 'errors': [error]}
+    assert not result['agent_completed']
+    assert result['tokens']['total'] == 15 and not result['token_counts_complete']
+    records[-1]['event'].update(subtype='error_max_turns', errors=['Max turns reached'])
+    assert analyse_claude(records, wall_s=2)['unexpected_failure'] is None
+
+
 @pytest.mark.parametrize('skill_name', ['acu', 'cua-driver'])
 def test_claude_audit_requires_init_and_transcript_evidence_and_rejects_pollution(skill_name):
     records = [{'elapsed_s': 1, 'event': INIT}]
