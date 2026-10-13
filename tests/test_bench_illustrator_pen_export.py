@@ -53,6 +53,9 @@ def test_illustrator_pen_export_prepare_freezes_png_and_resolves_task_paths(tmp_
     assert reference.read_bytes() == (directory / 'workspace/Cloud9-Reference.png').read_bytes()
     prompt = (directory / 'prompt.txt').read_text(encoding='utf-8')
     assert '#00AEEF' in prompt and '72 ppi' in prompt
+    assert '800 × 800' in prompt and 'opaque white background' in prompt and 'non-interlaced' in prompt
+    for widget in ('Export As', 'Use Artboards', 'Art Optimized', 'Interlaced off'):
+        assert widget not in prompt, 'specify output properties, not a sequence of GUI controls'
     assert 'Pen tool' in prompt and 'then export' in prompt
     assert 'Use the supplied computer-use tool for every interaction with Adobe Illustrator.' in prompt
     assert 'c9.gg' not in prompt and 'guidelines' not in prompt.lower()
@@ -84,7 +87,7 @@ def test_cli_prepares_illustrator_pen_export_without_desktop_approval(tmp_path):
     assert completed.returncode == 0, completed.stderr
     plan = json.loads(completed.stdout)
     assert plan['scenario'] == 'illustrator-pen-export'
-    assert plan['scenario_version'] == 'Adobe Illustrator Pen and Export v0.6'
+    assert plan['scenario_version'] == 'Adobe Illustrator Pen and Export v0.7'
     # The blank starter is unchanged; the new reference is derived from the official lossless PNG.
     assert plan['prompt_sha256'] != 'b6b38f65c7675f11b27fd94fa0fcbef75d38208c441a6914727ef97a6f3c254b'
     assert plan['assets'] == {
@@ -159,8 +162,12 @@ def test_image_only_output_succeeds_without_an_ai_or_manifest_and_quality_is_obs
     assert not (workspace / 'result.json').exists()
     (workspace / 'result.json').write_text('invalid and irrelevant JSON', encoding='utf-8')
     assert verify_outputs(directory)['passed'], 'an unsolicited report file must not trip PNG grading'
-    image.convert('RGBA').save(workspace / 'Cloud9-Recreated.png')
-    assert verify_outputs(directory)['passed'], 'opaque RGBA is valid'
+    image.convert('RGBA').save(workspace / 'Cloud9-Recreated.png', dpi=(72, 72))
+    assert verify_outputs(directory)['passed'], 'opaque RGBA with the requested density is valid'
+    image.save(workspace / 'Cloud9-Recreated.png')
+    assert verify_outputs(directory)['checks']['resolution_metadata'] is False, '72 ppi is a requested final-file property'
+    image.save(workspace / 'Cloud9-Recreated.png', dpi=(144, 144))
+    assert verify_outputs(directory)['checks']['resolution_metadata'] is False
     transparent = image.convert('RGBA')
     transparent.putalpha(0)
     transparent.save(workspace / 'Cloud9-Recreated.png')

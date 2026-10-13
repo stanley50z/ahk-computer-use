@@ -28,6 +28,11 @@ def test_prepare_pi_arms_share_scenario_and_do_not_inherit_user_configuration(tm
         settings = json.loads((run_dir / 'agent-home/settings.json').read_text(encoding='utf-8'))
         assert settings['packages'] == []
         assert settings['extensions'] == []
+        assert settings['retry'] == {'enabled': True, 'maxRetries': 3, 'baseDelayMs': 2000,
+                                     'maxAgentDelayMs': 60000, 'provider': {'maxRetries': 0}}
+        assert settings['compaction'] == {'enabled': True, 'reserveTokens': 16384, 'keepRecentTokens': 20000}
+        plan = acu if run_dir.name == 'acu-run' else cua
+        assert plan['recovery_policy'] == {'retry': settings['retry'], 'compaction': settings['compaction']}
         assert not (run_dir / 'agent-home/APPEND_SYSTEM.md').exists()
         assert (run_dir / 'workspace').is_dir()
 
@@ -84,6 +89,9 @@ def test_prepare_pi_native_keeps_the_same_gpt_profile_and_only_native_mcp(tmp_pa
     assert json.loads(native['env']['NODE_REPL_TRUSTED_SERVICES']) == {'sky': '@oai/sky/service'}
     assert native['env']['BROWSER_USE_AVAILABLE_BACKENDS'] == ''
     assert plan['skill_names'] == ['computer-use']
+    settings = json.loads((tmp_path / 'native-run/agent-home/settings.json').read_text(encoding='utf-8'))
+    assert settings['retry']['enabled'] and settings['compaction']['enabled']
+    assert plan['recovery_policy'] == {'retry': settings['retry'], 'compaction': settings['compaction']}
     assert (plan['model'], plan['reasoning']) == ('gpt-6-astra', 'low')
     command = plan['command']
     assert command[0] == 'pi' and '--no-mcp' not in command

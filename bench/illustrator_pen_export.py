@@ -121,7 +121,7 @@ def verify_outputs(run_dir):
                               blue_fill=bool(blue) and solid / len(blue) >= .95,
                               non_interlaced=not opened.info.get('interlace', 0))
                 dpi = opened.info.get('dpi')
-                checks['resolution_metadata'] = dpi is None or all(abs(value - 72) < .1 for value in dpi)
+                checks['resolution_metadata'] = dpi is not None and all(abs(value - 72) < .1 for value in dpi)
                 report['dpi'] = dpi
                 with Image.open(reference_path) as reference:
                     report['quality'] = shape_metrics(pixels, reference)

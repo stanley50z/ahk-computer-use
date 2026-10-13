@@ -1,4 +1,4 @@
-# Adobe Illustrator Pen and Export v0.6
+# Adobe Illustrator Pen and Export v0.7
 
 Workspace: <WORKSPACE>
 Scratch folder: <WORKSPACE>/scratch
@@ -8,12 +8,6 @@ Recreate the shape in Cloud9-Reference.png using the Pen tool in the already-ope
 
 Set the fill color to #00AEEF.
 
-Export to the final output path through Export As with these settings:
-- PNG
-- Use Artboards
-- 72 ppi
-- Art Optimized (Supersampling)
-- White background
-- Interlaced off
+Export an 800 × 800 PNG to the final output path with an opaque white background, 72 ppi resolution metadata, and non-interlaced encoding.
 
 Only the PNG is required. Stop after exporting.

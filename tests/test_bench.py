@@ -42,40 +42,203 @@ def test_metrics_count_final_usage_once_and_do_not_double_count_reasoning():
     assert result['model_turns'][0]['first_visible_delta_s'] == 1
 
 
-def test_controller_preserves_provider_failure_before_malformed_transcript_and_cleanup_error(tmp_path, monkeypatch):
+@pytest.mark.parametrize('recovery', ['retry', 'compaction'])
+def test_pi_recovery_can_complete_without_erasing_interruption_or_unknown_usage(recovery):
+    error = '503 upstream connect error'
+    failed = {'role': 'assistant', 'content': [], 'usage': {'input': 0, 'output': 0, 'totalTokens': 0},
+              'stopReason': 'error', 'errorMessage': error}
+    success = {'role': 'assistant', 'content': [], 'usage': {'input': 100, 'output': 20, 'totalTokens': 120},
+               'stopReason': 'stop'}
+    records = [{'elapsed_s': 0, 'event': {'type': 'agent_start'}},
+               {'elapsed_s': 1, 'event': {'type': 'tool_execution_start', 'toolCallId': 'once', 'toolName': 'bash', 'args': {'command': 'acu run draw.ahk'}}},
+               {'elapsed_s': 2, 'event': {'type': 'tool_execution_end', 'toolCallId': 'once', 'isError': False}},
+               {'elapsed_s': 3, 'event': {'type': 'message_start', 'message': {'role': 'assistant'}}},
+               {'elapsed_s': 4, 'event': {'type': 'message_end', 'message': failed}}]
+    if recovery == 'retry':
+        records += [{'elapsed_s': 4, 'event': {'type': 'auto_retry_start', 'attempt': 1, 'maxAttempts': 3, 'delayMs': 2000, 'errorMessage': error}},
+                    {'elapsed_s': 6, 'event': {'type': 'auto_retry_end', 'success': True, 'attempt': 1}}]
+    else:
+        records += [{'elapsed_s': 4, 'event': {'type': 'compaction_start', 'reason': 'overflow'}},
+                    {'elapsed_s': 6, 'event': {'type': 'compaction_end', 'reason': 'overflow', 'aborted': False, 'willRetry': True,
+                     'result': {'usage': {'input': 10, 'cacheRead': 5, 'output': 5, 'totalTokens': 20}}}}]
+    records += [{'elapsed_s': 7, 'event': {'type': 'message_start', 'message': {'role': 'assistant'}}},
+                {'elapsed_s': 8, 'event': {'type': 'message_end', 'message': success}},
+                {'elapsed_s': 9, 'event': {'type': 'agent_settled', 'aborted': False}}]
+    result = analyse_pi(records, wall_s=9)
+    assert result['agent_completed'] is True
+    assert result['unexpected_failure'] is None
+    assert result['recovered_provider_errors'] == [error]
+    assert result['model_errors'] == [error], 'original errors remain diagnostic evidence'
+    assert result['token_counts_complete'] is False, 'unreported failed-request consumption is not invented'
+    assert result['tokens']['total'] == (140 if recovery == 'compaction' else 120)
+    assert [tool['id'] for tool in result['tools']] == ['once'], 'recovery does not replay completed UI calls'
+
+
+def test_pi_compaction_usage_is_counted_once_and_missing_usage_stays_unknown():
+    usage = {'input': 7, 'cacheRead': 3, 'output': 5, 'reasoning': 2, 'totalTokens': 15}
+    records = [{'elapsed_s': 0, 'event': {'type': 'agent_start'}},
+               {'elapsed_s': 1, 'event': {'type': 'compaction_start', 'reason': 'threshold'}},
+               {'elapsed_s': 2, 'event': {'type': 'compaction_end', 'reason': 'threshold', 'aborted': False,
+                                        'willRetry': False, 'result': {'usage': usage}}},
+               {'elapsed_s': 3, 'event': {'type': 'message_start', 'message': {'role': 'assistant'}}},
+               {'elapsed_s': 4, 'event': {'type': 'message_end', 'message': {'role': 'assistant', 'content': [],
+                'stopReason': 'stop', 'durationMs': 1000,
+                'usage': {'input': 10, 'output': 2, 'reasoning': 1, 'totalTokens': 12}}}},
+               {'elapsed_s': 5, 'event': {'type': 'agent_settled', 'aborted': False}}]
+    result = analyse_pi(records, wall_s=5, reference_tps=10)
+    assert result['agent_completed'] and result['token_counts_complete']
+    assert result['tokens'] == {'input_uncached': 17, 'cache_read': 3, 'cache_write': 0,
+                               'output_including_reasoning': 7, 'reasoning_subset': 3, 'total': 27}
+    assert result['compactions'] == 1 and len(result['recovery_events']) == 2
+    assert result['model_response_s'] is None, 'unexposed summarization timing must not produce a misleading model rate'
+    assert result['estimated_wall_at_reference_tps_s'] is None
+    summary_retry = [{'elapsed_s': .5, 'event': {'type': 'summarization_retry_scheduled', 'attempt': 1, 'errorMessage': '503'}}]
+    retried = analyse_pi(records[:1] + summary_retry + records[1:], wall_s=5)
+    assert retried['agent_completed'] and not retried['token_counts_complete']
+    assert retried['tokens']['total'] == 27, 'failed summary consumption remains unknown despite reported successful summary usage'
+    records[2]['event']['result'].pop('usage')
+    missing = analyse_pi(records, wall_s=5)
+    assert missing['agent_completed'] and not missing['token_counts_complete']
+    assert missing['tokens']['total'] == 12, 'retain recorded consumption only, not fabricated summary usage'
+
+
+def test_pi_recovered_error_does_not_hide_a_later_terminal_failure_or_user_abort():
+    records = []
+    for index, (reason, error) in enumerate([('error', 'first 503'), ('toolUse', None), ('error', 'last 503')]):
+        message = {'role': 'assistant', 'content': [], 'stopReason': reason,
+                   'usage': {'input': 0, 'output': 0, 'totalTokens': 0}}
+        if error:
+            message['errorMessage'] = error
+        records += [{'elapsed_s': index*2, 'event': {'type': 'message_start', 'message': {'role': 'assistant'}}},
+                    {'elapsed_s': index*2+1, 'event': {'type': 'message_end', 'message': message}}]
+    records += [{'elapsed_s': 6, 'event': {'type': 'auto_retry_end', 'success': False, 'attempt': 3, 'finalError': 'last 503'}},
+                {'elapsed_s': 7, 'event': {'type': 'agent_settled', 'aborted': False}}]
+    result = analyse_pi(records, wall_s=7)
+    assert not result['agent_completed'] and not result['token_counts_complete']
+    assert result['recovered_provider_errors'] == ['first 503']
+    assert result['unexpected_failure'] == {'kind': 'unexpected_provider_failure', 'errors': ['last 503']}
+    records[-2]['event']['finalError'] = 'Retry cancelled'
+    records[-1]['event']['aborted'] = True
+    cancelled = analyse_pi(records, wall_s=7)
+    assert not cancelled['agent_completed'] and cancelled['unexpected_failure'] is None
+    assert cancelled['model_errors'] == ['first 503', 'last 503'], 'raw provider errors survive cancellation'
+    records.pop()  # A host cancellation can kill the CLI during backoff before it emits settled/cancelled events.
+    records.pop()
+    host_cancelled = analyse_pi(records, wall_s=7, cancelled=True)
+    assert not host_cancelled['agent_completed'] and host_cancelled['unexpected_failure'] is None
+    assert host_cancelled['model_errors'] == ['first 503', 'last 503']
+
+
+def test_pi_a_later_unsettled_run_cannot_reuse_an_earlier_completion():
+    records = [{'elapsed_s': 0, 'event': {'type': 'agent_start'}},
+               {'elapsed_s': 1, 'event': {'type': 'message_start', 'message': {'role': 'assistant'}}},
+               {'elapsed_s': 2, 'event': {'type': 'message_end', 'message': {'role': 'assistant', 'content': [],
+                'stopReason': 'stop', 'usage': {'input': 10, 'output': 2, 'totalTokens': 12}}}},
+               {'elapsed_s': 3, 'event': {'type': 'agent_settled', 'aborted': False}},
+               {'elapsed_s': 4, 'event': {'type': 'agent_start'}},
+               {'elapsed_s': 5, 'event': {'type': 'message_start', 'message': {'role': 'assistant'}}},
+               {'elapsed_s': 6, 'event': {'type': 'message_end', 'message': {'role': 'assistant', 'content': [],
+                'stopReason': 'error', 'errorMessage': '503', 'usage': {'input': 0, 'output': 0, 'totalTokens': 0}}}}]
+    assert not analyse_pi(records, wall_s=6)['agent_completed']
+
+
+def test_pi_unresolved_compaction_failure_is_not_a_completed_session():
+    records = [{'elapsed_s': 0, 'event': {'type': 'message_start', 'message': {'role': 'assistant'}}},
+               {'elapsed_s': 1, 'event': {'type': 'message_end', 'message': {'role': 'assistant', 'content': [],
+                'stopReason': 'toolUse', 'usage': {'input': 10, 'output': 2, 'totalTokens': 12}}}},
+               {'elapsed_s': 2, 'event': {'type': 'compaction_end', 'reason': 'overflow', 'aborted': False,
+                                        'result': None, 'willRetry': False, 'errorMessage': 'Compaction failed'}},
+               {'elapsed_s': 3, 'event': {'type': 'agent_settled', 'aborted': False}}]
+    result = analyse_pi(records, wall_s=3)
+    assert not result['agent_completed'] and not result['token_counts_complete']
+    assert result['recovery_errors'] == ['Compaction failed']
+    assert result['unexpected_failure'] is None, 'a summary failure without a provider response is not automatically a provider fault'
+    records[2]['event'].pop('errorMessage')
+    records[2]['event']['aborted'] = True
+    aborted = analyse_pi(records, wall_s=3)
+    assert not aborted['agent_completed'] and aborted['recovery_errors'] == ['Compaction aborted']
+    assert not analyse_pi(records[:2] + records[-1:], wall_s=3)['agent_completed'], 'a tool-use response is not final completion'
+
+
+@pytest.mark.parametrize('recovered', [False, True])
+def test_controller_preserves_terminal_failure_or_accepts_recovery_without_restarting(tmp_path, monkeypatch, recovered):
     import json
     import sys
     from bench import run as bench
 
-    plan = bench.prepare('pi-acu', tmp_path / 'trial')
+    executable = tmp_path / 'programs/Adobe/Adobe Illustrator Fixture/Support Files/Contents/Windows/Illustrator.exe'
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    monkeypatch.setenv('ProgramFiles', str(tmp_path / 'programs'))
+    plan = bench.prepare('pi-acu', tmp_path / 'trial', scenario='illustrator-pen-export')
     directory = tmp_path / 'trial'
     credential = tmp_path / 'fixture-auth.json'
     credential.write_text('{}', encoding='utf-8')
     monkeypatch.setitem(bench.CREDENTIALS, 'pi', (str(credential), 'auth.json'))
-    (directory / 'session.jsonl').write_text('{truncated transcript', encoding='utf-8')
+    entries = [{'type': 'model_change', 'provider': 'openai', 'modelId': 'gpt-6-astra'},
+               {'type': 'thinking_level_change', 'thinkingLevel': 'low'},
+               {'type': 'message', 'message': {'role': 'system', 'sections': {'skills': '<name>acu</name>'},
+                'toolsAdded': [{'name': name} for name in bench.TOOLS]}}]
+    transcript = '\n'.join(json.dumps(entry) for entry in entries) if recovered else '{truncated transcript'
+    (directory / 'session.jsonl').write_text(transcript, encoding='utf-8')
     error = 'OpenAI Responses stream ended before a terminal response event'
     events = [{'type': 'agent_start'}, {'type': 'message_start', 'message': {'role': 'assistant'}},
-              {'type': 'message_end', 'message': {'role': 'assistant', 'stopReason': 'error', 'errorMessage': error,
-               'usage': {'input': 10, 'output': 0, 'totalTokens': 10}, 'content': []}},
-              {'type': 'agent_settled', 'aborted': False}]
+              {'type': 'message_end', 'message': {'role': 'assistant', 'content': [], 'stopReason': 'error',
+               'errorMessage': error, 'usage': {'input': 0, 'output': 0, 'totalTokens': 0}}}]
+    if recovered:
+        events += [{'type': 'auto_retry_start', 'attempt': 1, 'maxAttempts': 3, 'delayMs': 2000},
+                   {'type': 'auto_retry_end', 'attempt': 1, 'success': True},
+                   {'type': 'message_start', 'message': {'role': 'assistant'}},
+                   {'type': 'message_end', 'message': {'role': 'assistant', 'content': [], 'stopReason': 'stop',
+                    'usage': {'input': 10, 'output': 2, 'totalTokens': 12}}}]
+    events += [{'type': 'agent_settled', 'aborted': False}]
     emitter = tmp_path / 'provider-fixture.py'
-    emitter.write_text('from pathlib import Path\n'
+    image_write = 'Path("Cloud9-Recreated.png").write_bytes(Path("Cloud9-Reference.png").read_bytes())\n' if recovered else ''
+    emitter.write_text('from pathlib import Path\n' + image_write +
                        'with Path("invocations.txt").open("a") as log: log.write("once\\n")\n' +
                        '\n'.join('print(' + repr(json.dumps(event)) + ', flush=True)' for event in events), encoding='utf-8')
     plan['command'] = [sys.executable, str(emitter)]
+    prepared = False
 
-    # Simulate only the external desktop boundary; capture, analysis, transcript IO and finally cleanup are real.
+    # Only the external desktop boundary is simulated; controller, capture, audits, PNG and cleanup are real.
     def observer(run_dir, script, *args, **kwargs):
-        if script.name == 'restore_cursor.ahk':
+        nonlocal prepared
+        if script.name == 'probe.ahk':
+            return 'window=10 pid=20\nclass=10 illustrator\nillustrator=10\npid=20\n' if prepared else ''
+        if script.name == 'ensure.ahk':
+            return 'illustrator=10\npid=20\nstarted=1\n'
+        if script.name == 'window.ahk':
+            args[2].write_text('{"maximized":true}', encoding='utf-8')
+            return ''
+        if script.name == 'run-jsx.ahk':
+            config = json.loads(args[0].read_text(encoding='utf-8').split('\n', 1)[0].removeprefix('var config = ').removesuffix(';'))
+            if config['phase'] == 'prepare':
+                prepared = True
+            elif config['phase'] == 'cleanup':
+                prepared = False
+            documents = [{'path': str(directory / 'workspace/Cloud9-Pen-Starter.ai'), 'name': 'Cloud9-Pen-Starter.ai', 'saved': True}] if prepared else []
+            args[1].write_text(json.dumps({'documents': documents, 'zoom': 1, 'png_preferences': {}}), encoding='utf-8')
+            return ''
+        if script.name == 'restore_cursor.ahk' and not recovered:
             raise RuntimeError('fixture cleanup failed')
-        assert script.name == 'probe.ahk'
+        assert script.name in ('input-state.ahk', 'dismiss-dialogs.ahk', 'close.ahk', 'restore_cursor.ahk')
         return ''
 
     monkeypatch.setattr(bench, 'acu_observer', observer)
-    with pytest.raises(RuntimeError, match='fixture cleanup failed'):
-        bench.run_trial(plan)
-    assert json.loads((directory / 'failure.json').read_text(encoding='utf-8')) == {
-        'kind': 'unexpected_provider_failure', 'errors': [error]}
+    if recovered:
+        result = bench.run(plan)
+        assert result['passed'] and result['recovered_provider_errors'] == [error]
+        assert result['unexpected_failure'] is None and not (directory / 'failure.json').exists()
+        assert result['benchmark']['token_counts_complete'] is False
+        assert result['benchmark']['api_tokens']['total'] == 12
+        assert json.loads((directory / 'verification.json').read_text(encoding='utf-8'))['passed']
+        assert json.loads((directory / 'finished.json').read_text(encoding='utf-8'))['cleanup']['passed']
+    else:
+        with pytest.raises(RuntimeError, match='fixture cleanup failed'):
+            bench.run(plan)
+        assert json.loads((directory / 'failure.json').read_text(encoding='utf-8')) == {
+            'kind': 'unexpected_provider_failure', 'errors': [error]}
+        assert not json.loads((directory / 'finished.json').read_text(encoding='utf-8'))['cleanup']['passed']
     assert (directory / 'workspace/invocations.txt').read_text(encoding='utf-8') == 'once\n'
     assert not (directory / 'agent-home/auth.json').exists()
     assert json.loads((directory / 'capture.json').read_text(encoding='utf-8'))['process_tree_stopped']

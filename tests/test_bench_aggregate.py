@@ -61,7 +61,7 @@ def test_cli_reads_three_attempts_per_arm_and_keeps_safeguard_failures_out(tmp_p
     import json
     import subprocess
     import sys
-    from bench.run import ARMS, ROOT
+    from bench.run import ARMS, ROOT, PI_RECOVERY_POLICY
 
     entries = []
     template = 'Workspace: <WORKSPACE>\nScratch folder: <WORKSPACE>/scratch\nFinal output: <WORKSPACE>/Cloud9-Recreated.png\n'
@@ -77,7 +77,9 @@ def test_cli_reads_three_attempts_per_arm_and_keeps_safeguard_failures_out(tmp_p
                     'workspace':str(workspace), 'prompt_sha256':hashlib.sha256(prompt.encode('utf-8')).hexdigest(),
                     'prompt_template_sha256':hashlib.sha256(template.encode('utf-8')).hexdigest(), 'skill_sha256':'skill-' + arm,
                     'assets':{'reference':'fixed'},'measurement_policy':'tokens-and-computer-use-v1',
-                    'scenario_version':'Adobe Illustrator Pen and Export v0.6',
+                    'scenario_version':'Adobe Illustrator Pen and Export v0.7',
+                    'recovery_policy':PI_RECOVERY_POLICY if arm.startswith('pi-') else
+                                      {'retry':'harness-default','compaction':'harness-default'},
                     'skill_guidance_policy':'benchmark-neutral-v1',
                     'trial_policy':{'attempts_per_configuration':3,'aggregation':'all-successes','replace_failed_attempts':False}}
             (folder/'plan.json').write_text(json.dumps(plan),encoding='utf-8')
@@ -85,9 +87,11 @@ def test_cli_reads_three_attempts_per_arm_and_keeps_safeguard_failures_out(tmp_p
             (folder/'finished.json').write_text(json.dumps({'worker_finished':True,
                 'cleanup':{'passed':True,'cursor_scheme_restored':True}}),encoding='utf-8')
             output = workspace / ('Cloud9-Recreated-Drawing.PNG' if arm == 'claude-cua' else 'Cloud9-Recreated.png')
+            recovered = arm=='pi-computer-use' and index==2
             (folder/'summary.json').write_text(json.dumps({'passed':True,'quality':{'foreground_iou':.9},
-                'output_image':str(output), 'safeguard_violations':[]}),encoding='utf-8')
-            (folder/'metrics.json').write_text(json.dumps({'benchmark':{'token_counts_complete':True,
+                'output_image':str(output), 'safeguard_violations':[],
+                'recovered_provider_errors':['503 recovered'] if recovered else []}),encoding='utf-8')
+            (folder/'metrics.json').write_text(json.dumps({'benchmark':{'token_counts_complete':not recovered,
                 'api_tokens':{'total':100 if arm=='claude-cua' else (index+1)*10,'output_including_reasoning':5},
                 'code_tokens':{'estimated_tokens':2,'output_share_percent_estimate':40,'review_required':False},
                 'computer_use':{'call_count':1,'busy_seconds':index+1,'sum_call_seconds':index+1,
@@ -117,6 +121,10 @@ def test_cli_reads_three_attempts_per_arm_and_keeps_safeguard_failures_out(tmp_p
     assert groups['pi-cua']['unexpected_failure_ids']==[str(interrupted)]
     provider_row = next(row for row in json.loads(result.stdout)['attempts'] if row['run_dir']==str(interrupted))
     assert provider_row['unexpected_failure']['kind']=='unexpected_provider_failure'
+    assert groups['pi-computer-use']['sample_size']==3, 'a recovered interruption does not exclude a successful export'
+    assert groups['pi-computer-use']['averages']['total_api_tokens'] is None, 'missing usage withholds the whole cohort metric'
+    assert groups['pi-computer-use']['averages']['computer_use_busy_s']==2
+    assert json.loads(result.stdout)['attempts'][8]['recovered_provider_errors']==['503 recovered']
     assert groups['claude-acu']['sample_size']==3
     assert groups['claude-acu']['averages']['total_api_tokens']==20
     assert groups['claude-cua']['sample_size']==3, 'different rendered paths and a normal artboard suffix do not break matched aggregation'
@@ -146,6 +154,13 @@ def test_cli_reads_three_attempts_per_arm_and_keeps_safeguard_failures_out(tmp_p
                          capture_output=True,text=True,encoding='utf-8',timeout=20)
     assert stale.returncode!=0 and 'three-attempt' in stale.stderr
     plan['trial_policy']['attempts_per_configuration']=3
+    original_recovery=plan['recovery_policy']
+    plan['recovery_policy']={'retry':{'enabled':False},'compaction':{'enabled':False}}
+    plan_path.write_text(json.dumps(plan),encoding='utf-8')
+    disabled=subprocess.run([sys.executable,str(ROOT/'bench/aggregate.py'),str(manifest)],
+                            capture_output=True,text=True,encoding='utf-8',timeout=20)
+    assert disabled.returncode!=0 and 'recovery' in disabled.stderr
+    plan['recovery_policy']=original_recovery
     plan['prompt_template_sha256']='other'
     plan_path.write_text(json.dumps(plan),encoding='utf-8')
     mixed=subprocess.run([sys.executable,str(ROOT/'bench/aggregate.py'),str(manifest)],
@@ -160,7 +175,7 @@ def test_cli_reads_three_attempts_per_arm_and_keeps_safeguard_failures_out(tmp_p
     changed=subprocess.run([sys.executable,str(ROOT/'bench/aggregate.py'),str(manifest)],
                            capture_output=True,text=True,encoding='utf-8',timeout=20)
     assert changed.returncode!=0 and 'template' in changed.stderr
-    plan['scenario_version']='Adobe Illustrator Pen and Export v0.5'
+    plan['scenario_version']='Adobe Illustrator Pen and Export v0.6'
     for index in range(3):
         (tmp_path/f'claude-acu/{index}/plan.json').write_text(json.dumps(plan),encoding='utf-8')
     historical=subprocess.run([sys.executable,str(ROOT/'bench/aggregate.py'),str(manifest)],

@@ -17,6 +17,7 @@ import time
 import tomllib
 import traceback
 import uuid
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -26,6 +27,14 @@ from bench.intervals import busy_seconds
 
 MODEL = 'gpt-6-astra'
 REASONING = 'low'
+# Freeze normal Pi session recovery so retries/compaction remain reproducible within the same scheduled trial.
+PI_RECOVERY_POLICY = {
+    'retry': {'enabled': True, 'maxRetries': 3, 'baseDelayMs': 2000, 'maxAgentDelayMs': 60000,
+              'provider': {'maxRetries': 0}},
+    'compaction': {'enabled': True, 'reserveTokens': 16384, 'keepRecentTokens': 20000},
+}
+# Record native Claude recovery for plan matching only; the controller does not configure its internals.
+CLAUDE_RECOVERY_POLICY = {'retry': 'harness-default', 'compaction': 'harness-default'}
 TOOLS = ['read', 'bash', 'edit', 'write']
 CLAUDE_TOOLS = ['Read', 'Write', 'Edit', 'Bash']
 ARMS = ('pi-acu', 'pi-cua', 'pi-computer-use', 'claude-acu', 'claude-cua')
@@ -96,20 +105,60 @@ def argument_text(arguments):
 
 
 # Analyse final message usage once; streaming usage and turn_end repeat the same counts.
-def analyse_pi(records, wall_s, reference_tps=None):
+def analyse_pi(records, wall_s, reference_tps=None, *, cancelled=False):
     tokens = dict(input_uncached=0, cache_read=0, cache_write=0,
                   output_including_reasoning=0, reasoning_subset=None, total=0)
-    turns, tools, intervals, errors, provider_errors = [], [], [], [], []
+    turns, tools, intervals, errors = [], [], [], []
+    pending_provider_errors, recovered_provider_errors, pending_recovery_errors, recovery_events = [], [], [], []
     current = None
     starts = {}
     agent_start = agent_end = None
+    last_stop_reason = None
+    usage_unknown = retry_cancelled = False
     completed = False
+    compactions = 0
+
+    # Both agent responses and compaction summaries report the same Pi usage schema, once at completion.
+    def add_usage(usage):
+        tokens['input_uncached'] += usage['input']
+        tokens['cache_read'] += usage.get('cacheRead', 0)
+        tokens['cache_write'] += usage.get('cacheWrite', 0)
+        tokens['output_including_reasoning'] += usage['output']
+        tokens['total'] += usage['totalTokens']
+        if 'reasoning' in usage:
+            tokens['reasoning_subset'] = (tokens['reasoning_subset'] or 0) + usage['reasoning']
     for record in records:
         elapsed, event = record['elapsed_s'], record['event']
         kind = event['type']
-        if kind == 'agent_start' and agent_start is None:
-            agent_start = elapsed
+        if kind.startswith(('auto_retry_', 'summarization_retry_')) or kind in ('compaction_start', 'compaction_end'):
+            recovery_events.append(record)
+        if kind == 'auto_retry_end' and event.get('finalError') == 'Retry cancelled':
+            retry_cancelled = True
+        if kind == 'summarization_retry_scheduled':
+            usage_unknown = True  # Failed summary requests may have unreported consumption.
+        if kind == 'compaction_start':
+            completed = False
+        if kind == 'compaction_end':
+            completed = False
+            compactions += 1
+            result = event.get('result')
+            usage = (result or {}).get('usage')
+            if usage:
+                add_usage(usage)
+            else:
+                usage_unknown = True
+            if result is not None and not event.get('aborted'):
+                pending_recovery_errors.clear()
+            elif event.get('errorMessage'):
+                pending_recovery_errors.append(event['errorMessage'])
+            elif event.get('aborted'):
+                pending_recovery_errors.append('Compaction aborted')
+        if kind == 'agent_start':
+            completed = retry_cancelled = False
+            if agent_start is None:
+                agent_start = elapsed
         if kind == 'message_start' and event['message']['role'] == 'assistant':
+            completed = False
             current = {'start_s': elapsed, 'first_visible_delta_s': None}
         elif kind == 'message_update' and current is not None:
             if event['assistantMessageEvent']['type'] in ('text_delta', 'toolcall_delta', 'thinking_delta') and current['first_visible_delta_s'] is None:
@@ -119,13 +168,8 @@ def analyse_pi(records, wall_s, reference_tps=None):
             if current is None:
                 raise ValueError('assistant ended without a matching message_start')
             usage = message['usage']
-            tokens['input_uncached'] += usage['input']
-            tokens['cache_read'] += usage.get('cacheRead', 0)
-            tokens['cache_write'] += usage.get('cacheWrite', 0)
-            tokens['output_including_reasoning'] += usage['output']
-            tokens['total'] += usage['totalTokens']
-            if 'reasoning' in usage:
-                tokens['reasoning_subset'] = (tokens['reasoning_subset'] or 0) + usage['reasoning']
+            add_usage(usage)
+            last_stop_reason = message['stopReason']
             stream_duration = elapsed - current['start_s']
             duration = message['durationMs'] / 1000 if 'durationMs' in message else None
             first_delta = current['first_visible_delta_s']
@@ -140,8 +184,13 @@ def analyse_pi(records, wall_s, reference_tps=None):
             if message['stopReason'] in ('error', 'aborted'):
                 error = message.get('errorMessage', message['stopReason'])
                 errors.append(error)
+                usage_unknown = True
                 if message['stopReason'] == 'error':
-                    provider_errors.append(error)  # Provider-response failure, not a desktop tool result.
+                    pending_provider_errors.append(error)  # Provider-response failure, not a desktop tool result.
+            else:
+                recovered_provider_errors.extend(pending_provider_errors)
+                pending_provider_errors.clear()
+                pending_recovery_errors.clear()
             current = None
         elif kind == 'tool_execution_start':
             starts[event['toolCallId']] = (elapsed, event['toolName'], event.get('args', {}))
@@ -153,15 +202,22 @@ def analyse_pi(records, wall_s, reference_tps=None):
                           'arguments': arguments, 'text': argument_text(arguments)})
         elif kind == 'agent_settled':
             agent_end = elapsed
-            completed = not event['aborted'] and not errors
-    model_s = sum(turn['duration_s'] for turn in turns) if all(turn['duration_s'] is not None for turn in turns) else None
+            completed = not event['aborted'] and last_stop_reason == 'stop' and not pending_recovery_errors
+    model_s = sum(turn['duration_s'] for turn in turns) if not compactions and all(turn['duration_s'] is not None for turn in turns) else None
+    if cancelled:
+        completed = False
     result = {'wall_s': wall_s, 'agent_start_s': agent_start, 'agent_elapsed_s': agent_end - agent_start if agent_start is not None and agent_end is not None else None,
               'model_response_s': model_s, 'tool_busy_s': busy_seconds(intervals),
               'tokens': tokens, 'effective_output_tps': tokens['output_including_reasoning'] / model_s if model_s is not None and model_s > 0 else None,
               'end_to_end_output_tps': tokens['output_including_reasoning'] / wall_s if wall_s > 0 else None,
               'model_turns': turns, 'tools': tools, 'model_errors': errors,
-              'agent_completed': completed, 'token_counts_complete': completed, 'unfinished_tools': list(starts),
-              'unexpected_failure': {'kind': 'unexpected_provider_failure', 'errors': provider_errors} if provider_errors else None}
+              'agent_completed': completed, 'token_counts_complete': completed and not usage_unknown, 'unfinished_tools': list(starts),
+              'recovered_provider_errors': recovered_provider_errors, 'recovery_events': recovery_events,
+              'recovery_errors': pending_recovery_errors, 'compactions': compactions,
+              'unexpected_failure': {'kind': 'unexpected_provider_failure', 'errors': pending_provider_errors}
+                                    if pending_provider_errors and not retry_cancelled and not cancelled else None}
+    if compactions:
+        result['timing_limitation'] = 'Compaction usage is included, but its provider-response duration is not exposed; model-rate diagnostics are unknown.'
     if reference_tps is not None:
         if reference_tps <= 0:
             raise ValueError('reference throughput must be positive')
@@ -169,7 +225,7 @@ def analyse_pi(records, wall_s, reference_tps=None):
         result['estimated_wall_at_reference_tps_s'] = wall_s - model_s + tokens['output_including_reasoning'] / reference_tps if model_s is not None else None
         result['normalization_method'] = 'Whole-response effective-rate counterfactual, including prefill/queueing; not pure decoding speed.'
         visible_turns = [turn for turn in turns if turn['duration_s'] is not None and turn['first_visible_delta_s'] is not None]
-        if len(visible_turns) == len(turns):
+        if not compactions and len(visible_turns) == len(turns):
             post_delta_s = sum(turn['duration_s'] - turn['first_visible_delta_s'] for turn in visible_turns)
             visible_output = sum(turn['output_tokens'] - (turn['usage'].get('reasoning') or 0) for turn in visible_turns)
             result['estimated_wall_preserving_first_delta_at_reference_visible_tps_s'] = wall_s - post_delta_s + visible_output / reference_tps
@@ -266,10 +322,11 @@ def audit_codex_session(entries, expected_model='gpt-6.1-sol'):
 
 # Claude Code stream-json carries no server-side response duration: a response is timed from the request status
 # event to message_stop receipt. Token totals come from the final result; per-message usage is deduplicated by id.
-def analyse_claude(records, wall_s, reference_tps=None):
+def analyse_claude(records, wall_s, reference_tps=None, *, cancelled=False):
     tokens = dict(input_uncached=0, cache_read=0, cache_write=0,
                   output_including_reasoning=0, reasoning_subset=None, total=0)
     turns, tools, intervals, errors, provider_errors = [], [], [], [], []
+    pending_provider_errors, recovered_provider_errors = [], []
     usage_by_message, tool_starts = {}, {}
     agent_start = agent_end = request_start = None
     current = None
@@ -288,6 +345,7 @@ def analyse_claude(records, wall_s, reference_tps=None):
                 error = json.dumps(inner['error'], ensure_ascii=False)
                 errors.append(error)
                 provider_errors.append(error)
+                pending_provider_errors.append(error)
             elif inner['type'] == 'message_start':
                 current = {'start_s': request_start if request_start is not None else elapsed, 'first_visible_delta_s': None,
                            'message_id': inner['message'].get('id'), 'model': inner['message'].get('model'), 'delta_usage': None}
@@ -303,6 +361,8 @@ def analyse_claude(records, wall_s, reference_tps=None):
                 duration = elapsed - current['start_s']
                 turns.append({**current, 'duration_s': duration, 'output_tokens': output,
                               'effective_output_tps': output / duration if duration > 0 else None, 'usage': usage})
+                recovered_provider_errors.extend(pending_provider_errors)
+                pending_provider_errors.clear()
                 current = request_start = None
         elif kind == 'assistant':
             message = event['message']
@@ -325,7 +385,9 @@ def analyse_claude(records, wall_s, reference_tps=None):
             if event.get('is_error') or event.get('subtype') != 'success':
                 reported = event.get('errors') or [str(event.get('result') or event.get('subtype'))]
                 errors.extend(reported)
-                provider_errors.extend(error for error in reported if error.lstrip().lower().startswith('api error:'))
+                terminal_errors = [error for error in reported if error.lstrip().lower().startswith('api error:')]
+                provider_errors.extend(terminal_errors)
+                pending_provider_errors.extend(terminal_errors)
     if final is not None and final.get('usage'):
         usage = final['usage']
         tokens.update(input_uncached=usage.get('input_tokens', 0), cache_read=usage.get('cache_read_input_tokens', 0),
@@ -339,7 +401,10 @@ def analyse_claude(records, wall_s, reference_tps=None):
             tokens['output_including_reasoning'] += usage.get('output_tokens', 0)
     tokens['total'] = tokens['input_uncached'] + tokens['cache_read'] + tokens['cache_write'] + tokens['output_including_reasoning']
     model_s = sum(turn['duration_s'] for turn in turns) if turns else None
-    completed = final is not None and not errors
+    completed = final is not None and final.get('subtype') == 'success' and not final.get('is_error') and not cancelled
+    if completed:
+        recovered_provider_errors.extend(pending_provider_errors)
+        pending_provider_errors.clear()
     result = {'wall_s': wall_s, 'agent_start_s': agent_start,
               'agent_elapsed_s': agent_end - agent_start if agent_start is not None and agent_end is not None else None,
               'model_response_s': model_s, 'tool_busy_s': busy_seconds(intervals), 'tokens': tokens,
@@ -347,7 +412,9 @@ def analyse_claude(records, wall_s, reference_tps=None):
               'end_to_end_output_tps': tokens['output_including_reasoning'] / wall_s if wall_s > 0 else None,
               'reported_api_duration_s': final['duration_api_ms'] / 1000 if final and 'duration_api_ms' in final else None,
               'model_turns': turns, 'tools': tools, 'model_errors': errors, 'agent_completed': completed,
-              'unexpected_failure': {'kind': 'unexpected_provider_failure', 'errors': list(dict.fromkeys(provider_errors))} if provider_errors else None,
+              'recovered_provider_errors': list(dict.fromkeys(recovered_provider_errors)),
+              'unexpected_failure': {'kind': 'unexpected_provider_failure', 'errors': list(dict.fromkeys(pending_provider_errors))}
+                                    if pending_provider_errors and not cancelled else None,
               'unfinished_tools': list(tool_starts), 'token_counts_complete': final is not None and bool(final.get('usage')) and not provider_errors,
               'timing_basis': 'Receipt intervals from the request status event to message_stop; Claude Code exposes no per-response server duration.'}
     if reference_tps is not None:
@@ -550,8 +617,7 @@ def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=No
         else:
             skill = Path(skill) if skill is not None else SKILLS[arm]
         settings = {'packages': [], 'extensions': [], 'skills': [], 'prompts': [],
-                    'cacheWarming': 'off', 'compaction': {'enabled': False},
-                    'retry': {'enabled': False}, 'defaultTools': TOOLS}
+                    'cacheWarming': 'off', 'defaultTools': TOOLS, **deepcopy(PI_RECOVERY_POLICY)}
         if os.name == 'nt':
             settings['shellPath'] = 'C:/Program Files/Git/bin/bash.exe'
             if not Path(settings['shellPath']).is_file():
@@ -569,6 +635,7 @@ def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=No
             'prompt_template_sha256': hashlib.sha256(template.encode('utf-8')).hexdigest(),
             'scenario_sha256': hashlib.sha256(scenario.encode('utf-8')).hexdigest(),
             'measurement_policy': 'tokens-and-computer-use-v1',
+            'recovery_policy': deepcopy(PI_RECOVERY_POLICY if harness(arm) == 'pi' else CLAUDE_RECOVERY_POLICY),
             'workspace': str(workspace), 'run_dir': str(run_dir), 'command': command,
             'environment_overrides': environment, 'isolation': 'configuration/prompt, not OS sandbox',
             'runtime_validated': False}
@@ -621,6 +688,7 @@ def capture(command, cwd, environment, run_dir):
     records = []
     reader_errors = []
     failure = None
+    cancelled = False
     started = time.perf_counter()
     tree = OwnedProcessTree()
     with (run_dir / 'stderr.log').open('w', encoding='utf-8') as stderr, (run_dir / 'stdout.jsonl').open('w', encoding='utf-8') as raw, (run_dir / 'events.jsonl').open('w', encoding='utf-8') as timed:
@@ -659,7 +727,8 @@ def capture(command, cwd, environment, run_dir):
                 raise RuntimeError('a descendant held the stream open after root exit')
             if reader_errors:
                 raise RuntimeError(reader_errors[0])
-        except Exception:
+        except Exception as error:
+            cancelled = isinstance(error, InterruptedError)
             failure = traceback.format_exc()
             (run_dir / 'capture-crash.txt').write_text(failure, encoding='utf-8')
         finally:
@@ -671,7 +740,7 @@ def capture(command, cwd, environment, run_dir):
     wall = time.perf_counter() - started
     save_json(run_dir / 'capture.json', {'passed': failure is None and process.returncode == 0,
                                         'error': failure, 'wall_s': wall, 'exit_code': process.returncode,
-                                        'process_tree_stopped': True})
+                                        'process_tree_stopped': True, 'cancelled': cancelled})
     save_json(run_dir / 'state.json', {'worker_pid': os.getpid(), 'agent_pid': process.pid,
                                      'status': 'exited', 'exit_code': process.returncode})
     return records, wall, process.returncode
@@ -958,9 +1027,11 @@ def run_trial(plan, reference_tps=None):
         shutil.copyfile(credential, private_auth)
         records, wall, exit_code = capture(executable_command(plan['command']), plan['workspace'], environment, run_dir)
         if harness(arm) == 'pi':
-            measurements = analyse_pi(records, wall, reference_tps)
+            measurements = analyse_pi(records, wall, reference_tps,
+                                      cancelled=load_actor_json(run_dir / 'capture.json').get('cancelled') is True)
         elif harness(arm) == 'claude':
-            measurements = analyse_claude(records, wall, reference_tps)
+            measurements = analyse_claude(records, wall, reference_tps,
+                                          cancelled=load_actor_json(run_dir / 'capture.json').get('cancelled') is True)
         else:
             measurements = analyse_codex(records, wall)
         # Persist before transcript IO, grading or cleanup so a later failure cannot hide the provider error.
@@ -1013,6 +1084,7 @@ def run_trial(plan, reference_tps=None):
                    'conduct_problems': conduct['problems'],
                    'passed': exit_code == 0 and measurements['agent_completed'] and isolation['passed'] and verification['passed'] and conduct['passed'] and measurements['capture']['passed'],
                    'unexpected_failure': unexpected_failure,
+                   'recovered_provider_errors': measurements.get('recovered_provider_errors', []),
                    'metrics': measurements, 'evidence_dir': str(run_dir)}
         if is_illustrator:
             summary.update(scenario='illustrator-pen-export', output_image=verification['output'],
@@ -1179,9 +1251,9 @@ def main():
         plan = json.loads((args.run_dir / 'plan.json').read_text(encoding='utf-8'))
         records = read_jsonl(args.run_dir / 'events.jsonl')
         if harness(plan['arm']) == 'pi':
-            value = analyse_pi(records, prior['wall_s'])
+            value = analyse_pi(records, prior['wall_s'], cancelled=(prior.get('capture') or {}).get('cancelled') is True)
         elif harness(plan['arm']) == 'claude':
-            value = analyse_claude(records, prior['wall_s'])
+            value = analyse_claude(records, prior['wall_s'], cancelled=(prior.get('capture') or {}).get('cancelled') is True)
         else:
             value = analyse_codex(records, prior['wall_s'])
         value['benchmark'] = measure_efficiency(value, plan['arm'])

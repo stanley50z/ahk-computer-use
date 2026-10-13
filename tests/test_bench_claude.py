@@ -76,6 +76,30 @@ def test_claude_reports_provider_api_errors_without_mislabeling_harness_limits()
     assert analyse_claude(records, wall_s=2)['unexpected_failure'] is None
 
 
+def test_claude_recovered_stream_error_does_not_fail_a_successful_final_result():
+    error = {'type': 'overloaded_error', 'message': 'Transient provider error'}
+    records = [{'elapsed_s': 0, 'event': INIT}, stream(1, {'type': 'error', 'error': error}),
+               stream(2, {'type': 'message_start', 'message': {'id': 'recovered', 'model': 'claude-opus-5-5'}}),
+               stream(3, {'type': 'message_delta', 'usage': {'output_tokens': 2}}),
+               stream(4, {'type': 'message_stop'}),
+               {'elapsed_s': 5, 'event': {'type': 'result', 'subtype': 'success', 'is_error': False,
+                                        'usage': {'input_tokens': 10, 'output_tokens': 2}}}]
+    result = analyse_claude(records, wall_s=5)
+    assert result['agent_completed'] and result['unexpected_failure'] is None
+    assert len(result['recovered_provider_errors']) == 1
+    assert result['model_errors'] == result['recovered_provider_errors']
+    assert not result['token_counts_complete'] and result['tokens']['total'] == 12
+    records[-1]['event'].update(subtype='error_max_turns', is_error=True, errors=['Max turns reached'])
+    failed = analyse_claude(records, wall_s=5)
+    assert not failed['agent_completed'] and failed['unexpected_failure'] is None
+    assert failed['recovered_provider_errors'] == result['recovered_provider_errors']
+    records[-1]['event'].update(subtype='error_during_execution', errors=['API Error: 503 terminal'])
+    terminal = analyse_claude(records, wall_s=5)
+    assert not terminal['agent_completed']
+    assert terminal['unexpected_failure']['errors'] == ['API Error: 503 terminal']
+    assert analyse_claude(records, wall_s=5, cancelled=True)['unexpected_failure'] is None
+
+
 @pytest.mark.parametrize('skill_name', ['acu', 'cua-driver'])
 def test_claude_audit_requires_init_and_transcript_evidence_and_rejects_pollution(skill_name):
     records = [{'elapsed_s': 1, 'event': INIT}]
