@@ -656,8 +656,10 @@ def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=No
         (run_dir / 'grading').mkdir()
         shutil.copyfile(assets / 'Cloud9-Reference.png', run_dir / 'grading/reference.png')
         plan['grading'] = {'reference_sha256': plan['assets']['Cloud9-Reference.png'],
-                           'registration': 'none', 'shape_pass_threshold': None, 'mode': 'image-only'}
-        plan['actor_deliverables'] = ['Cloud9-Recreated.png']
+                           'registration': 'none', 'shape_pass_threshold': None, 'mode': 'live-drawing'}
+        plan['actor_deliverables'] = []
+        from bench.illustrator_pen_export import EXPORT_POLICY
+        plan['export_policy'] = deepcopy(EXPORT_POLICY)
         plan['skill_guidance_policy'] = 'benchmark-neutral-v1'
         from bench.aggregate import TRIAL_POLICY
         plan['trial_policy'] = dict(TRIAL_POLICY)
@@ -1017,6 +1019,9 @@ def run_trial(plan, reference_tps=None):
             raise RuntimeError(f'the Codex Desktop app pipe {pipe_name} is not open; start the app before an app-pipe trial')
     before = acu_observer(run_dir, ROOT / 'bench/probe.ahk', suffix='-before')
     is_illustrator = plan.get('scenario') == 'illustrator-pen-export'
+    illustrator_cleanup = None
+    illustrator_cleanup_started = False
+    actor_started = False
     try:
         if is_illustrator:
             from bench.illustrator_pen_export import prepare_desktop
@@ -1025,6 +1030,7 @@ def run_trial(plan, reference_tps=None):
         before_files = fingerprint(guarded_roots(plan))
         save_json(run_dir / 'fingerprint-before.json', before_files)
         shutil.copyfile(credential, private_auth)
+        actor_started = True
         records, wall, exit_code = capture(executable_command(plan['command']), plan['workspace'], environment, run_dir)
         if harness(arm) == 'pi':
             measurements = analyse_pi(records, wall, reference_tps,
@@ -1056,13 +1062,9 @@ def run_trial(plan, reference_tps=None):
         save_json(run_dir / 'isolation.json', isolation)
         plan['runtime_validated'] = isolation['passed']
         save_json(run_dir / 'plan.json', plan)
-        if is_illustrator:
-            from bench.illustrator_pen_export import dismiss_task_dialogs, verify_outputs
-            dismiss_task_dialogs(run_dir, acu_observer)
-            verification = verify_outputs(run_dir)
-        else:
+        if not is_illustrator:
             verification = verify_calculator(run_dir, before)
-        save_json(run_dir / 'verification.json', verification)
+            save_json(run_dir / 'verification.json', verification)
         after_probe = acu_observer(run_dir, ROOT / 'bench/probe.ahk', suffix='-conduct')
         after_files = fingerprint(guarded_roots(plan))
         save_json(run_dir / 'fingerprint-after.json', after_files)
@@ -1077,6 +1079,13 @@ def run_trial(plan, reference_tps=None):
                 conduct['passed'] = False
                 conduct['problems'].append('pre-existing Illustrator documents changed')
         save_json(run_dir / 'conduct.json', conduct)
+        if is_illustrator:
+            # Audit the actor first; maintainer export/close must not masquerade as actor window or file changes.
+            from bench.illustrator_pen_export import cleanup_desktop
+            illustrator_cleanup_started = True
+            illustrator_cleanup = cleanup_desktop(run_dir, acu_observer, export_drawing=True)
+            verification = illustrator_cleanup['drawing_verification']
+            save_json(run_dir / 'verification.json', verification)
         summary = {'arm': arm, 'model': plan['model'], 'reasoning': plan['reasoning'], 'exit_code': exit_code,
                    'benchmark': measurements['benchmark'],
                    'diagnostics': {'wall_s': wall, 'note': 'Not a benchmark ranking metric.'},
@@ -1087,12 +1096,17 @@ def run_trial(plan, reference_tps=None):
                    'recovered_provider_errors': measurements.get('recovered_provider_errors', []),
                    'metrics': measurements, 'evidence_dir': str(run_dir)}
         if is_illustrator:
-            summary.update(scenario='illustrator-pen-export', output_image=verification['output'],
-                           quality=verification['quality'], problems=verification['problems'],
+            rendering = illustrator_cleanup['export']
+            infrastructure_failure = illustrator_cleanup['infrastructure_failure']
+            summary.update(scenario='illustrator-pen-export', output_image=rendering['output'],
+                           quality=rendering['quality'], problems=verification['problems'],
+                           drawing_passed=verification['passed'], infrastructure_failure=infrastructure_failure,
                            safeguard_violations=conduct['problems'] + isolation['problems'])
+            if infrastructure_failure:
+                summary['passed'] = False  # Not eligible for comparison; the actor's drawing outcome stays separate.
             for field in ('isolation_passed', 'task_passed', 'conduct_passed', 'conduct_problems'):
                 summary.pop(field)
-            # Pen-only compliance is reviewed from the session, never requested as an actor report.
+            # Full Pen/Bézier compliance is still reviewed from history; no actor report or arbitrary segment threshold.
         save_json(run_dir / 'summary.json', summary)
         return summary
     except Exception:
@@ -1105,8 +1119,15 @@ def run_trial(plan, reference_tps=None):
             if is_illustrator:
                 from bench.illustrator_pen_export import cleanup_desktop
                 try:
-                    if (run_dir / 'illustrator-identity.json').is_file():
-                        cleanup = cleanup_desktop(run_dir, acu_observer)
+                    if illustrator_cleanup is not None:
+                        cleanup = illustrator_cleanup
+                    elif illustrator_cleanup_started:
+                        failure = {'kind': 'maintainer_collection_failure', 'errors': [traceback.format_exc()]}
+                        save_json(run_dir / 'infrastructure-failure.json', failure)
+                        cleanup = {'passed': False, 'error': failure['errors'][0], 'infrastructure_failure': failure,
+                                   'note': 'Collection was already attempted and refused; not repeating export or close'}
+                    elif (run_dir / 'illustrator-identity.json').is_file():
+                        cleanup = cleanup_desktop(run_dir, acu_observer, export_drawing=actor_started)
                     else:
                         cleanup = {'passed': False, 'note': 'Illustrator ownership was not recorded; preparation cleanup is unverified'}
                 finally:
@@ -1161,7 +1182,7 @@ def run(plan, reference_tps=None):
         cleanup = load_actor_json(run_dir / 'cleanup.json')
         cleanup_passed = cleanup.get('passed') is True and cleanup.get('cursor_scheme_restored') is True
         if plan.get('scenario') == 'illustrator-pen-export':
-            if not cleanup_passed:
+            if not cleanup_passed and not cleanup.get('infrastructure_failure'):
                 value['safeguard_violations'].append('cleanup failed or is unverified')
         else:
             value['cleanup_passed'] = cleanup_passed

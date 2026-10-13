@@ -160,8 +160,9 @@ def test_pi_unresolved_compaction_failure_is_not_a_completed_session():
     assert not analyse_pi(records[:2] + records[-1:], wall_s=3)['agent_completed'], 'a tool-use response is not final completion'
 
 
-@pytest.mark.parametrize('recovered', [False, True])
-def test_controller_preserves_terminal_failure_or_accepts_recovery_without_restarting(tmp_path, monkeypatch, recovered):
+@pytest.mark.parametrize(('recovered', 'export_failure', 'inspection_refused'),
+                         [(False, False, False), (True, False, False), (True, True, False), (True, False, True)])
+def test_controller_preserves_actor_outcome_and_separates_maintainer_export_failure(tmp_path, monkeypatch, recovered, export_failure, inspection_refused):
     import json
     import sys
     from bench import run as bench
@@ -193,16 +194,16 @@ def test_controller_preserves_terminal_failure_or_accepts_recovery_without_resta
                     'usage': {'input': 10, 'output': 2, 'totalTokens': 12}}}]
     events += [{'type': 'agent_settled', 'aborted': False}]
     emitter = tmp_path / 'provider-fixture.py'
-    image_write = 'Path("Cloud9-Recreated.png").write_bytes(Path("Cloud9-Reference.png").read_bytes())\n' if recovered else ''
-    emitter.write_text('from pathlib import Path\n' + image_write +
+    emitter.write_text('from pathlib import Path\n' +
                        'with Path("invocations.txt").open("a") as log: log.write("once\\n")\n' +
                        '\n'.join('print(' + repr(json.dumps(event)) + ', flush=True)' for event in events), encoding='utf-8')
     plan['command'] = [sys.executable, str(emitter)]
     prepared = False
+    inspection_calls = 0
 
     # Only the external desktop boundary is simulated; controller, capture, audits, PNG and cleanup are real.
     def observer(run_dir, script, *args, **kwargs):
-        nonlocal prepared
+        nonlocal prepared, inspection_calls
         if script.name == 'probe.ahk':
             return 'window=10 pid=20\nclass=10 illustrator\nillustrator=10\npid=20\n' if prepared else ''
         if script.name == 'ensure.ahk':
@@ -216,8 +217,26 @@ def test_controller_preserves_terminal_failure_or_accepts_recovery_without_resta
                 prepared = True
             elif config['phase'] == 'cleanup':
                 prepared = False
-            documents = [{'path': str(directory / 'workspace/Cloud9-Pen-Starter.ai'), 'name': 'Cloud9-Pen-Starter.ai', 'saved': True}] if prepared else []
-            args[1].write_text(json.dumps({'documents': documents, 'zoom': 1, 'png_preferences': {}}), encoding='utf-8')
+            drawing = {'path': str(directory / 'workspace/Cloud9-Pen-Starter.ai'), 'name': 'Cloud9-Pen-Starter.ai',
+                       'saved': False, 'artwork_signature': 'unchanged'}
+            documents = [drawing] if prepared else []
+            result = {'documents': documents, 'zoom': 1, 'png_preferences': {}}
+            if config['phase'] == 'drawing':
+                inspection_calls += 1
+                result = {'document': drawing, 'checks': {'artboard': True, 'editable_paths': True, 'blue_fill': True},
+                          'paths': [{'closed': True, 'points': [
+                              {'anchor': [100, 100], 'left': [100, 100], 'right': [100, 200]},
+                              {'anchor': [300, 100], 'left': [300, 200], 'right': [300, 100]}]}]}
+                if inspection_refused and inspection_calls == 1:
+                    result = {'error': 'fixture refuses collection', 'stack': 'fixture native stack'}
+            elif config['phase'] == 'export':
+                if export_failure:
+                    result = {'error': 'fixture maintainer export failed', 'stack': 'fixture native stack'}
+                else:
+                    from pathlib import Path
+                    Path(config['render']).write_bytes((directory / 'workspace/Cloud9-Reference.png').read_bytes())
+                    result = {'document_before': drawing, 'document_after': drawing}
+            args[1].write_text(json.dumps(result), encoding='utf-8')
             return ''
         if script.name == 'restore_cursor.ahk' and not recovered:
             raise RuntimeError('fixture cleanup failed')
@@ -225,14 +244,32 @@ def test_controller_preserves_terminal_failure_or_accepts_recovery_without_resta
         return ''
 
     monkeypatch.setattr(bench, 'acu_observer', observer)
-    if recovered:
+    if recovered and not inspection_refused:
         result = bench.run(plan)
-        assert result['passed'] and result['recovered_provider_errors'] == [error]
+        assert result['passed'] is (not export_failure)
+        assert result['drawing_passed'] is True
+        assert result['recovered_provider_errors'] == [error]
         assert result['unexpected_failure'] is None and not (directory / 'failure.json').exists()
         assert result['benchmark']['token_counts_complete'] is False
         assert result['benchmark']['api_tokens']['total'] == 12
         assert json.loads((directory / 'verification.json').read_text(encoding='utf-8'))['passed']
-        assert json.loads((directory / 'finished.json').read_text(encoding='utf-8'))['cleanup']['passed']
+        assert json.loads((directory / 'finished.json').read_text(encoding='utf-8'))['cleanup']['passed'] is (not export_failure)
+        if export_failure:
+            assert result['infrastructure_failure']['kind'] == 'maintainer_export_failure'
+            assert result['problems'] == [] and result['safeguard_violations'] == []
+            assert result['output_image'] is None and prepared, 'leave the unexported document open'
+        else:
+            assert result['infrastructure_failure'] is None
+            assert result['output_image'] == str(directory / 'grading/Cloud9-Recreated.png')
+            assert not (directory / 'workspace/Cloud9-Recreated.png').exists()
+    elif inspection_refused:
+        with pytest.raises(RuntimeError, match='Illustrator drawing failed'):
+            bench.run(plan)
+        assert inspection_calls == 1 and prepared, 'never repeat refused collection or destroy its unexported drawing'
+        refused = json.loads((directory / 'finished.json').read_text(encoding='utf-8'))['cleanup']
+        assert not refused['passed']
+        assert refused['infrastructure_failure']['kind'] == 'maintainer_collection_failure'
+        assert json.loads((directory / 'infrastructure-failure.json').read_text(encoding='utf-8')) == refused['infrastructure_failure']
     else:
         with pytest.raises(RuntimeError, match='fixture cleanup failed'):
             bench.run(plan)

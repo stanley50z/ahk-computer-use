@@ -97,7 +97,7 @@ The Calculator UI-task benchmark across five configurations: Pi plus ACU, CUA, o
 _Avoid_: Testbench 1 in current naming; using Calculator to mean the ACU arm alone
 
 **Adobe Illustrator Pen and Export**:
-The benchmark for reconstructing a reference image with Illustrator's Pen tool and exporting a PNG, across the same five configurations. PNG is the only required output; an editable AI save is not required. Historical reports call this Testbench 2 or TB2.
+The benchmark for reconstructing a reference image with genuine Illustrator Pen-tool Bézier curves across the same five configurations, with an open drawing as the actor's result and an unchanged maintainer-exported PNG as evidence. Saving/exporting is not actor work; historical reports call this Testbench 2 or TB2.
 _Avoid_: Testbench 2 or TB2 in current naming; treating one arm as the complete benchmark
 
 **Task tokens**:

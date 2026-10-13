@@ -29,6 +29,7 @@ def aggregate_configuration(attempts):
     result = {'attempts': count, 'successes': len(successful), 'failures': count-len(successful),
               'failed_ids': [attempt['id'] for attempt in attempts if not attempt['passed']],
               'unexpected_failure_ids': [attempt['id'] for attempt in attempts if not attempt['passed'] and attempt.get('unexpected_failure')],
+              'infrastructure_failure_ids': [attempt['id'] for attempt in attempts if attempt.get('infrastructure_failure')],
               'retained_ids': [], 'sample_size': 0, 'averages': None, 'missing_metrics': []}
     if not successful:
         result['reason'] = 'no successful attempts'
@@ -72,7 +73,7 @@ def comparison_statistics(benchmark, quality):
 # Load a maintainer-authored manifest after session review; no JSON is requested from the actor.
 def aggregate_round(manifest_path):
     from bench.run import ARMS, PI_RECOVERY_POLICY, CLAUDE_RECOVERY_POLICY, harness
-    from bench.illustrator_pen_export import is_requested_png
+    from bench.illustrator_pen_export import EXPORT_POLICY
 
     manifest_path = Path(manifest_path).resolve()
     manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
@@ -92,8 +93,10 @@ def aggregate_round(manifest_path):
             raise ValueError(f'attempt has not finished: {run}')
         if plan['scenario'] != 'illustrator-pen-export' or plan['arm'] not in ARMS:
             raise ValueError('this round must contain the five Illustrator configurations')
-        if plan.get('scenario_version') != 'Adobe Illustrator Pen and Export v0.7' or plan.get('skill_guidance_policy') != 'benchmark-neutral-v1':
-            raise ValueError('round requires the neutral v0.7 baseline; historical protocols are not eligible')
+        if plan.get('scenario_version') != 'Adobe Illustrator Pen and Export v0.8' or plan.get('skill_guidance_policy') != 'benchmark-neutral-v1':
+            raise ValueError('round requires the neutral v0.8 drawing-only baseline; historical protocols are not eligible')
+        if plan.get('export_policy') != EXPORT_POLICY or plan.get('actor_deliverables') != []:
+            raise ValueError('round requires matched maintainer export policy and no actor file deliverables')
         recovery = PI_RECOVERY_POLICY if harness(plan['arm']) == 'pi' else CLAUDE_RECOVERY_POLICY
         if plan.get('recovery_policy') != recovery:
             raise ValueError('round requires the normal within-session recovery policy')
@@ -109,7 +112,7 @@ def aggregate_round(manifest_path):
         if (hashlib.sha256(prompt.encode('utf-8')).hexdigest() != plan['prompt_sha256']
                 or prompt != template.replace('<WORKSPACE>', workspace.as_posix())):
             raise ValueError('rendered prompt does not match its frozen template and workspace')
-        identity = {key: plan[key] for key in ('model', 'reasoning', 'scenario', 'scenario_version', 'prompt_template_sha256', 'skill_sha256', 'assets', 'measurement_policy', 'skill_guidance_policy', 'trial_policy', 'recovery_policy')}
+        identity = {key: plan[key] for key in ('model', 'reasoning', 'scenario', 'scenario_version', 'prompt_template_sha256', 'skill_sha256', 'assets', 'measurement_policy', 'skill_guidance_policy', 'trial_policy', 'recovery_policy', 'export_policy')}
         attempt_record = json.loads((run / 'run-attempt.json').read_text(encoding='utf-8'))
         started_at = datetime.fromisoformat(attempt_record['started_at'])
         if started_at.tzinfo is None:
@@ -122,15 +125,18 @@ def aggregate_round(manifest_path):
         failure_path = run / 'failure.json'
         unexpected_failure = json.loads(failure_path.read_text(encoding='utf-8')) if failure_path.is_file() else (summary or {}).get('unexpected_failure')
         cleanup = finished.get('cleanup', {})
+        infrastructure_path = run / 'infrastructure-failure.json'
+        infrastructure_failure = json.loads(infrastructure_path.read_text(encoding='utf-8')) if infrastructure_path.is_file() else (summary or {}).get('infrastructure_failure')
         violations = list(violations) + ((summary or {}).get('safeguard_violations') or [])
-        if cleanup.get('passed') is not True or cleanup.get('cursor_scheme_restored') is not True:
+        if (cleanup.get('passed') is not True and not infrastructure_failure) or cleanup.get('cursor_scheme_restored') is not True:
             violations.append('cleanup failed or is unverified')
         violations = list(dict.fromkeys(violations))
-        passed = summary is not None and summary.get('passed') is True and not violations and not unexpected_failure
+        passed = (summary is not None and summary.get('passed') is True and summary.get('drawing_passed') is True
+                  and not violations and not unexpected_failure and not infrastructure_failure)
         output = (summary or {}).get('output_image')
         image = Path(output).resolve() if output else None
-        if image is not None and (image.parent != workspace or not is_requested_png(image)):
-            raise ValueError('recorded output must be a requested PNG export inside this workspace')
+        if image is not None and image != (run / EXPORT_POLICY['output']).resolve():
+            raise ValueError('recorded image must be this run\'s canonical maintainer output')
         if passed and (not (run / 'events.jsonl').is_file() or image is None or not image.is_file()):
             raise ValueError(f'successful attempt is missing session history or its output image: {run}')
         statistics_row, metric_error = None, None
@@ -148,12 +154,14 @@ def aggregate_round(manifest_path):
         else:
             metric_error = 'failed before extracted metrics were recorded'
         row = {'id': str(run), 'started_at': started_at, 'passed': passed, 'statistics': statistics_row,
-               'safeguard_violations': violations, 'unexpected_failure': unexpected_failure}
+               'safeguard_violations': violations, 'unexpected_failure': unexpected_failure,
+               'infrastructure_failure': infrastructure_failure}
         groups.setdefault(plan['arm'], []).append(row)
         attempts.append({'run_dir': str(run), 'arm': plan['arm'], 'passed': passed,
                          'output_image': str(image) if image is not None and image.is_file() else None,
                          'statistics': statistics_row, 'metric_error': metric_error, 'safeguard_violations': violations,
-                         'unexpected_failure': unexpected_failure,
+                         'unexpected_failure': unexpected_failure, 'infrastructure_failure': infrastructure_failure,
+                         'drawing_passed': (summary or {}).get('drawing_passed'),
                          'recovered_provider_errors': (summary or {}).get('recovered_provider_errors', [])})
     if set(groups) != set(ARMS):
         raise ValueError('a full round requires all five configurations, with three attempts each')

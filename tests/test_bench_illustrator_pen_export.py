@@ -25,7 +25,7 @@ def test_lossless_reference_png_preserves_the_previous_reference_framing(tmp_pat
         assert shape_metrics(reference, reference)['foreground_bounds'] == [143, 206, 693, 585]
     directory = tmp_path / 'trial'
     prepare('pi-acu', directory, scenario='illustrator-pen-export')
-    (directory / 'workspace/Cloud9-Recreated.png').write_bytes(path.read_bytes())
+    (directory / 'grading/Cloud9-Recreated.png').write_bytes(path.read_bytes())
     assert verify_outputs(directory)['passed'], 'the prepared reference must itself satisfy the PNG appearance/export checks'
 
 
@@ -38,8 +38,12 @@ def test_illustrator_pen_export_prepare_freezes_png_and_resolves_task_paths(tmp_
     assert plan['scenario'] == 'illustrator-pen-export'
     assert plan['grading']['shape_pass_threshold'] is None
     assert plan['grading']['registration'] == 'none'
-    assert plan['grading']['mode'] == 'image-only'
-    assert plan['actor_deliverables'] == ['Cloud9-Recreated.png']
+    assert plan['grading']['mode'] == 'live-drawing'
+    assert plan['actor_deliverables'] == []
+    assert plan['export_policy'] == {
+        'owner': 'maintainer-cleanup', 'attempts': 2, 'output': 'grading/Cloud9-Recreated.png',
+        'dimensions': [800, 800], 'background': 'opaque-white', 'dpi': 72,
+        'interlaced': False, 'failure_classification': 'infrastructure'}
     assert plan['trial_policy'] == {'attempts_per_configuration': 3, 'aggregation': 'all-successes',
                                     'replace_failed_attempts': False}
     assert sorted(p.name for p in (directory / 'workspace').iterdir()) == [
@@ -52,19 +56,19 @@ def test_illustrator_pen_export_prepare_freezes_png_and_resolves_task_paths(tmp_
     reference = directory / 'grading/reference.png'
     assert reference.read_bytes() == (directory / 'workspace/Cloud9-Reference.png').read_bytes()
     prompt = (directory / 'prompt.txt').read_text(encoding='utf-8')
-    assert '#00AEEF' in prompt and '72 ppi' in prompt
-    assert '800 × 800' in prompt and 'opaque white background' in prompt and 'non-interlaced' in prompt
-    for widget in ('Export As', 'Use Artboards', 'Art Optimized', 'Interlaced off'):
-        assert widget not in prompt, 'specify output properties, not a sequence of GUI controls'
-    assert 'Pen tool' in prompt and 'then export' in prompt
+    assert '#00AEEF' in prompt
+    assert 'genuine Bézier curves' in prompt and "Pen tool's direction handles" in prompt
+    assert 'Do not approximate curves with many short straight-line segments.' in prompt
+    assert '72 ppi' not in prompt and '800 × 800' not in prompt and 'Final output:' not in prompt
+    assert 'Pen tool' in prompt and 'then export' not in prompt
     assert 'Use the supplied computer-use tool for every interaction with Adobe Illustrator.' in prompt
     assert 'c9.gg' not in prompt and 'guidelines' not in prompt.lower()
     for removed in ('visually', 'by eye', 'parametric', 'literal positions', 'Image Trace',
                     'no stroke', 'opacity', 'rename', 'Keep all task-created', '800 × 800-point'):
         assert removed not in prompt
     workspace = (directory / 'workspace').as_posix()
-    assert f'Workspace: {workspace}\nScratch folder: {workspace}/scratch\nFinal output: {workspace}/Cloud9-Recreated.png' in prompt
-    assert prompt.endswith('Only the PNG is required. Stop after exporting.\n')
+    assert f'Workspace: {workspace}\nScratch folder: {workspace}/scratch' in prompt
+    assert prompt.endswith('Stop when the drawing is finished, leaving it open.\n')
     assert '<WORKSPACE>' not in prompt
     assert prompt in plan['command']
     template = (directory / 'prompt-template.txt').read_text(encoding='utf-8')
@@ -73,7 +77,7 @@ def test_illustrator_pen_export_prepare_freezes_png_and_resolves_task_paths(tmp_
     assert plan['prompt_sha256'] == hashlib.sha256(prompt.encode('utf-8')).hexdigest()
     assert 'Color Picker' not in prompt, 'do not prescribe an appearance-control route'
     assert 'result.json' not in prompt and 'Cloud9-Recreated.ai' not in prompt
-    assert 'Cloud9-Recreated.png' in prompt
+    assert 'Cloud9-Recreated.png' not in prompt
     assert not (directory / 'agent-home/auth.json').exists()
     assert json.loads((directory / 'plan.json').read_text(encoding='utf-8')) == plan
 
@@ -87,7 +91,7 @@ def test_cli_prepares_illustrator_pen_export_without_desktop_approval(tmp_path):
     assert completed.returncode == 0, completed.stderr
     plan = json.loads(completed.stdout)
     assert plan['scenario'] == 'illustrator-pen-export'
-    assert plan['scenario_version'] == 'Adobe Illustrator Pen and Export v0.7'
+    assert plan['scenario_version'] == 'Adobe Illustrator Pen and Export v0.8'
     # The blank starter is unchanged; the new reference is derived from the official lossless PNG.
     assert plan['prompt_sha256'] != 'b6b38f65c7675f11b27fd94fa0fcbef75d38208c441a6914727ef97a6f3c254b'
     assert plan['assets'] == {
@@ -97,7 +101,7 @@ def test_cli_prepares_illustrator_pen_export_without_desktop_approval(tmp_path):
     assert not (directory / 'state.json').exists()
 
 
-def test_preparation_leaves_export_settings_and_artifact_creation_to_the_actor(tmp_path, monkeypatch):
+def test_preparation_leaves_export_settings_untouched_until_post_actor_cleanup(tmp_path, monkeypatch):
     from bench.illustrator_pen_export import prepare_desktop
 
     programs = tmp_path / 'programs'
@@ -134,7 +138,7 @@ def test_preparation_leaves_export_settings_and_artifact_creation_to_the_actor(t
     assert not (directory / 'illustrator-export-options.json').exists()
 
 
-def test_image_only_output_succeeds_without_an_ai_or_manifest_and_quality_is_observational(tmp_path):
+def test_maintainer_png_quality_is_observational_and_requires_no_actor_ai_or_manifest(tmp_path):
     from bench.illustrator_pen_export import shape_metrics, verify_outputs
 
     reference = Image.new('RGB', (40, 40), 'white')
@@ -150,10 +154,10 @@ def test_image_only_output_succeeds_without_an_ai_or_manifest_and_quality_is_obs
     directory = tmp_path / 'trial'
     prepare('pi-acu', directory, scenario='illustrator-pen-export')
     workspace = directory / 'workspace'
-    # A crude blue rectangle is a completed export, not a good drawing. Quality must not become a hidden pass threshold.
+    # PNG inspection is separate from native Bézier/method verification; numeric quality is not a pass threshold.
     image = Image.new('RGB', (800, 800), 'white')
     image.paste((0, 174, 239), (100, 100, 200, 200))
-    image.save(workspace / 'Cloud9-Recreated.png', dpi=(72, 72))
+    image.save(directory / 'grading/Cloud9-Recreated.png', dpi=(72, 72))
     verdict = verify_outputs(directory)
     assert verdict['passed'] is True and verdict['problems'] == []
     assert verdict['quality']['foreground_iou'] < .1
@@ -162,43 +166,38 @@ def test_image_only_output_succeeds_without_an_ai_or_manifest_and_quality_is_obs
     assert not (workspace / 'result.json').exists()
     (workspace / 'result.json').write_text('invalid and irrelevant JSON', encoding='utf-8')
     assert verify_outputs(directory)['passed'], 'an unsolicited report file must not trip PNG grading'
-    image.convert('RGBA').save(workspace / 'Cloud9-Recreated.png', dpi=(72, 72))
+    image.convert('RGBA').save(directory / 'grading/Cloud9-Recreated.png', dpi=(72, 72))
     assert verify_outputs(directory)['passed'], 'opaque RGBA with the requested density is valid'
-    image.save(workspace / 'Cloud9-Recreated.png')
+    image.save(directory / 'grading/Cloud9-Recreated.png')
     assert verify_outputs(directory)['checks']['resolution_metadata'] is False, '72 ppi is a requested final-file property'
-    image.save(workspace / 'Cloud9-Recreated.png', dpi=(144, 144))
+    image.save(directory / 'grading/Cloud9-Recreated.png', dpi=(144, 144))
     assert verify_outputs(directory)['checks']['resolution_metadata'] is False
     transparent = image.convert('RGBA')
     transparent.putalpha(0)
-    transparent.save(workspace / 'Cloud9-Recreated.png')
+    transparent.save(directory / 'grading/Cloud9-Recreated.png')
     assert verify_outputs(directory)['checks']['opaque'] is False
-    Image.new('RGB', (400, 400), 'white').save(workspace / 'Cloud9-Recreated.png')
+    Image.new('RGB', (400, 400), 'white').save(directory / 'grading/Cloud9-Recreated.png')
     assert verify_outputs(directory)['checks']['dimensions'] is False
-    (workspace / 'Cloud9-Recreated.png').write_bytes(b'not a PNG')
+    (directory / 'grading/Cloud9-Recreated.png').write_bytes(b'not a PNG')
     assert verify_outputs(directory)['passed'] is False
-    (workspace / 'Cloud9-Recreated.png').unlink()
+    (directory / 'grading/Cloud9-Recreated.png').unlink()
     assert verify_outputs(directory)['passed'] is False
 
 
-@pytest.mark.parametrize('suffix', ['-01', '-Drawing'])
-def test_image_grading_accepts_a_unique_artboard_suffix_without_renaming(tmp_path, suffix):
+def test_png_grading_ignores_unsolicited_actor_exports_and_requires_maintainer_output(tmp_path):
     from bench.illustrator_pen_export import verify_outputs
 
     directory = tmp_path / 'trial'
     prepare('pi-acu', directory, scenario='illustrator-pen-export')
-    output = directory / f'workspace/Cloud9-Recreated{suffix}.png'
     image = Image.new('RGB', (800, 800), 'white')
     image.paste((0, 174, 239), (100, 100, 200, 200))
+    for suffix in ('', '-01', '-Drawing'):
+        image.save(directory / f'workspace/Cloud9-Recreated{suffix}.png', dpi=(72, 72))
+    assert not verify_outputs(directory)['passed'], 'actor exports are not maintainer evidence'
+    output = directory / 'grading/Cloud9-Recreated.png'
     image.save(output, dpi=(72, 72))
     verdict = verify_outputs(directory)
-    assert verdict['passed'] is True, verdict
-    assert verdict['output'] == str(output)
-    assert output.is_file()
-    assert not (directory / 'workspace/Cloud9-Recreated.png').exists(), 'verification must not repair/rename actor work'
-    image.save(directory / 'workspace/Cloud9-Recreated-Other.png')
-    ambiguous = verify_outputs(directory)
-    assert ambiguous['passed'] is False
-    assert 'ambiguous' in ' '.join(ambiguous['problems']).lower()
+    assert verdict['passed'] and verdict['output'] == str(output)
 
 
 def test_image_grading_refuses_a_modified_frozen_reference(tmp_path):
@@ -230,6 +229,199 @@ def test_illustrator_pen_export_cleanup_protects_existing_documents_and_refuses_
         owned_documents([existing], [existing, foreign], workspace)
 
 
+
+# Simulate only the external AHK/Illustrator boundary; cleanup, ownership, encoding and grading run normally.
+def drawing_cleanup_fixture(tmp_path, *, export_errors=0, straight=False, wrong_fill=False,
+                            render_size=(800, 800), export_mutates_drawing=False, flat_loop=False, native_fill_unknown=False):
+    directory = tmp_path / 'trial'
+    prepare('pi-acu', directory, scenario='illustrator-pen-export')
+    existing = {'path': str(tmp_path / 'existing.ai'), 'name': 'existing.ai', 'saved': False,
+                'artwork_signature': 'protected'}
+    drawing = {'path': str(directory / 'workspace/Cloud9-Pen-Starter.ai'),
+               'name': 'Cloud9-Pen-Starter.ai', 'saved': False, 'artwork_signature': 'unchanged'}
+    documents = [existing, drawing]
+    preferences = {'ResolutionR': 144}
+    (directory / 'illustrator-identity.json').write_text('{"hwnd":10,"pid":20,"started":0}', encoding='utf-8')
+    (directory / 'illustrator-before.json').write_text(json.dumps([existing]), encoding='utf-8')
+    (directory / 'illustrator-preferences-before.json').write_text(json.dumps(preferences), encoding='utf-8')
+    state = {'documents': documents, 'export_attempts': 0, 'png_preferences': {'ResolutionR': 72}}
+    points = [dict(anchor=[100, 100], left=[100, 100], right=[100, 100] if straight else [100, 200]),
+              dict(anchor=[300, 100], left=[300, 100] if straight else [300, 200], right=[300, 100])]
+    if flat_loop:
+        points = [dict(anchor=[100, 100], left=[100, 100], right=[100, 200]),
+                  dict(anchor=[100, 100], left=[100, 300], right=[100, 100])]
+    image = Image.new('RGB', render_size, 'white')
+    image.paste((255, 0, 0) if wrong_fill else (0, 174, 239), (100, 100, 200, 200))
+
+    def observer(run_dir, script, *args, **kwargs):
+        if script.name == 'dismiss-dialogs.ahk':
+            return ''
+        assert script.name == 'run-jsx.ahk'
+        config = json.loads(args[0].read_text(encoding='utf-8').split('\n', 1)[0].removeprefix('var config = ').removesuffix(';'))
+        phase = config['phase']
+        if phase == 'snapshot':
+            result = {'documents': state['documents'], 'png_preferences': state['png_preferences']}
+        elif phase == 'drawing':
+            result = {'document': drawing, 'checks': {'artboard': True, 'editable_paths': True,
+                                                     'blue_fill': None if native_fill_unknown else not wrong_fill},
+                      'paths': [{'closed': True, 'points': points}]}
+        elif phase == 'export':
+            state['export_attempts'] += 1
+            if state['export_attempts'] <= export_errors:
+                result = {'error': 'fixture export failed', 'stack': 'fixture native stack'}
+            else:
+                image.save(config['render'])  # Metadata encoding belongs to the maintainer, not the drawing.
+                original = dict(drawing)
+                if export_mutates_drawing:
+                    drawing['artwork_signature'] = 'changed-by-export'
+                result = {'document_before': original, 'document_after': drawing}
+        elif phase in ('cleanup', 'restore-preferences'):
+            if phase == 'cleanup' and config['close']:
+                output = directory / 'grading/Cloud9-Recreated.png'
+                assert output.is_file(), 'never close an unexported drawing'
+                with Image.open(output) as saved:
+                    assert saved.size == (800, 800) and saved.info.get('dpi') == pytest.approx((72, 72), abs=.1)
+                state['documents'] = [existing]
+            state['png_preferences'] = config['restore_preferences']
+            result = {'documents': state['documents'], 'png_preferences': state['png_preferences']}
+        else:
+            pytest.fail(f'Unexpected native operation: {phase}')
+        args[1].write_text(json.dumps(result), encoding='utf-8')
+        return ''
+    return directory, observer, state, image
+
+
+def test_cleanup_exports_unsaved_drawing_unchanged_before_closing_and_preserves_existing_documents(tmp_path):
+    from bench.illustrator_pen_export import cleanup_desktop
+
+    directory, observer, state, native_image = drawing_cleanup_fixture(tmp_path)
+    # An unsolicited actor file is not the new protocol's export evidence.
+    Image.new('RGB', (400, 400), 'red').save(directory / 'workspace/Cloud9-Recreated.png')
+    result = cleanup_desktop(directory, observer, export_drawing=True)
+    assert result['passed'] and result['drawing_verification']['passed']
+    assert result['export']['passed'] and result['infrastructure_failure'] is None
+    assert result['drawing_verification']['curved_segments'] == 1
+    output = directory / 'grading/Cloud9-Recreated.png'
+    with Image.open(output) as saved:
+        assert saved.convert('RGBA').tobytes() == native_image.convert('RGBA').tobytes()
+        assert saved.info['dpi'] == pytest.approx((72, 72), abs=.1)
+    assert result['export']['output'] == str(output)
+    assert state['documents'] == result['preserved_documents']
+    assert len(state['documents']) == 1 and state['documents'][0]['artwork_signature'] == 'protected'
+    assert not (directory / 'workspace/Cloud9-Recreated.ai').exists()
+
+
+@pytest.mark.parametrize('flat_loop', [False, True])
+def test_cleanup_detects_straight_segment_approximation_without_repairing_the_drawing(tmp_path, flat_loop):
+    from bench.illustrator_pen_export import cleanup_desktop
+
+    directory, observer, state, native_image = drawing_cleanup_fixture(tmp_path, straight=True, flat_loop=flat_loop)
+    result = cleanup_desktop(directory, observer, export_drawing=True)
+    assert result['passed'] and result['export']['passed']
+    assert not result['drawing_verification']['passed']
+    assert result['drawing_verification']['curved_segments'] == 0
+    assert 'genuine Bézier' in ' '.join(result['drawing_verification']['problems'])
+    assert result['infrastructure_failure'] is None
+    with Image.open(result['export']['output']) as saved:
+        assert saved.convert('RGBA').tobytes() == native_image.convert('RGBA').tobytes()
+
+
+
+@pytest.mark.parametrize('export_errors', [0, 2])
+def test_cleanup_uses_rendered_fill_for_other_native_color_types_without_inventing_a_failure(tmp_path, export_errors):
+    from bench.illustrator_pen_export import cleanup_desktop
+
+    directory, observer, state, _ = drawing_cleanup_fixture(tmp_path, native_fill_unknown=True, export_errors=export_errors)
+    result = cleanup_desktop(directory, observer, export_drawing=True)
+    drawing = result['drawing_verification']
+    assert drawing['native_checks']['blue_fill'] is None
+    if export_errors:
+        assert drawing['passed'] is None, 'unknown effective fill is not a failed actor drawing'
+        assert result['infrastructure_failure']['kind'] == 'maintainer_export_failure'
+    else:
+        assert drawing['passed'] is True and drawing['rendered_checks']['blue_fill'] is True
+        assert result['passed'] and result['infrastructure_failure'] is None
+
+
+def test_cleanup_records_missing_drawing_as_task_failure_without_reopening_or_exporting_a_blank(tmp_path):
+    from bench.illustrator_pen_export import cleanup_desktop
+
+    directory, observer, state, _ = drawing_cleanup_fixture(tmp_path)
+    state['documents'] = state['documents'][:1]  # Actor no longer left an owned drawing open.
+    result = cleanup_desktop(directory, observer, export_drawing=True)
+    assert result['passed'] and result['infrastructure_failure'] is None
+    assert not result['drawing_verification']['passed']
+    assert 'not open' in ' '.join(result['drawing_verification']['problems'])
+    assert result['export']['output'] is None
+    assert state['export_attempts'] == 0 and len(state['documents']) == 1
+    assert not (directory / 'grading/Cloud9-Recreated.png').exists()
+
+
+def test_cleanup_exports_wrong_fill_as_evidence_without_calling_it_an_export_failure(tmp_path):
+    from bench.illustrator_pen_export import cleanup_desktop
+
+    directory, observer, state, native_image = drawing_cleanup_fixture(tmp_path, wrong_fill=True)
+    result = cleanup_desktop(directory, observer, export_drawing=True)
+    assert result['passed'] and result['export']['passed']
+    assert result['infrastructure_failure'] is None
+    assert not result['drawing_verification']['passed']
+    assert not result['drawing_verification']['checks']['blue_fill']
+    assert len(state['documents']) == 1
+    with Image.open(result['export']['output']) as saved:
+        assert saved.convert('RGBA').tobytes() == native_image.convert('RGBA').tobytes()
+
+
+def test_cleanup_stops_after_export_integrity_failure_without_retry_repair_or_close(tmp_path):
+    from bench.illustrator_pen_export import cleanup_desktop
+
+    directory, observer, state, _ = drawing_cleanup_fixture(tmp_path, export_mutates_drawing=True)
+    result = cleanup_desktop(directory, observer, export_drawing=True)
+    assert not result['passed'] and result['drawing_verification']['passed']
+    assert result['infrastructure_failure']['kind'] == 'maintainer_export_failure'
+    assert state['export_attempts'] == 1, 'do not retry against changed artwork'
+    assert len(state['documents']) == 2 and state['documents'][1]['artwork_signature'] == 'changed-by-export'
+    assert state['png_preferences'] == {'ResolutionR': 144}
+    assert (directory / 'export-attempt-1-crash.txt').is_file()
+    assert not (directory / 'grading/Cloud9-Recreated.png').exists()
+
+
+def test_cleanup_retains_invalid_sized_export_as_infrastructure_failure_with_logs_and_no_resize(tmp_path):
+    from bench.illustrator_pen_export import cleanup_desktop
+
+    directory, observer, state, _ = drawing_cleanup_fixture(tmp_path, render_size=(400, 400))
+    result = cleanup_desktop(directory, observer, export_drawing=True)
+    assert not result['passed'] and result['drawing_verification']['passed']
+    assert result['infrastructure_failure']['kind'] == 'maintainer_export_failure'
+    assert state['export_attempts'] == 2 and len(state['documents']) == 2
+    assert state['png_preferences'] == {'ResolutionR': 144}
+    for attempt in (1, 2):
+        assert (directory / f'export-attempt-{attempt}-crash.txt').is_file()
+    for output in (directory / 'grading').glob('native-export-*.png'):
+        with Image.open(output) as image:
+            assert image.size == (400, 400), 'retain the failure, never resize it into a successful export'
+    assert not (directory / 'grading/Cloud9-Recreated.png').exists()
+
+
+@pytest.mark.parametrize('failures', [1, 2])
+def test_cleanup_retries_only_export_and_classifies_exhaustion_as_infrastructure_failure(tmp_path, failures):
+    from bench.illustrator_pen_export import cleanup_desktop
+
+    directory, observer, state, _ = drawing_cleanup_fixture(tmp_path, export_errors=failures)
+    result = cleanup_desktop(directory, observer, export_drawing=True)
+    assert state['export_attempts'] == 2
+    assert state['png_preferences'] == {'ResolutionR': 144}, 'restore preferences even when preserving an unexported drawing'
+    assert result['drawing_verification']['passed'], 'export errors are not actor drawing failures'
+    assert (directory / 'export-attempt-1-crash.txt').is_file()
+    assert result['passed'] is (failures == 1)
+    if failures == 2:
+        assert result['infrastructure_failure']['kind'] == 'maintainer_export_failure'
+        assert result['export']['passed'] is False
+        assert len(state['documents']) == 2, 'preserve the unexported drawing rather than destroying it'
+        assert not result['closed_documents']
+    else:
+        assert result['infrastructure_failure'] is None
+        assert len(state['documents']) == 1
+
 def test_illustrator_pen_export_conduct_accepts_illustrator_not_a_new_calculator(tmp_path):
     from bench.run import conduct_audit
 
@@ -254,12 +446,13 @@ def test_illustrator_pen_export_conduct_accepts_illustrator_not_a_new_calculator
 @pytest.mark.desktop
 def test_illustrator_pen_export_real_illustrator_preparation_and_owned_document_cleanup(tmp_path):
     from bench.run import acu_observer
-    from bench.illustrator_pen_export import prepare_desktop, inspect_native, verify_outputs, cleanup_desktop, dismiss_task_dialogs
+    from bench.illustrator_pen_export import prepare_desktop, cleanup_desktop
     from concurrent.futures import ThreadPoolExecutor
 
     directory = ROOT / '.pi/illustrator-pen-export-validation' / f'native-check-{uuid4().hex[:8]}'
     plan = prepare('pi-acu', directory, scenario='illustrator-pen-export')
     acu_observer(directory, ROOT / 'bench/probe.ahk', suffix='-before')
+    cleanup_finished = False
     try:
         prepared = prepare_desktop(plan, acu_observer)
         assert prepared['zoom'] == 1
@@ -281,13 +474,6 @@ def test_illustrator_pen_export_real_illustrator_preparation_and_owned_document_
             'if x > left || y > top || x+width < right || y+height < bottom\n'
             '    throw Error("Prepared Illustrator does not cover the primary work area")\n', encoding='utf-8')
         acu_observer(directory, window_check)
-        # Optional maintainer fixture check, never part of normal trial preparation.
-        calibration = directory / 'grading/blank-calibration.png'
-        acu_observer(directory, ROOT / 'bench/illustrator/prepare-export.ahk', identity['hwnd'], identity['pid'],
-                     calibration, directory / 'fixture-export-options.json', timeout=40)
-        with Image.open(calibration) as blank:
-            assert blank.size == (800, 800)
-            assert blank.convert('RGBA').getextrema() == ((255, 255),) * 4
         screenshot = directory / 'blank-desktop.png'
         acu_observer(directory, ROOT / 'acu/screenshot.ahk', 'fullscreen', '--max', 0, '--out', screenshot)
         with Image.open(screenshot) as desktop:
@@ -304,7 +490,7 @@ def test_illustrator_pen_export_real_illustrator_preparation_and_owned_document_
         # Map these literal fixture points into the observed artboard, not a guessed viewport.
         def screen(x, y):
             return round(left + x * (right - left) / 800), round(top + y * (bottom - top) / 800)
-        start, handle, second, third = [screen(x, y) for x, y in ((200, 200), (350, 200), (600, 200), (600, 600))]
+        start, handle, second, third = [screen(x, y) for x, y in ((200, 200), (200, 350), (600, 200), (600, 600))]
         gesture_script = directory / 'paced-pen.ahk'
         target = f'ahk_id {identity["hwnd"]}'
         gesture_script.write_text(
@@ -322,52 +508,15 @@ def test_illustrator_pen_export_real_illustrator_preparation_and_owned_document_
         acu_observer(directory, gesture_script)
         result = directory / 'fixture-result.txt'
         config = {'starter': str(workspace / 'Cloud9-Pen-Starter.ai'),
-                  'ai': str(workspace / 'Cloud9-Recreated.ai'), 'png': str(workspace / 'Cloud9-Recreated.png'),
-                  'result': str(result)}
-        script = directory / 'saved-fixture.jsx'
+                  'reference': str(workspace / 'Cloud9-Reference.png'), 'result': str(result)}
+        script = directory / 'drawing-fixture.jsx'
         script.write_text('var config = ' + json.dumps(config) + ';\n' +
-                          (ROOT / 'tests/scripts/illustrator_pen_export_saved_fixture.jsx').read_text(encoding='utf-8'), encoding='utf-8')
+                          (ROOT / 'tests/scripts/illustrator_pen_drawing_fixture.jsx').read_text(encoding='utf-8'), encoding='utf-8')
         acu_observer(directory, ROOT / 'bench/illustrator/run-jsx.ahk', script, result,
                      identity['hwnd'], identity['pid'], timeout=40)
         assert result.read_text(encoding='utf-8') == 'SUCCESS'
-        inspect_native(directory, acu_observer)  # Maintainer-only geometry regression, not an actor deliverable.
-        inspected = json.loads((directory / 'native-verification.json').read_text(encoding='utf-8'))
-        assert all(inspected['checks'].values())
-        first = inspected['paths'][0]['points'][0]
-        assert first['anchor'] == pytest.approx([200, 600], abs=.75)
-        assert first['right'] == pytest.approx([350, 600], abs=.75)
-        assert verify_outputs(directory)['passed']
-        # A provider interruption may leave Save As open; cleanup cancels this new dialog without touching documents.
-        dialog_script = directory / 'leave-save-as.ahk'
-        dialog_script.write_text(
-            'WinActivate "ahk_id ' + str(identity['hwnd']) + '"\n'
-            'if !WinWaitActive("ahk_id ' + str(identity['hwnd']) + '", , 3)\n'
-            '    throw Error("Fixture did not activate")\n'
-            'SetKeyDelay 30,30\nSendEvent "^+s"\n'
-            'if !AcuWaitUntil(() => WinExist("Save As ahk_exe Illustrator.exe"), 5000)\n'
-            '    throw Error("Fixture Save As did not open")\n', encoding='utf-8')
-        acu_observer(directory, dialog_script)
-        refusal_script = directory / 'refuse-main-with-dialog.ahk'
-        refusal_script.write_text(
-            f'target := "{target}"\n'
-            'refused := false\ntry AcuActivate(target)\ncatch Error as failure {\n'
-            '    if !InStr(failure.Message, "dialog")\n        throw failure\n'
-            '    refused := true\n}\n'
-            'if !refused\n    throw Error("Helper activated a frame with an owned dialog")\n'
-            'dialog := WinExist("Save As ahk_exe Illustrator.exe")\n'
-            'AcuActivate("ahk_id " dialog)\n', encoding='utf-8')
-        acu_observer(directory, refusal_script)
-        menu_script = directory / 'export-menu-recipe.ahk'
-        menu_script.write_text(
-            'dialog := WinExist("Save As ahk_exe Illustrator.exe")\n'
-            'AcuKeys("ahk_id " dialog, "{Esc}")\n'
-            'if !WinWaitClose("ahk_id " dialog, , 3)\n    throw Error("Save As did not cancel")\n'
-            f'AcuKeys("{target}", "!fe{{Right}}{{Down}}{{Enter}}")\n'
-            'opened := AcuWaitUntil(() => WinExist("Export ahk_class #32770 ahk_exe Illustrator.exe"), 5000)\n'
-            'if !opened || WinGetTitle("ahk_id " opened) != "Export"\n'
-            '    throw Error("Export As menu recipe did not open Export As")\n', encoding='utf-8')
-        acu_observer(directory, menu_script)
-        dismiss_task_dialogs(directory, acu_observer)
+        assert not (workspace / 'Cloud9-Recreated.ai').exists()
+        assert not (workspace / 'Cloud9-Recreated.png').exists()
 
         # Exercise the actual ownerless-picker failure, not a substitute owned Save As dialog.
         picker_result = directory / 'picker-result.json'
@@ -420,11 +569,47 @@ def test_illustrator_pen_export_real_illustrator_preparation_and_owned_document_
                     opening.result(timeout=55)
         assert json.loads(picker_result.read_text(encoding='utf-8')) == {'closed': True}
         assert f'cancelled={picker["hwnd"]} Color Picker' in (directory / 'observer-dismiss-dialogs-ownerless-picker.log').read_text(encoding='utf-8')
+        export_attempts = 0
+        # Inject one genuine native destination failure, then exercise the unchanged production retry/export pipeline.
+        def failing_first_export(run_dir, script, *args, **kwargs):
+            nonlocal export_attempts
+            if script.name == 'run-jsx.ahk':
+                content = args[0].read_text(encoding='utf-8')
+                first_line, rest = content.split('\n', 1)
+                config = json.loads(first_line.removeprefix('var config = ').removesuffix(';'))
+                if config['phase'] == 'export':
+                    export_attempts += 1
+                    if export_attempts == 1:
+                        config['render'] = str(directory / 'missing-directory/failure.png')
+                        args[0].write_text('var config = ' + json.dumps(config) + ';\n' + rest, encoding='utf-8')
+            return acu_observer(run_dir, script, *args, **kwargs)
+        cleanup = cleanup_desktop(directory, failing_first_export, export_drawing=True)
+        cleanup_finished = cleanup['passed']
+        assert cleanup['passed'] and cleanup['drawing_verification']['passed']
+        assert cleanup['export']['passed'] and cleanup['infrastructure_failure'] is None
+        assert export_attempts == 2 and (directory / 'export-attempt-1-crash.txt').is_file()
+        inspected = cleanup['drawing_verification']
+        assert inspected['document']['saved'] is False
+        assert inspected['curved_segments'] > 0
+        assert inspected['item_types']['PlacedItem'] == 2, 'hidden and off-artboard references must not fail Pen output verification'
+        first = inspected['paths'][0]['points'][0]
+        assert first['anchor'] == pytest.approx([200, 600], abs=.75)
+        assert first['right'] == pytest.approx([200, 450], abs=.75)
+        output = directory / 'grading/Cloud9-Recreated.png'
+        with Image.open(output) as image:
+            assert image.size == (800, 800)
+            assert image.info['dpi'] == pytest.approx((72, 72), abs=.1)
+            assert image.convert('RGBA').getchannel('A').getextrema() == (255, 255)
+            assert image.getpixel((0, 0))[:3] == (255, 255, 255)
+            assert not image.info.get('interlace', 0)
+        assert cleanup['preserved_documents'] == json.loads((directory / 'illustrator-before.json').read_text(encoding='utf-8'))
+
     finally:
         if (directory / 'illustrator-identity.json').exists():
             try:
-                cleanup = cleanup_desktop(directory, acu_observer)
-                assert cleanup['passed']
+                if not cleanup_finished:
+                    cleanup = cleanup_desktop(directory, acu_observer)
+                    assert cleanup['passed']
             finally:
                 acu_observer(directory, ROOT / 'bench/restore_cursor.ahk')
 

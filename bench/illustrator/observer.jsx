@@ -1,4 +1,4 @@
-// Maintainer-only document preparation, saved-file inspection and guarded cleanup. The wrapper supplies config.
+// Maintainer-only preparation, read-only drawing inspection, as-is export and guarded cleanup. The wrapper supplies config.
 (function () {
     function encode(value) {
         if (value === null) return 'null';
@@ -49,6 +49,22 @@
         for (var i = 0; i < app.documents.length; i++) values.push(info(app.documents[i]));
         return values;
     }
+    // Hidden tracing material is not drawing output; include ancestor visibility without changing the document.
+    function visibleItem(item) {
+        var node = item;
+        while (node.typename !== 'Document') {
+            if (node.typename === 'Layer') {
+                if (!node.visible) return false;
+            } else if (node.hidden || node.opacity === 0) return false;
+            node = node.parent;
+        }
+        return true;
+    }
+    function onArtboard(item, rect) {
+        if (!visibleItem(item)) return false;
+        var bounds = item.visibleBounds;
+        return bounds[0] < rect[2] && bounds[2] > rect[0] && bounds[1] > rect[3] && bounds[3] < rect[1];
+    }
     function key(value) { return value.path ? new File(value.path).fsName.toLowerCase() : 'unsaved:' + value.name; }
     function assertProtected(current) {
         var seen = {}, lists = [config.before, current];
@@ -65,6 +81,19 @@
             for (var j = 0; j < current.length; j++) if (key(config.before[i]) === key(current[j])) found = true;
             if (!found) throw new Error('Pre-existing document disappeared or was renamed; refusing cleanup');
         }
+    }
+    // Bind observation/export to a unique owned document; never trust the active document or reopen a saved copy.
+    function taskDocument() {
+        var current = documents(), target = new File(config.document).fsName.toLowerCase(), found = null;
+        assertProtected(current);
+        for (var i = 0; i < config.before.length; i++)
+            if (key(config.before[i]) === target) throw new Error('Refusing to inspect/export a pre-existing document');
+        for (var i = 0; i < app.documents.length; i++) if (key(info(app.documents[i])) === target) {
+            if (found !== null) throw new Error('Ambiguous task document');
+            found = app.documents[i];
+        }
+        if (found === null) throw new Error('Owned task drawing is no longer open');
+        return found;
     }
     var preferenceTypes = {ResolutionR: 'Real', AntiAlias: 'Integer', BackgroundTransparent: 'Boolean', Interlaced: 'Boolean',
                            'Background/red': 'Integer', 'Background/green': 'Integer', 'Background/blue': 'Integer'};
@@ -99,42 +128,46 @@
             result = {before: before, documents: documents(), zoom: doc.views[0].zoom,
                       center: doc.views[0].centerPoint, artboard: rect, workspace: 'Getting Started', png_preferences: pngPreferences()};
             doc = null; // Leave the task document open for the actor.
-        } else if (config.phase === 'verify') {
-            var inspection = new File(config.inspection);
-            var opened = documents();
-            for (var i = 0; i < opened.length; i++) if (key(opened[i]) === inspection.fsName.toLowerCase())
-                throw new Error('Inspection copy is already open; refusing reuse');
-            doc = app.open(inspection);
-            var rect = doc.artboards[0].artboardRect;
-            var checks = {artboard: doc.documentColorSpace === DocumentColorSpace.RGB && doc.artboards.length === 1 &&
+        } else if (config.phase === 'drawing') {
+            var drawing = taskDocument(), rect = drawing.artboards[0].artboardRect, paths = [], types = {}, otherFilled = false, visibleNonPaths = false;
+            var checks = {artboard: drawing.documentColorSpace === DocumentColorSpace.RGB && drawing.artboards.length === 1 &&
                           rect[2] - rect[0] === 800 && rect[1] - rect[3] === 800,
-                          editable_paths: doc.pathItems.length > 0 && doc.rasterItems.length === 0 && doc.placedItems.length === 0,
-                          appearance: true};
-            var types = {}, paths = [];
-            for (var i = 0; i < doc.pageItems.length; i++) {
-                var item = doc.pageItems[i];
+                          editable_paths: false, blue_fill: false};
+            for (var i = 0; i < drawing.pageItems.length; i++) {
+                var item = drawing.pageItems[i];
                 types[item.typename] = (types[item.typename] || 0) + 1;
-                if (item.typename !== 'PathItem' && item.typename !== 'CompoundPathItem' && item.typename !== 'GroupItem') checks.editable_paths = false;
-                if (item.hidden || item.opacity !== 100) checks.appearance = false;
+                if (onArtboard(item, rect) && item.typename !== 'PathItem' && item.typename !== 'CompoundPathItem' && item.typename !== 'GroupItem') visibleNonPaths = true;
             }
-            for (var i = 0; i < doc.layers.length; i++) if (!doc.layers[i].visible) checks.appearance = false;
-            for (var i = 0; i < doc.pathItems.length; i++) {
-                var path = doc.pathItems[i], fill = path.fillColor;
-                if (path.guides || !path.filled || path.stroked || fill.typename !== 'RGBColor' ||
-                    Math.abs(fill.red) > 0.5 || Math.abs(fill.green - 174) > 0.5 || Math.abs(fill.blue - 239) > 0.5)
-                    checks.appearance = false;
-                var points = [];
+            for (var i = 0; i < drawing.pathItems.length; i++) {
+                var path = drawing.pathItems[i], points = [];
+                if (path.guides || !onArtboard(path, rect)) continue;
+                var fill = path.fillColor;
+                if (path.filled && fill.typename !== 'RGBColor') otherFilled = true;
+                if (path.filled && fill.typename === 'RGBColor' && Math.abs(fill.red) < 0.5 &&
+                    Math.abs(fill.green - 174) < 0.5 && Math.abs(fill.blue - 239) < 0.5) checks.blue_fill = true;
                 for (var j = 0; j < path.pathPoints.length; j++) points.push({anchor: path.pathPoints[j].anchor,
                     left: path.pathPoints[j].leftDirection, right: path.pathPoints[j].rightDirection});
-                paths.push({anchors: path.pathPoints.length, closed: path.closed, points: points});
+                paths.push({closed: path.closed, filled: path.filled, stroked: path.stroked, fill_type: fill.typename, points: points});
             }
+            checks.editable_paths = paths.length > 0 && !visibleNonPaths;
+            // Non-RGB fills may render to the requested color; report unknown rather than imposing a new color-type rule.
+            if (!checks.blue_fill && otherFilled) checks.blue_fill = null;
+            result = {document: info(drawing), checks: checks, paths: paths, item_types: types, artboard: rect};
+        } else if (config.phase === 'export') {
+            var drawing = taskDocument(), original = info(drawing);
+            var destination = new File(config.render);
+            if (destination.exists) throw new Error('Export destination already exists; refusing overwrite');
             var options = new ExportOptionsPNG24();
             options.artBoardClipping = true;
             options.horizontalScale = 100; options.verticalScale = 100;
-            options.antiAliasing = true; options.transparency = false;
-            options.interlaced = false;
-            doc.exportFile(new File(config.render), ExportType.PNG24, options);
-            result = {checks: checks, item_types: types, paths: paths, artboard: rect};
+            options.antiAliasing = true; options.transparency = false; options.interlaced = false;
+            var white = new RGBColor(); white.red = 255; white.green = 255; white.blue = 255;
+            options.matte = true; options.matteColor = white;
+            drawing.exportFile(destination, ExportType.PNG24, options);
+            result = {document_before: original, document_after: info(drawing)};
+        } else if (config.phase === 'restore-preferences') {
+            setPngPreferences(config.restore_preferences);
+            result = {documents: documents(), png_preferences: pngPreferences()};
         } else if (config.phase === 'cleanup') {
             var current = documents();
             assertProtected(current);

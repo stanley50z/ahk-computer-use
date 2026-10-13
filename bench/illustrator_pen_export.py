@@ -1,7 +1,7 @@
-"""Adobe Illustrator Pen and Export PNG grading and maintainer-only Illustrator preparation/inspection.
+"""Live Pen drawing verification, as-is maintainer export and owned Illustrator cleanup.
 
-The lossless PNG fixes reference shape, scale, placement and #00AEEF color.
-No registration or numeric shape threshold is applied to actor submissions.
+The lossless reference fixes shape, scale, placement and #00AEEF color.
+Numeric drawing quality is observational, without registration or a pass threshold.
 """
 
 from array import array
@@ -11,9 +11,15 @@ import os
 import re
 import uuid
 from pathlib import Path
-import shutil
+import traceback
 
 from PIL import Image, UnidentifiedImageError
+
+
+EXPORT_POLICY = {
+    'owner': 'maintainer-cleanup', 'attempts': 2, 'output': 'grading/Cloud9-Recreated.png',
+    'dimensions': [800, 800], 'background': 'opaque-white', 'dpi': 72,
+    'interlaced': False, 'failure_classification': 'infrastructure'}
 
 
 # Shared mask classification includes antialiased blue edges in references and exported drawings.
@@ -76,30 +82,15 @@ def shape_metrics(image, reference):
     return result
 
 
-# Grading and aggregation share the requested basename and ordinary artboard suffixes, case-insensitively.
-def is_requested_png(path):
-    name = Path(path).name.casefold()
-    return name == 'cloud9-recreated.png' or (name.startswith('cloud9-recreated-')
-            and name.endswith('.png') and len(name) > len('cloud9-recreated-.png'))
-
-
-# The exported PNG is the only actor deliverable; shape quality is measured, never a pass threshold.
-def verify_outputs(run_dir):
+# Inspect a maintainer-rendered PNG; quality is an observation, never a numeric completion threshold.
+def verify_outputs(run_dir, *, output=None):
     run_dir = Path(run_dir)
     plan = json.loads((run_dir / 'plan.json').read_text(encoding='utf-8'))
     reference_path = run_dir / 'grading/reference.png'
     if hashlib.sha256(reference_path.read_bytes()).hexdigest() != plan['grading']['reference_sha256']:
         raise ValueError('frozen grading reference fingerprint changed')
-    png = run_dir / 'workspace/Cloud9-Recreated.png'
+    png = Path(output) if output is not None else run_dir / EXPORT_POLICY['output']
     report = {'passed': False, 'output': str(png), 'problems': [], 'checks': {}, 'quality': None}
-    if not png.is_file():
-        exports = sorted(path for path in png.parent.iterdir() if path.is_file() and is_requested_png(path))
-        if len(exports) > 1:
-            report['problems'].append('Ambiguous artboard-suffixed PNG exports')
-            return report
-        if exports:
-            png = exports[0]
-            report['output'] = str(png)
     if not png.is_file():
         report['problems'].append('Cloud9-Recreated.png missing')
         return report
@@ -205,25 +196,6 @@ def prepare_desktop(plan, observer):
     return prepared
 
 
-# Inspect a copy of the saved AI, not the actor's potentially unsaved in-memory document.
-def inspect_native(run_dir, observer):
-    from bench.run import save_json
-
-    run_dir = Path(run_dir)
-    source = run_dir / 'workspace/Cloud9-Recreated.ai'
-    if not source.is_file():
-        return
-    digest = hashlib.sha256(source.read_bytes()).hexdigest()
-    inspection = run_dir / 'grading/saved-copy.ai'
-    shutil.copyfile(source, inspection)
-    result = native_observer(run_dir, observer, 'verify', inspection=str(inspection),
-                             render=str(run_dir / 'grading/native-render.png'))
-    if hashlib.sha256(source.read_bytes()).hexdigest() != digest:
-        raise ValueError('saved AI changed during native inspection')
-    result['ai_sha256'] = digest
-    save_json(run_dir / 'native-verification.json', result)
-
-
 # Cancel recognized dialogs only when they were absent before preparation, preserving every pre-existing handle.
 def dismiss_task_dialogs(run_dir, observer):
     from bench.run import ROOT
@@ -234,8 +206,131 @@ def dismiss_task_dialogs(run_dir, observer):
              run_dir / 'observer-probe-before.log')
 
 
-# Close only independently attributed task documents; close the application only if this task started it.
-def cleanup_desktop(run_dir, observer):
+
+# Count actual noncollinear cubic segments, not merely nonzero handles that still lie on a straight chord.
+def segment_counts(paths):
+    curved = straight = 0
+    for path in paths:
+        points = path['points']
+        count = len(points) if path['closed'] else len(points) - 1
+        for index in range(max(0, count)):
+            start, end = points[index], points[(index + 1) % len(points)]
+            a, b = start['anchor'], end['anchor']
+            dx, dy = b[0] - a[0], b[1] - a[1]
+            handles = (start['right'], end['left'])
+            if dx == 0 and dy == 0:
+                first, second = handles
+                bent = abs((first[0] - a[0]) * (second[1] - a[1]) -
+                           (first[1] - a[1]) * (second[0] - a[0])) > 1e-6
+            else:
+                bent = any(abs(dx * (handle[1] - a[1]) - dy * (handle[0] - a[0])) > 1e-6 for handle in handles)
+            curved += bent
+            straight += not bent
+    return {'curved_segments': curved, 'straight_segments': straight}
+
+
+# Render/encode one frozen live drawing; artifact/IO retries are bounded, integrity refusals stop immediately.
+def _export_live_drawing(run_dir, observer, before, document, expected_document):
+    from bench.run import save_json
+
+    output = run_dir / EXPORT_POLICY['output']
+    if output.exists():
+        raise FileExistsError(f'Maintainer output already exists; refusing overwrite: {output}')
+    attempts = []
+    for attempt in range(1, EXPORT_POLICY['attempts'] + 1):
+        raw = run_dir / f'grading/native-export-{uuid.uuid4().hex[:6]}.png'
+        encoded = run_dir / f'grading/encoded-export-{uuid.uuid4().hex[:6]}.png'
+        try:
+            exported = native_observer(run_dir, observer, 'export', before=before, document=document, render=str(raw))
+            if exported['document_before'] != expected_document or exported['document_after'] != expected_document:
+                raise ValueError('Drawing changed during maintainer export; refusing cleanup')
+            with Image.open(raw) as image:
+                image.load()
+                image.save(encoded, format='PNG', dpi=(72, 72))
+                with Image.open(encoded) as saved:
+                    if saved.convert('RGBA').tobytes() != image.convert('RGBA').tobytes():
+                        raise ValueError('Maintainer PNG encoding changed drawing pixels')
+            verification = verify_outputs(run_dir, output=encoded)
+            # Invalid dimensions/decoding omit appearance fields: reject format before indexing those fields.
+            format_properties = ('png', 'dimensions', 'opaque', 'non_interlaced', 'resolution_metadata')
+            export_checks = {key: verification['checks'].get(key) for key in format_properties}
+            if not all(passed is True for passed in export_checks.values()):
+                raise RuntimeError(f'Maintainer PNG properties failed: {verification["problems"]}')
+            appearance_checks = {key: verification['checks'][key] for key in ('blue_fill', 'white_background')}
+            encoded.rename(output)
+            verification.update(output=str(output), passed=True, problems=[], checks=export_checks,
+                                appearance_checks=appearance_checks)
+            attempts.append({'attempt': attempt, 'passed': True, 'native_output': str(raw)})
+            break
+        except (RuntimeError, OSError, ValueError) as error:
+            crash = run_dir / f'export-attempt-{attempt}-crash.txt'
+            crash.write_text(traceback.format_exc(), encoding='utf-8')
+            attempts.append({'attempt': attempt, 'passed': False, 'error': str(error), 'crash': str(crash),
+                             'native_output': str(raw), 'encoded_output': str(encoded),
+                             'retryable': not isinstance(error, ValueError)})
+            if isinstance(error, ValueError):
+                break  # Integrity/data refusals are terminal: never retry against changed or untrusted evidence.
+    if not attempts[-1]['passed']:
+        verification = {'passed': False, 'output': None, 'quality': None, 'checks': {}, 'attempts': attempts,
+                        'problems': [record['error'] for record in attempts]}
+        failure = {'kind': 'maintainer_export_failure', 'errors': verification['problems'], 'attempts': attempts}
+        save_json(run_dir / 'export.json', verification)
+        save_json(run_dir / 'infrastructure-failure.json', failure)
+        return {'export': verification, 'infrastructure_failure': failure}
+    verification['attempts'] = attempts
+    save_json(run_dir / 'export.json', verification)
+    return {'export': verification, 'infrastructure_failure': None}
+
+
+# Export only the live owned document, then encode the same pixels with the frozen PNG density/encoding policy.
+def collect_drawing(run_dir, observer, before, owned):
+    from bench.run import save_json
+
+    plan = json.loads((run_dir / 'plan.json').read_text(encoding='utf-8'))
+    if plan.get('export_policy') != EXPORT_POLICY:
+        raise ValueError('Maintainer export policy changed; refusing collection')
+    if not owned:
+        drawing = {'passed': False, 'problems': ['Owned drawing is not open; leave the finished drawing open'],
+                   'checks': {'open_drawing': False}, 'paths': [], 'curved_segments': 0, 'straight_segments': 0}
+        export = {'passed': False, 'output': None, 'quality': None, 'checks': {}, 'attempts': [],
+                  'problems': ['No drawing to export; task input is missing, not an exporter failure']}
+        save_json(run_dir / 'drawing-verification.json', drawing)
+        save_json(run_dir / 'export.json', export)
+        return {'drawing_verification': drawing, 'export': export, 'infrastructure_failure': None}
+    if len(owned) != 1:
+        raise RuntimeError('Drawing collection requires exactly one independently owned document')
+    drawing = native_observer(run_dir, observer, 'drawing', before=before, document=owned[0])
+    drawing['native_checks'] = dict(drawing['checks'])
+    drawing['rendered_checks'] = None
+    drawing['assessment_source'] = 'native-only'
+    drawing.update(segment_counts(drawing['paths']))
+    drawing['checks']['bezier_curves'] = drawing['curved_segments'] > 0
+    drawing['problems'] = [f'Drawing check failed: {key}' for key, passed in drawing['checks'].items() if passed is False]
+    if not drawing['checks']['bezier_curves']:
+        drawing['problems'].append('No genuine Bézier curves; straight-line approximation is not allowed')
+    drawing['passed'] = False if drawing['problems'] else (None if None in drawing['checks'].values() else True)
+    save_json(run_dir / 'drawing-verification.json', drawing)
+    rendering = _export_live_drawing(run_dir, observer, before, owned[0], drawing['document'])
+    if rendering['infrastructure_failure']:
+        return {'drawing_verification': drawing, **rendering}
+    verification = rendering['export']
+    appearance_checks = verification['appearance_checks']
+    drawing['rendered_checks'] = appearance_checks
+    drawing['assessment_source'] = 'native-and-rendered'
+    # Effective rendered color resolves non-RGB fill uncertainty; a proven wrong native RGB fill is not excused.
+    drawing['checks']['blue_fill'] = appearance_checks['blue_fill'] and drawing['native_checks']['blue_fill'] is not False
+    drawing['checks']['white_background'] = appearance_checks['white_background']
+    for key in appearance_checks:
+        problem = f'Drawing check failed: {key}'
+        if not drawing['checks'][key] and problem not in drawing['problems']:
+            drawing['problems'].append(problem)
+    drawing['passed'] = not drawing['problems']
+    save_json(run_dir / 'drawing-verification.json', drawing)
+    return {'drawing_verification': drawing, **rendering}
+
+
+# Collect optional drawing evidence before closing owned documents; never repair artwork or close protected resources.
+def cleanup_desktop(run_dir, observer, *, export_drawing=False):
     from bench.run import ROOT, save_json
 
     run_dir = Path(run_dir)
@@ -254,7 +349,21 @@ def cleanup_desktop(run_dir, observer):
     close = owned_documents(before, current, run_dir / 'workspace')
     preferences_path = run_dir / 'illustrator-preferences-before.json'
     preferences = json.loads(preferences_path.read_text(encoding='utf-8')) if baseline_path.is_file() else snapshot['png_preferences']
-    after = native_observer(run_dir, observer, 'cleanup', before=before, close=close, restore_preferences=preferences)['documents']
+    collection = collect_drawing(run_dir, observer, before, close) if export_drawing else {}
+    if collection.get('infrastructure_failure'):
+        failed_state = native_observer(run_dir, observer, 'snapshot')
+        owned_documents(before, failed_state['documents'], run_dir / 'workspace')
+        restored = native_observer(run_dir, observer, 'restore-preferences', restore_preferences=preferences)
+        if restored['documents'] != failed_state['documents'] or restored['png_preferences'] != preferences:
+            raise RuntimeError('Preferences restoration changed documents or did not restore PNG preferences')
+        result = {'passed': False, 'closed_documents': [], 'preserved_documents': restored['documents'],
+                  'application_closed': False, **collection}
+        save_json(run_dir / 'illustrator-cleanup.json', result)
+        return result  # Explicit failed cleanup: preserve the unexported drawing and stop subsequent trials.
+    cleaned = native_observer(run_dir, observer, 'cleanup', before=before, close=close, restore_preferences=preferences)
+    after = cleaned['documents']
+    if cleaned['png_preferences'] != preferences:
+        raise RuntimeError('PNG preferences were not restored during cleanup')
     if owned_documents(before, after, run_dir / 'workspace'):
         raise RuntimeError('Owned Illustrator documents remain after cleanup')
     if identity['started']:
@@ -262,6 +371,6 @@ def cleanup_desktop(run_dir, observer):
             raise RuntimeError('Task-started Illustrator still has documents; refusing application close')
         observer(run_dir, ROOT / 'bench/illustrator/close.ahk', identity['hwnd'], identity['pid'])
     result = {'passed': True, 'closed_documents': close, 'preserved_documents': after,
-              'application_closed': bool(identity['started'])}
+              'application_closed': bool(identity['started']), **collection}
     save_json(run_dir / 'illustrator-cleanup.json', result)
     return result

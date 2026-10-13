@@ -64,7 +64,7 @@ def test_cli_reads_three_attempts_per_arm_and_keeps_safeguard_failures_out(tmp_p
     from bench.run import ARMS, ROOT, PI_RECOVERY_POLICY
 
     entries = []
-    template = 'Workspace: <WORKSPACE>\nScratch folder: <WORKSPACE>/scratch\nFinal output: <WORKSPACE>/Cloud9-Recreated.png\n'
+    template = 'Workspace: <WORKSPACE>\nScratch folder: <WORKSPACE>/scratch\nLeave the drawing open.\n'
     for arm in ARMS:
         for index in range(3):
             folder = tmp_path / arm / str(index)
@@ -77,7 +77,11 @@ def test_cli_reads_three_attempts_per_arm_and_keeps_safeguard_failures_out(tmp_p
                     'workspace':str(workspace), 'prompt_sha256':hashlib.sha256(prompt.encode('utf-8')).hexdigest(),
                     'prompt_template_sha256':hashlib.sha256(template.encode('utf-8')).hexdigest(), 'skill_sha256':'skill-' + arm,
                     'assets':{'reference':'fixed'},'measurement_policy':'tokens-and-computer-use-v1',
-                    'scenario_version':'Adobe Illustrator Pen and Export v0.7',
+                    'scenario_version':'Adobe Illustrator Pen and Export v0.8',
+                    'actor_deliverables':[],
+                    'export_policy':{'owner':'maintainer-cleanup','attempts':2,'output':'grading/Cloud9-Recreated.png',
+                                     'dimensions':[800,800],'background':'opaque-white','dpi':72,'interlaced':False,
+                                     'failure_classification':'infrastructure'},
                     'recovery_policy':PI_RECOVERY_POLICY if arm.startswith('pi-') else
                                       {'retry':'harness-default','compaction':'harness-default'},
                     'skill_guidance_policy':'benchmark-neutral-v1',
@@ -86,10 +90,11 @@ def test_cli_reads_three_attempts_per_arm_and_keeps_safeguard_failures_out(tmp_p
             (folder/'run-attempt.json').write_text(json.dumps({'started_at':f'2026-10-12T10:00:0{index}+00:00'}),encoding='utf-8')
             (folder/'finished.json').write_text(json.dumps({'worker_finished':True,
                 'cleanup':{'passed':True,'cursor_scheme_restored':True}}),encoding='utf-8')
-            output = workspace / ('Cloud9-Recreated-Drawing.PNG' if arm == 'claude-cua' else 'Cloud9-Recreated.png')
+            (folder/'grading').mkdir()
+            output = folder/'grading/Cloud9-Recreated.png'
             recovered = arm=='pi-computer-use' and index==2
             (folder/'summary.json').write_text(json.dumps({'passed':True,'quality':{'foreground_iou':.9},
-                'output_image':str(output), 'safeguard_violations':[],
+                'output_image':str(output), 'drawing_passed':True, 'infrastructure_failure':None, 'safeguard_violations':[],
                 'recovered_provider_errors':['503 recovered'] if recovered else []}),encoding='utf-8')
             (folder/'metrics.json').write_text(json.dumps({'benchmark':{'token_counts_complete':not recovered,
                 'api_tokens':{'total':100 if arm=='claude-cua' else (index+1)*10,'output_including_reasoning':5},
@@ -107,6 +112,14 @@ def test_cli_reads_three_attempts_per_arm_and_keeps_safeguard_failures_out(tmp_p
     (interrupted/'metrics.json').unlink()
     (interrupted/'failure.json').write_text(json.dumps({'kind':'unexpected_provider_failure',
         'errors':['503 subscription_sharing_user_unavailable']}), encoding='utf-8')
+    export_failed = tmp_path/'claude-cua/0'
+    infrastructure = {'kind':'maintainer_export_failure','errors':['renderer failed twice']}
+    summary = json.loads((export_failed/'summary.json').read_text(encoding='utf-8'))
+    summary.update(passed=False, drawing_passed=True, output_image=None, infrastructure_failure=infrastructure)
+    (export_failed/'summary.json').write_text(json.dumps(summary),encoding='utf-8')
+    (export_failed/'infrastructure-failure.json').write_text(json.dumps(infrastructure),encoding='utf-8')
+    (export_failed/'finished.json').write_text(json.dumps({'worker_finished':True,
+        'cleanup':{'passed':False,'cursor_scheme_restored':True,'infrastructure_failure':infrastructure}}),encoding='utf-8')
     manifest = tmp_path/'round.json'
     manifest.write_text(json.dumps({'attempts':entries}),encoding='utf-8')
     result = subprocess.run([sys.executable,str(ROOT/'bench/aggregate.py'),str(manifest)],
@@ -127,14 +140,19 @@ def test_cli_reads_three_attempts_per_arm_and_keeps_safeguard_failures_out(tmp_p
     assert json.loads(result.stdout)['attempts'][8]['recovered_provider_errors']==['503 recovered']
     assert groups['claude-acu']['sample_size']==3
     assert groups['claude-acu']['averages']['total_api_tokens']==20
-    assert groups['claude-cua']['sample_size']==3, 'different rendered paths and a normal artboard suffix do not break matched aggregation'
-    assert next(row for row in json.loads(result.stdout)['attempts'] if row['arm']=='claude-cua')['output_image'].endswith('Cloud9-Recreated-Drawing.PNG')
+    assert groups['claude-cua']['sample_size']==2, 'an infrastructure failure does not enter drawing comparison averages'
+    assert groups['claude-cua']['infrastructure_failure_ids']==[str(export_failed)]
+    infra_row = next(row for row in json.loads(result.stdout)['attempts'] if row['run_dir']==str(export_failed))
+    assert infra_row['infrastructure_failure']==infrastructure and infra_row['safeguard_violations']==[]
+    from pathlib import Path
+    retained_image = next(row for row in json.loads(result.stdout)['attempts'] if row['arm']=='claude-cua' and row['passed'])['output_image']
+    assert Path(retained_image) == tmp_path/'claude-cua/1/grading/Cloud9-Recreated.png'
     manifest.write_text(json.dumps({'attempts':entries[::-1]}),encoding='utf-8')
     reordered=subprocess.run([sys.executable,str(ROOT/'bench/aggregate.py'),str(manifest)],
                              capture_output=True,text=True,encoding='utf-8',timeout=20)
     assert reordered.returncode==0,reordered.stderr
     assert json.loads(reordered.stdout)['configurations']['claude-cua']['retained_ids'] == groups['claude-cua']['retained_ids']
-    # A controller-recorded suffix does not authorize grading an output outside its own workspace.
+    # Only the canonical maintainer output inside this run is valid evidence.
     summary_path = tmp_path/'claude-cua/2/summary.json'
     summary = json.loads(summary_path.read_text(encoding='utf-8'))
     recorded_output = summary['output_image']
@@ -142,7 +160,7 @@ def test_cli_reads_three_attempts_per_arm_and_keeps_safeguard_failures_out(tmp_p
     summary_path.write_text(json.dumps(summary), encoding='utf-8')
     outside=subprocess.run([sys.executable,str(ROOT/'bench/aggregate.py'),str(manifest)],
                            capture_output=True,text=True,encoding='utf-8',timeout=20)
-    assert outside.returncode!=0 and 'inside this workspace' in outside.stderr
+    assert outside.returncode!=0 and 'maintainer output' in outside.stderr
     summary['output_image'] = recorded_output
     summary_path.write_text(json.dumps(summary), encoding='utf-8')
     # Mixing prompt/model/skill revisions cannot produce a supposedly matched aggregate.
