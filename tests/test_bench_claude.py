@@ -120,6 +120,22 @@ def test_claude_audit_requires_init_and_transcript_evidence_and_rejects_pollutio
     assert 'other skill read: C:/global/cua-driver/SKILL.md' in audit_claude_session(records, [*entries, other], 'C:/repo/acu')['problems']
 
 
+def test_claude_skill_audit_accepts_user_root_alias_without_allowing_another_skill(tmp_path, monkeypatch):
+    from pathlib import Path
+    monkeypatch.setattr(Path, 'home', classmethod(lambda cls: tmp_path))
+    selected = tmp_path / '.agents/skills/cua-driver'
+    records = [{'elapsed_s': 1, 'event': INIT}]
+    entries = [{'type': 'assistant', 'effort': 'low', 'requestedModel': 'claude-opus-5-5',
+                'message': {'model': 'claude-opus-5-5', 'content': [
+                    {'type': 'tool_use', 'name': 'Read', 'input': {'file_path': '~/.agents/skills/cua-driver/SKILL.md'}},
+                ]}}]
+    assert audit_claude_session(records, entries, selected)['passed']
+    entries[0]['message']['content'][0]['input']['file_path'] = '~/.agents/skills/other/SKILL.md'
+    assert not audit_claude_session(records, entries, selected)['passed']
+    entries[0]['message']['content'][0]['input']['file_path'] = '~/.agents/skills/cua-driver/../other/SKILL.md'
+    assert not audit_claude_session(records, entries, selected)['passed']
+
+
 def test_task_time_ends_at_the_last_computer_use_call_not_the_evidence_write(tmp_path):
     (tmp_path / 'helper.py').write_text("subprocess.run(['cua-driver', 'click'])", encoding='utf-8')
     tools = [

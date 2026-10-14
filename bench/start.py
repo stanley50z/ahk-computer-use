@@ -11,6 +11,7 @@ from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from bench.run import ARMS, SCENARIOS, ROOT, prepare, save_json
+from bench.runtime import ensure_project_runtime
 
 
 # Prepare a unique evidence directory, then launch an owned worker whose PID is recorded.
@@ -23,6 +24,7 @@ def main():
     args = parser.parse_args()
     if not args.desktop_approved:
         parser.error('approval for this specific desktop run is required')
+    ensure_project_runtime(Path(__file__).resolve())
     suffix = '-app-pipe' if args.native_transport == 'app-pipe' else ''
     run_dir = ROOT / '.pi/bench' / f'{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{args.scenario}-{args.arm}{suffix}-{uuid4().hex[:6]}'
     prepare(args.arm, run_dir, scenario=args.scenario, native_transport=args.native_transport)

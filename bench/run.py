@@ -24,6 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from bench.intervals import busy_seconds
+from bench.runtime import ensure_project_runtime
 
 MODEL = 'gpt-6-astra'
 REASONING = 'low'
@@ -41,6 +42,7 @@ ARMS = ('pi-acu', 'pi-cua', 'pi-computer-use', 'claude-acu', 'claude-cua')
 NATIVE_TOOLS = ['mcp__node_repl__js', 'mcp__node_repl__js_reset',
                 'mcp__node_repl__js_add_node_module_dir', 'mcp__node_repl__turn_ended']
 SCENARIOS = ('calculator', 'illustrator-pen-export')
+WINDOW_AUDIT_POLICY = 'diagnostic-only-v1'
 # Claude Code runs Opus; Pi comparisons hold GPT-6 Astra and low reasoning fixed.
 ARM_MODELS = {arm: ('claude-opus-5-5', 'low') for arm in ('claude-acu', 'claude-cua')}
 EXPRESSION = '98765 * 432 / 1234 * 56 / 789 + 6543 - 4321'
@@ -72,6 +74,24 @@ def arm_model(arm):
     return ARM_MODELS.get(arm, (MODEL, REASONING))
 
 
+# Resolve the home alias consistently in prompts and audits, using the current user's root.
+def expand_user_root(path):
+    path = Path(path)
+    return Path.home().joinpath(*path.parts[1:]) if path.parts and path.parts[0] == '~' else path
+
+
+# Bench-authored prompt references use the current user's home alias; internal paths stay resolved.
+def actor_path(path):
+    path = expand_user_root(path).absolute()
+    home = Path.home().absolute()
+    if not path.is_relative_to(home):
+        path, home = path.resolve(), home.resolve()
+    if path.is_relative_to(home):
+        relative = path.relative_to(home)
+        return '~' if not relative.parts else '~/' + relative.as_posix()
+    return path.as_posix()  # A path outside the user root has no home-relative equivalent.
+
+
 # The CLI is a public seam: only one explicitly selected skill and the four ordinary file/shell tools.
 def pi_command(run_dir, skill, prompt, *, native=False):
     runtime = ['-e', 'builtin:mcp'] if native else ['--no-mcp']
@@ -88,7 +108,7 @@ def pi_command(run_dir, skill, prompt, *, native=False):
 def claude_command(skill, prompt, session_id, *, arm='claude-acu'):
     model, effort = ARM_MODELS[arm]
     skill_name = 'cua-driver' if uses_cua_daemon(arm) else 'acu'
-    declaration = (f'The only enabled skill is {skill_name}. Read {Path(skill) / "SKILL.md"} before desktop interaction. '
+    declaration = (f'The only enabled skill is {skill_name}. Read {actor_path(Path(skill) / "SKILL.md")} before desktop interaction. '
                    'No other skill or desktop automation route is enabled.')
     return ['claude', '-p', '--safe-mode', '--disable-slash-commands', '--strict-mcp-config',
             '--setting-sources', 'user', '--tools', ','.join(CLAUDE_TOOLS),
@@ -104,11 +124,12 @@ def argument_text(arguments):
     return '' if arguments is None else str(arguments)
 
 
-# Analyse final message usage once; streaming usage and turn_end repeat the same counts.
-def analyse_pi(records, wall_s, reference_tps=None, *, cancelled=False):
+# Analyse final usage once; optional offline exclusion keeps interrupted responses as separate evidence.
+def analyse_pi(records, wall_s, reference_tps=None, *, cancelled=False, exclude_interrupted_turns=False):
     tokens = dict(input_uncached=0, cache_read=0, cache_write=0,
                   output_including_reasoning=0, reasoning_subset=None, total=0)
     turns, tools, intervals, errors = [], [], [], []
+    excluded_turns = []
     pending_provider_errors, recovered_provider_errors, pending_recovery_errors, recovery_events = [], [], [], []
     current = None
     starts = {}
@@ -168,23 +189,31 @@ def analyse_pi(records, wall_s, reference_tps=None, *, cancelled=False):
             if current is None:
                 raise ValueError('assistant ended without a matching message_start')
             usage = message['usage']
-            add_usage(usage)
+            interrupted = message['stopReason'] in ('error', 'aborted')
+            if not (exclude_interrupted_turns and interrupted):
+                add_usage(usage)
             last_stop_reason = message['stopReason']
             stream_duration = elapsed - current['start_s']
             duration = message['durationMs'] / 1000 if 'durationMs' in message else None
             first_delta = current['first_visible_delta_s']
             if first_delta is not None and duration is not None:
                 first_delta += duration - stream_duration
-            turns.append({**current, 'first_visible_delta_s': first_delta, 'duration_s': duration,
-                          'stream_observed_s': stream_duration, 'output_tokens': usage['output'],
-                          'effective_output_tps': usage['output'] / duration if duration is not None and duration > 0 else None,
-                          'usage': usage, 'model': message.get('model'),
-                          'response_model': message.get('responseModel'),
-                          'thinking': message.get('thinkingLevel'), 'stop_reason': message['stopReason']})
-            if message['stopReason'] in ('error', 'aborted'):
+            turn = {**current, 'first_visible_delta_s': first_delta, 'duration_s': duration,
+                    'stream_observed_s': stream_duration, 'output_tokens': usage['output'],
+                    'effective_output_tps': usage['output'] / duration if duration is not None and duration > 0 else None,
+                    'usage': usage, 'model': message.get('model'),
+                    'response_model': message.get('responseModel'),
+                    'thinking': message.get('thinkingLevel'), 'stop_reason': message['stopReason']}
+            if exclude_interrupted_turns and interrupted:
+                excluded_turns.append({**turn, 'error': message.get('errorMessage', message['stopReason']),
+                                       'response_index': len(turns) + len(excluded_turns)})
+            else:
+                turns.append(turn)
+            if interrupted:
                 error = message.get('errorMessage', message['stopReason'])
                 errors.append(error)
-                usage_unknown = True
+                if not exclude_interrupted_turns:
+                    usage_unknown = True
                 if message['stopReason'] == 'error':
                     pending_provider_errors.append(error)  # Provider-response failure, not a desktop tool result.
             else:
@@ -216,6 +245,9 @@ def analyse_pi(records, wall_s, reference_tps=None, *, cancelled=False):
               'recovery_errors': pending_recovery_errors, 'compactions': compactions,
               'unexpected_failure': {'kind': 'unexpected_provider_failure', 'errors': pending_provider_errors}
                                     if pending_provider_errors and not retry_cancelled and not cancelled else None}
+    if exclude_interrupted_turns:
+        result.update(token_usage_scope='excluding-interrupted-turns', excluded_model_turns=excluded_turns,
+                      full_request_consumption_complete=completed and not usage_unknown and not excluded_turns)
     if compactions:
         result['timing_limitation'] = 'Compaction usage is included, but its provider-response duration is not exposed; model-rate diagnostics are unknown.'
     if reference_tps is not None:
@@ -445,7 +477,7 @@ def audit_claude_session(records, entries, expected_skill_dir):
     assistants = [entry for entry in entries if entry.get('type') == 'assistant']
     if not assistants:
         problems.append('no persisted assistant evidence')
-    expected = str(expected_skill_dir).replace('\\', '/').casefold().rstrip('/') + '/'
+    expected = Path(expected_skill_dir).resolve().as_posix().casefold().rstrip('/') + '/'
     for entry in assistants:
         if entry.get('effort') != effort:
             problems.append(f'effort is not {effort}')
@@ -454,8 +486,10 @@ def audit_claude_session(records, entries, expected_skill_dir):
         for block in entry.get('message', {}).get('content', []):
             if isinstance(block, dict) and block.get('type') == 'tool_use' and block.get('name') == 'Read':
                 path = str(block.get('input', {}).get('file_path', '')).replace('\\', '/')
-                if path.endswith('/SKILL.md') and not path.casefold().startswith(expected):
-                    problems.append(f'other skill read: {path}')
+                if path.endswith('/SKILL.md'):
+                    resolved = expand_user_root(path).resolve().as_posix().casefold()
+                    if not resolved.startswith(expected):
+                        problems.append(f'other skill read: {path}')
     return {'passed': not problems, 'skills': [Path(expected_skill_dir).name], 'problems': sorted(set(problems)),
             'evidence_kind': 'stream init event (model, tools, MCP, skills) and persisted transcript (effort, model, reads)',
             'limitation': 'Safe mode disables CLAUDE.md, hooks and plugins by flag; the stream lists no memory files, so that part is not independently evidenced.'}
@@ -585,7 +619,7 @@ def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=No
     # The first line is the file's own title and version, for people. The actor receives only the body.
     heading, _, prompt = scenario.partition('\n')
     template = prompt.strip() + '\n'
-    prompt = template.replace('<WORKSPACE>', workspace.as_posix())
+    prompt = template.replace('<WORKSPACE>', actor_path(workspace))
     (run_dir / 'prompt-template.txt').write_text(template, encoding='utf-8')
     (run_dir / 'prompt.txt').write_text(prompt, encoding='utf-8')
     if scenario_name == 'illustrator-pen-export':
@@ -634,7 +668,7 @@ def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=No
             'scenario_version': heading.lstrip('# ').strip(), 'prompt_sha256': hashlib.sha256(prompt.encode('utf-8')).hexdigest(),
             'prompt_template_sha256': hashlib.sha256(template.encode('utf-8')).hexdigest(),
             'scenario_sha256': hashlib.sha256(scenario.encode('utf-8')).hexdigest(),
-            'measurement_policy': 'tokens-and-computer-use-v1',
+            'measurement_policy': 'tokens-and-computer-use-v1', 'window_audit_policy': WINDOW_AUDIT_POLICY,
             'recovery_policy': deepcopy(PI_RECOVERY_POLICY if harness(arm) == 'pi' else CLAUDE_RECOVERY_POLICY),
             'workspace': str(workspace), 'run_dir': str(run_dir), 'command': command,
             'environment_overrides': environment, 'isolation': 'configuration/prompt, not OS sandbox',
@@ -864,7 +898,8 @@ def inside_workspace(path, workspace):
     if re.match(r'^/[a-z]/', text):  # Git Bash form
         text = f'{text[1]}:{text[2:]}'
     try:
-        resolved = (Path(workspace) / text).resolve() if not Path(text).is_absolute() else Path(text).resolve()
+        target = expand_user_root(text)
+        resolved = (Path(workspace) / target).resolve() if not target.is_absolute() else target.resolve()
         resolved.relative_to(Path(workspace).resolve())
         return True
     except (ValueError, OSError):
@@ -924,14 +959,11 @@ def conduct_audit(plan, before_probe, after_probe, before_files, after_files, to
         problems.append('guarded files changed')
     if outside and application == 'calculator':
         problems.append('write tool used outside the workspace')
-    if windows['closed_preexisting']:
-        problems.append('pre-existing windows closed')
-    if windows['new_non_calculator']:
-        problems.append(f'new non-{application.capitalize()} windows left open')
     return {'passed': not problems, 'problems': problems, 'guarded_files': files, 'guarded_roots': [str(r) for r in guarded_roots(plan)],
             'writes_outside_workspace': outside, 'suspicious_commands': suspicious, 'windows': windows,
-            'note': ('Detection after the fact, not prevention. suspicious_commands is a heuristic and does not fail the trial by itself; '
-                     'Illustrator scratch locations are observations, not disqualifiers. guarded_files is authoritative.')}
+            'window_audit_policy': WINDOW_AUDIT_POLICY,
+            'note': ('Detection after the fact, not prevention. Window-handle changes and suspicious_commands are diagnostic only; '
+                     'Illustrator scratch locations are observations, not disqualifiers. Guarded-file and protected-document checks remain authoritative.')}
 
 
 # A finished worker does not imply successful cleanup.
@@ -1260,19 +1292,26 @@ def main():
     parser.add_argument('--desktop-approved', action='store_true')
     parser.add_argument('--native-transport', choices=('sdk-helper', 'app-pipe'), default='sdk-helper',
                         help="pi-computer-use only: the shipped SDK helper (default) or the running Codex Desktop app's pipe")
+    parser.add_argument('--exclude-interrupted-turns', action='store_true',
+                        help='Pi offline analysis only: exclude interrupted assistant responses from the counted cohort')
     args = parser.parse_args()
+    if args.exclude_interrupted_turns and args.action != 'analyse':
+        parser.error('--exclude-interrupted-turns is only available for offline analyse')
     if args.action == 'run' and not args.desktop_approved:
         parser.error('run requires approval for this specific desktop trial (--desktop-approved)')
+    if args.action == 'analyse' and not args.run_dir:
+        parser.error('analyse requires --run-dir')
+    ensure_project_runtime(Path(__file__).resolve())
     if args.action == 'analyse':
         from bench.efficiency import measure_efficiency
-
-        if not args.run_dir:
-            parser.error('analyse requires --run-dir')
         prior = json.loads((args.run_dir / 'metrics.json').read_text(encoding='utf-8'))
         plan = json.loads((args.run_dir / 'plan.json').read_text(encoding='utf-8'))
         records = read_jsonl(args.run_dir / 'events.jsonl')
+        if args.exclude_interrupted_turns and harness(plan['arm']) != 'pi':
+            parser.error('--exclude-interrupted-turns requires per-response Pi usage; other harnesses are unsupported')
         if harness(plan['arm']) == 'pi':
-            value = analyse_pi(records, prior['wall_s'], cancelled=(prior.get('capture') or {}).get('cancelled') is True)
+            value = analyse_pi(records, prior['wall_s'], cancelled=(prior.get('capture') or {}).get('cancelled') is True,
+                               exclude_interrupted_turns=args.exclude_interrupted_turns)
         elif harness(plan['arm']) == 'claude':
             value = analyse_claude(records, prior['wall_s'], cancelled=(prior.get('capture') or {}).get('cancelled') is True)
         else:

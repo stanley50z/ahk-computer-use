@@ -56,7 +56,7 @@ def test_illustrator_pen_export_prepare_freezes_png_and_resolves_task_paths(tmp_
     reference = directory / 'grading/reference.png'
     assert reference.read_bytes() == (directory / 'workspace/Cloud9-Reference.png').read_bytes()
     prompt = (directory / 'prompt.txt').read_text(encoding='utf-8')
-    assert '#00AEEF' in prompt
+    assert 'Set the fill color to #00AEEF. Set the stroke to None (no stroke).' in prompt
     assert 'genuine Bézier curves' in prompt and "Pen tool's direction handles" in prompt
     assert 'Do not approximate curves with many short straight-line segments.' in prompt
     assert '72 ppi' not in prompt and '800 × 800' not in prompt and 'Final output:' not in prompt
@@ -64,9 +64,11 @@ def test_illustrator_pen_export_prepare_freezes_png_and_resolves_task_paths(tmp_
     assert 'Use the supplied computer-use tool for every interaction with Adobe Illustrator.' in prompt
     assert 'c9.gg' not in prompt and 'guidelines' not in prompt.lower()
     for removed in ('visually', 'by eye', 'parametric', 'literal positions', 'Image Trace',
-                    'no stroke', 'opacity', 'rename', 'Keep all task-created', '800 × 800-point'):
+                    'opacity', 'rename', 'Keep all task-created', '800 × 800-point'):
         assert removed not in prompt
-    workspace = (directory / 'workspace').as_posix()
+    from pathlib import Path
+    workspace = prompt.split('Workspace: ', 1)[1].split('\n', 1)[0]
+    assert Path(workspace).expanduser().resolve() == (directory / 'workspace').resolve()
     assert f'Workspace: {workspace}\nScratch folder: {workspace}/scratch' in prompt
     assert prompt.endswith('Stop when the drawing is finished, leaving it open.\n')
     assert '<WORKSPACE>' not in prompt
@@ -91,7 +93,7 @@ def test_cli_prepares_illustrator_pen_export_without_desktop_approval(tmp_path):
     assert completed.returncode == 0, completed.stderr
     plan = json.loads(completed.stdout)
     assert plan['scenario'] == 'illustrator-pen-export'
-    assert plan['scenario_version'] == 'Adobe Illustrator Pen and Export v0.8'
+    assert plan['scenario_version'] == 'Adobe Illustrator Pen and Export v0.11'
     # The blank starter is unchanged; the new reference is derived from the official lossless PNG.
     assert plan['prompt_sha256'] != 'b6b38f65c7675f11b27fd94fa0fcbef75d38208c441a6914727ef97a6f3c254b'
     assert plan['assets'] == {
@@ -215,7 +217,7 @@ def test_illustrator_pen_export_cleanup_protects_existing_documents_and_refuses_
 
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
-    existing = {'path': 'C:/Users/13982/Downloads/Cloud9 Icon.ai', 'name': 'Cloud9 Icon.ai', 'saved': False}
+    existing = {'path': str(tmp_path / 'user-root/Downloads/Cloud9 Icon.ai'), 'name': 'Cloud9 Icon.ai', 'saved': False}
     owned = {'path': str(workspace / 'Cloud9-Recreated.ai'), 'name': 'Cloud9-Recreated.ai', 'saved': True}
     assert owned_documents([existing], [existing, owned], workspace) == [owned['path']]
     assert owned_documents([owned], [owned], workspace) == [], 'even a workspace path is protected when pre-existing'
@@ -422,7 +424,7 @@ def test_cleanup_retries_only_export_and_classifies_exhaustion_as_infrastructure
         assert result['infrastructure_failure'] is None
         assert len(state['documents']) == 1
 
-def test_illustrator_pen_export_conduct_accepts_illustrator_not_a_new_calculator(tmp_path):
+def test_illustrator_conduct_keeps_resource_tampering_gated_and_window_changes_diagnostic(tmp_path):
     from bench.run import conduct_audit
 
     plan = {'scenario': 'illustrator-pen-export', 'run_dir': str(tmp_path), 'workspace': str(tmp_path), 'skill_path': str(ROOT / 'acu/SKILL.md')}
@@ -436,11 +438,12 @@ def test_illustrator_pen_export_conduct_accepts_illustrator_not_a_new_calculator
     guarded = conduct_audit(plan, before, before, {'protected': 'original'}, {'protected': 'changed'}, outside)
     assert not guarded['passed'] and guarded['problems'] == ['guarded files changed']
     stray = conduct_audit(plan, before, 'window=1 pid=5\nwindow=9 pid=8\ncalculator=9\npid=8\n', {}, {}, [])
-    assert not stray['passed']
+    assert stray['passed'] and stray['windows']['new_non_calculator'] == ['9']
     shadow_before = 'window=1 pid=5\nwindow=2 pid=8\nwindow=3 pid=8\nclass=2 SysShadow\nclass=3 illustrator\nillustrator=3\npid=8\n'
     shadow_after = 'window=1 pid=5\nwindow=3 pid=8\nillustrator=3\npid=8\n'
     assert conduct_audit(plan, shadow_before, shadow_after, {}, {}, [])['passed'], 'Illustrator menu/tooltip shadows are not user windows'
-    assert not conduct_audit(plan, shadow_before, 'window=1 pid=5\n', {}, {}, [])['passed'], 'the actual main frame stays protected'
+    disappeared = conduct_audit(plan, shadow_before, 'window=1 pid=5\n', {}, {}, [])
+    assert disappeared['passed'] and '3' in disappeared['windows']['closed_preexisting'], 'window disappearance is diagnostic; document identity/cleanup checks remain separate'
 
 
 @pytest.mark.desktop

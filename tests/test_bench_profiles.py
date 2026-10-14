@@ -6,12 +6,68 @@ import pytest
 from bench.run import ARMS, prepare
 
 
+def test_interrupted_turn_exclusion_is_offline_only_and_does_not_prepare_a_trial(tmp_path):
+    import subprocess
+    import sys
+    from bench.run import ROOT
+    target = tmp_path / 'not-a-trial'
+    result = subprocess.run([sys.executable, str(ROOT / 'bench/run.py'), 'prepare', '--run-dir', str(target),
+                             '--exclude-interrupted-turns'], capture_output=True, text=True, encoding='utf-8', timeout=15)
+    assert result.returncode != 0 and 'only available for offline analyse' in result.stderr
+    assert not target.exists()
+
+
 # Supply filesystem/config boundary fixtures so ordinary checks need no installed CUA or Codex.
 def skill_fixture(root, name):
     path = root / name
     path.mkdir()
     (path / 'SKILL.md').write_text(f'---\nname: {name}\ndescription: test fixture\n---\n', encoding='utf-8')
     return path
+
+
+def test_all_illustrator_configurations_receive_the_same_simple_drawing_and_appearance_task(tmp_path):
+    templates = []
+    for arm in ARMS:
+        folder = tmp_path / arm
+        folder.mkdir()
+        name = 'computer-use' if arm == 'pi-computer-use' else ('cua-driver' if arm.endswith('cua') else 'acu')
+        native = {'mcp_servers': {'node_repl': {'command': 'native-fixture', 'args': []}}}
+        plan = prepare(arm, folder / 'trial', scenario='illustrator-pen-export',
+                       skill=skill_fixture(folder, name), native_config=native)
+        template = (folder / 'trial/prompt-template.txt').read_text(encoding='utf-8')
+        assert 'using the Pen tool' in template and 'genuine Bézier curves' in template
+        assert 'Set the fill color to #00AEEF. Set the stroke to None (no stroke).' in template
+        for removed in ('Use only the Pen tool', 'Do not use other Illustrator tools', 'initial zoom', 'fit-to-window'):
+            assert removed not in template
+        assert plan['scenario_version'] == 'Adobe Illustrator Pen and Export v0.11'
+        assert plan['window_audit_policy'] == 'diagnostic-only-v1'
+        assert not (folder / 'trial/state.json').exists()
+        templates.append(template)
+    assert len(set(templates)) == 1
+
+
+def test_actor_prompt_paths_use_the_current_user_root_without_exposing_the_account(tmp_path, monkeypatch):
+    import shutil
+    from pathlib import Path
+    import bench.run as bench
+    home = tmp_path / 'different-account'
+    checkout = home / 'portable-checkout'
+    shutil.copytree(bench.ROOT / 'bench/assets/illustrator-pen-export', checkout / 'bench/assets/illustrator-pen-export')
+    shutil.copytree(bench.ROOT / 'bench/scenarios', checkout / 'bench/scenarios')
+    monkeypatch.setattr(Path, 'home', classmethod(lambda cls: home))
+    monkeypatch.setattr(bench, 'ROOT', checkout)
+    (home / '.agents').mkdir()
+    skill = skill_fixture(home / '.agents', 'cua-driver')
+    directory = checkout / '.pi/bench/trial'
+    plan = prepare('claude-cua', directory, scenario='illustrator-pen-export', skill=skill)
+    prompt = (directory / 'prompt.txt').read_text(encoding='utf-8')
+    declaration = plan['command'][plan['command'].index('--append-system-prompt') + 1]
+    assert 'Workspace: ~/portable-checkout/.pi/bench/trial/workspace' in prompt
+    assert 'Scratch folder: ~/portable-checkout/.pi/bench/trial/workspace/scratch' in prompt
+    assert 'Read ~/.agents/cua-driver/SKILL.md before desktop interaction.' in declaration
+    assert 'different-account' not in prompt + declaration
+    assert plan['workspace'] == str(directory / 'workspace')
+    assert plan['skill_path'] == str(skill / 'SKILL.md')
 
 
 @pytest.mark.parametrize('scenario', ['calculator', 'illustrator-pen-export'])
@@ -53,7 +109,10 @@ def test_prepare_claude_arm_runs_opus_low_in_safe_mode_with_only_four_tools(tmp_
     assert command[command.index('--setting-sources') + 1] == 'user'
     assert command[command.index('--output-format') + 1] == 'stream-json'
     assert command[command.index('--session-id') + 1] == plan['session_id']
-    assert str(tmp_path / skill_name / 'SKILL.md') in command[command.index('--append-system-prompt') + 1]
+    from pathlib import Path
+    declaration = command[command.index('--append-system-prompt') + 1]
+    reference = declaration.split(' Read ', 1)[1].split(' before desktop interaction.', 1)[0]
+    assert Path(reference).expanduser().resolve() == (tmp_path / skill_name / 'SKILL.md').resolve()
     assert f'The only enabled skill is {skill_name}.' in command[command.index('--append-system-prompt') + 1]
     assert '--continue' not in command and '--resume' not in command
     assert plan['environment_overrides']['CLAUDE_CONFIG_DIR'] == str(tmp_path / 'claude-run/agent-home')

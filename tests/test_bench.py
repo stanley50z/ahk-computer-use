@@ -74,7 +74,39 @@ def test_pi_recovery_can_complete_without_erasing_interruption_or_unknown_usage(
     assert [tool['id'] for tool in result['tools']] == ['once'], 'recovery does not replay completed UI calls'
 
 
-def test_pi_compaction_usage_is_counted_once_and_missing_usage_stays_unknown():
+def test_pi_interrupted_turn_can_be_excluded_without_claiming_full_request_consumption():
+    failed = {'role': 'assistant', 'content': [], 'stopReason': 'error', 'errorMessage': 'interrupted',
+              'usage': {'input': 7, 'output': 3, 'cacheRead': 2, 'totalTokens': 12}}
+    success = {'role': 'assistant', 'content': [], 'stopReason': 'stop',
+               'usage': {'input': 100, 'output': 20, 'totalTokens': 120}}
+    records = [
+        {'elapsed_s': 0, 'event': {'type': 'agent_start'}},
+        {'elapsed_s': 1, 'event': {'type': 'message_start', 'message': {'role': 'assistant'}}},
+        {'elapsed_s': 2, 'event': {'type': 'message_end', 'message': failed}},
+        {'elapsed_s': 3, 'event': {'type': 'message_start', 'message': {'role': 'assistant'}}},
+        {'elapsed_s': 4, 'event': {'type': 'message_end', 'message': success}},
+        {'elapsed_s': 5, 'event': {'type': 'agent_settled', 'aborted': False}},
+    ]
+    original = analyse_pi(records, wall_s=5)
+    counted = analyse_pi(records, wall_s=5, exclude_interrupted_turns=True)
+    assert original['tokens']['total'] == 132 and not original['token_counts_complete']
+    assert counted['tokens']['total'] == 120 and counted['token_counts_complete']
+    assert counted['agent_completed'] and counted['model_errors'] == ['interrupted']
+    assert counted['recovered_provider_errors'] == ['interrupted']
+    assert len(counted['model_turns']) == 1
+    assert len(counted['excluded_model_turns']) == 1
+    assert counted['excluded_model_turns'][0]['usage']['totalTokens'] == 12
+    assert counted['token_usage_scope'] == 'excluding-interrupted-turns'
+    assert counted['full_request_consumption_complete'] is False
+    from bench.efficiency import measure_efficiency
+    benchmark = measure_efficiency(counted, 'pi-cua')
+    assert benchmark['policy'] == 'tokens-and-computer-use-excluding-interrupted-turns-v1'
+    assert benchmark['token_usage_scope'] == 'excluding-interrupted-turns'
+    assert benchmark['excluded_model_turn_count'] == 1
+
+
+@pytest.mark.parametrize('exclude_interrupted_turns', [False, True])
+def test_pi_compaction_usage_is_counted_once_and_missing_usage_stays_unknown(exclude_interrupted_turns):
     usage = {'input': 7, 'cacheRead': 3, 'output': 5, 'reasoning': 2, 'totalTokens': 15}
     records = [{'elapsed_s': 0, 'event': {'type': 'agent_start'}},
                {'elapsed_s': 1, 'event': {'type': 'compaction_start', 'reason': 'threshold'}},
@@ -85,7 +117,7 @@ def test_pi_compaction_usage_is_counted_once_and_missing_usage_stays_unknown():
                 'stopReason': 'stop', 'durationMs': 1000,
                 'usage': {'input': 10, 'output': 2, 'reasoning': 1, 'totalTokens': 12}}}},
                {'elapsed_s': 5, 'event': {'type': 'agent_settled', 'aborted': False}}]
-    result = analyse_pi(records, wall_s=5, reference_tps=10)
+    result = analyse_pi(records, wall_s=5, reference_tps=10, exclude_interrupted_turns=exclude_interrupted_turns)
     assert result['agent_completed'] and result['token_counts_complete']
     assert result['tokens'] == {'input_uncached': 17, 'cache_read': 3, 'cache_write': 0,
                                'output_including_reasoning': 7, 'reasoning_subset': 3, 'total': 27}
@@ -93,16 +125,17 @@ def test_pi_compaction_usage_is_counted_once_and_missing_usage_stays_unknown():
     assert result['model_response_s'] is None, 'unexposed summarization timing must not produce a misleading model rate'
     assert result['estimated_wall_at_reference_tps_s'] is None
     summary_retry = [{'elapsed_s': .5, 'event': {'type': 'summarization_retry_scheduled', 'attempt': 1, 'errorMessage': '503'}}]
-    retried = analyse_pi(records[:1] + summary_retry + records[1:], wall_s=5)
+    retried = analyse_pi(records[:1] + summary_retry + records[1:], wall_s=5, exclude_interrupted_turns=exclude_interrupted_turns)
     assert retried['agent_completed'] and not retried['token_counts_complete']
     assert retried['tokens']['total'] == 27, 'failed summary consumption remains unknown despite reported successful summary usage'
     records[2]['event']['result'].pop('usage')
-    missing = analyse_pi(records, wall_s=5)
+    missing = analyse_pi(records, wall_s=5, exclude_interrupted_turns=exclude_interrupted_turns)
     assert missing['agent_completed'] and not missing['token_counts_complete']
     assert missing['tokens']['total'] == 12, 'retain recorded consumption only, not fabricated summary usage'
 
 
-def test_pi_recovered_error_does_not_hide_a_later_terminal_failure_or_user_abort():
+@pytest.mark.parametrize('exclude_interrupted_turns', [False, True])
+def test_pi_recovered_error_does_not_hide_a_later_terminal_failure_or_user_abort(exclude_interrupted_turns):
     records = []
     for index, (reason, error) in enumerate([('error', 'first 503'), ('toolUse', None), ('error', 'last 503')]):
         message = {'role': 'assistant', 'content': [], 'stopReason': reason,
@@ -113,18 +146,18 @@ def test_pi_recovered_error_does_not_hide_a_later_terminal_failure_or_user_abort
                     {'elapsed_s': index*2+1, 'event': {'type': 'message_end', 'message': message}}]
     records += [{'elapsed_s': 6, 'event': {'type': 'auto_retry_end', 'success': False, 'attempt': 3, 'finalError': 'last 503'}},
                 {'elapsed_s': 7, 'event': {'type': 'agent_settled', 'aborted': False}}]
-    result = analyse_pi(records, wall_s=7)
+    result = analyse_pi(records, wall_s=7, exclude_interrupted_turns=exclude_interrupted_turns)
     assert not result['agent_completed'] and not result['token_counts_complete']
     assert result['recovered_provider_errors'] == ['first 503']
     assert result['unexpected_failure'] == {'kind': 'unexpected_provider_failure', 'errors': ['last 503']}
     records[-2]['event']['finalError'] = 'Retry cancelled'
     records[-1]['event']['aborted'] = True
-    cancelled = analyse_pi(records, wall_s=7)
+    cancelled = analyse_pi(records, wall_s=7, exclude_interrupted_turns=exclude_interrupted_turns)
     assert not cancelled['agent_completed'] and cancelled['unexpected_failure'] is None
     assert cancelled['model_errors'] == ['first 503', 'last 503'], 'raw provider errors survive cancellation'
     records.pop()  # A host cancellation can kill the CLI during backoff before it emits settled/cancelled events.
     records.pop()
-    host_cancelled = analyse_pi(records, wall_s=7, cancelled=True)
+    host_cancelled = analyse_pi(records, wall_s=7, cancelled=True, exclude_interrupted_turns=exclude_interrupted_turns)
     assert not host_cancelled['agent_completed'] and host_cancelled['unexpected_failure'] is None
     assert host_cancelled['model_errors'] == ['first 503', 'last 503']
 

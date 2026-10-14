@@ -61,7 +61,7 @@ def test_cli_reads_three_attempts_per_arm_and_keeps_safeguard_failures_out(tmp_p
     import json
     import subprocess
     import sys
-    from bench.run import ARMS, ROOT, PI_RECOVERY_POLICY
+    from bench.run import ARMS, ROOT, PI_RECOVERY_POLICY, actor_path
 
     entries = []
     template = 'Workspace: <WORKSPACE>\nScratch folder: <WORKSPACE>/scratch\nLeave the drawing open.\n'
@@ -70,14 +70,14 @@ def test_cli_reads_three_attempts_per_arm_and_keeps_safeguard_failures_out(tmp_p
             folder = tmp_path / arm / str(index)
             folder.mkdir(parents=True)
             workspace = folder / 'workspace'
-            prompt = template.replace('<WORKSPACE>', workspace.as_posix())
+            prompt = template.replace('<WORKSPACE>', actor_path(workspace))
             (folder/'prompt-template.txt').write_text(template, encoding='utf-8')
             (folder/'prompt.txt').write_text(prompt, encoding='utf-8')
             plan = {'arm':arm,'model':'gpt-6-astra' if arm.startswith('pi-') else 'claude-opus-5-5','reasoning':'low','scenario':'illustrator-pen-export',
                     'workspace':str(workspace), 'prompt_sha256':hashlib.sha256(prompt.encode('utf-8')).hexdigest(),
                     'prompt_template_sha256':hashlib.sha256(template.encode('utf-8')).hexdigest(), 'skill_sha256':'skill-' + arm,
                     'assets':{'reference':'fixed'},'measurement_policy':'tokens-and-computer-use-v1',
-                    'scenario_version':'Adobe Illustrator Pen and Export v0.8',
+                    'scenario_version':'Adobe Illustrator Pen and Export v0.11', 'window_audit_policy':'diagnostic-only-v1',
                     'actor_deliverables':[],
                     'export_policy':{'owner':'maintainer-cleanup','attempts':2,'output':'grading/Cloud9-Recreated.png',
                                      'dimensions':[800,800],'background':'opaque-white','dpi':72,'interlaced':False,
@@ -172,6 +172,12 @@ def test_cli_reads_three_attempts_per_arm_and_keeps_safeguard_failures_out(tmp_p
                          capture_output=True,text=True,encoding='utf-8',timeout=20)
     assert stale.returncode!=0 and 'three-attempt' in stale.stderr
     plan['trial_policy']['attempts_per_configuration']=3
+    plan['window_audit_policy']='strict-window-gating'
+    plan_path.write_text(json.dumps(plan),encoding='utf-8')
+    strict_windows=subprocess.run([sys.executable,str(ROOT/'bench/aggregate.py'),str(manifest)],
+                                  capture_output=True,text=True,encoding='utf-8',timeout=20)
+    assert strict_windows.returncode!=0 and 'diagnostic-only window audit' in strict_windows.stderr
+    plan['window_audit_policy']='diagnostic-only-v1'
     original_recovery=plan['recovery_policy']
     plan['recovery_policy']={'retry':{'enabled':False},'compaction':{'enabled':False}}
     plan_path.write_text(json.dumps(plan),encoding='utf-8')

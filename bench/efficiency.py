@@ -23,6 +23,8 @@ ENCODING = 'o200k_base'
 RUNTIMES = {'pi-acu': 'ACU', 'claude-acu': 'ACU', 'pi-cua': 'CUA', 'claude-cua': 'CUA',
             'pi-computer-use': 'Codex computer use', 'codex-computer-use': 'Codex computer use'}
 SCRIPT_SUFFIXES = {'.ahk', '.py', '.js', '.mjs', '.ps1', '.sh'}
+PYTHON_COMMAND = re.compile(r'(?:python(?:\d+(?:\.\d+)?)?|py)(?:\.exe)?')
+EXECUTION_WRAPPERS = {'timeout', 'nohup', 'exec', 'xargs', 'cmd', 'cmd.exe', 'powershell', 'powershell.exe', 'uv', 'env'}
 
 
 @dataclass
@@ -109,12 +111,12 @@ def heredocs(command):
 
 # Read actual shell command positions, rather than runtime names appearing in quoted prose/arguments.
 def shell_commands(text):
-    lexer = shlex.shlex(text, posix=True, punctuation_chars=';&|\n')
+    lexer = shlex.shlex(text, posix=True, punctuation_chars=';&|\n()')
     lexer.whitespace = ' \t\r'
     lexer.whitespace_split = True
     commands, current = [], []
     for token in lexer:
-        if token and all(char in ';&|\n' for char in token):
+        if token and all(char in ';&|\n()' for char in token):
             if current:
                 commands.append(current)
                 current = []
@@ -122,7 +124,19 @@ def shell_commands(text):
             current.append(token)
     if current:
         commands.append(current)
-    return commands
+    normalized = []
+    for command in commands:
+        # Loop/branch bodies and environment assignments precede the actual executable.
+        while command:
+            if command[0] in ('do', 'then', 'else', 'if', 'while', 'until', '!') or re.match(r'^[A-Za-z_]\w*=', command[0]):
+                command = command[1:]
+            elif command[0] == 'env' and len(command) > 1 and not command[1].startswith('-'):
+                command = command[1:]
+            else:
+                break
+        if command:
+            normalized.append(command)
+    return normalized
 
 
 # Identify Python helper imports and actual subprocess invocation literals; quoted report text is not a route.
@@ -131,7 +145,7 @@ def python_routes(text):
         tree = ast.parse(text)
     except SyntaxError as error:
         raise ValueError(f'Python source cannot be parsed at line {error.lineno}; attribution needs review') from error
-    route, imports, warnings = False, set(), []
+    route, imports, warnings, invoked = False, set(), [], set()
     assignments = {target.id: node.value for node in ast.walk(tree) if isinstance(node, ast.Assign)
                    for target in node.targets if isinstance(target, ast.Name)}
 
@@ -148,7 +162,18 @@ def python_routes(text):
             return first
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
             return command_head(node.left, seen)
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == 'sys' and node.attr == 'executable':
+            return 'python'
         return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+
+    # A literal Python executable/script prefix is enough; trailing coordinates/JSON can stay dynamic.
+    def command_items(node, seen=None):
+        seen = set() if seen is None else seen
+        if isinstance(node, ast.Name) and node.id in assignments and node.id not in seen:
+            return command_items(assignments[node.id], seen | {node.id})
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            return command_items(node.left, seen)
+        return node.elts if isinstance(node, (ast.List, ast.Tuple)) else []
 
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module:
@@ -157,13 +182,85 @@ def python_routes(text):
             imports.update(alias.name.split('.')[0] + '.py' for alias in node.names)
         elif isinstance(node, ast.Call):
             name = node.func.attr if isinstance(node.func, ast.Attribute) else ''
-            if name in ('run', 'Popen', 'check_output', 'check_call', 'call') and node.args:
+            os_system = (name == 'system' and isinstance(node.func.value, ast.Name) and node.func.value.id == 'os')
+            if (name in ('run', 'Popen', 'check_output', 'check_call', 'call') or os_system) and node.args:
                 first = command_head(node.args[0])
                 if first is None:
                     warnings.append(f'dynamic subprocess command at Python line {node.lineno}; cannot attribute statically')
+                elif isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                    child_route, child_imports, child_warnings, child_invoked = shell_routes(node.args[0].value)
+                    route |= child_route
+                    imports.update(child_imports)
+                    warnings.extend(child_warnings)
+                    invoked.update(child_invoked)
+                elif PYTHON_COMMAND.fullmatch(script_name(first)):
+                    items = command_items(node.args[0])
+                    program = None
+                    for item in items[1:]:
+                        value = command_head(item)
+                        if value is None or value in ('-c', '-m'):
+                            break
+                        if not value.startswith('-'):
+                            program = value
+                            break
+                    if program and script_name(program).endswith('.py'):
+                        invoked.add(program)
+                    else:
+                        warnings.append(f'unresolved Python script prefix at line {node.lineno}; attribution needs review')
                 else:
                     route |= script_name(first) in ('cua-driver', 'cua-driver.exe') or bool(re.match(r'^(?:cua-driver(?:\s|$)|acu\s+run\b)', first))
-    return route, imports, warnings
+    return route, imports, warnings, invoked
+
+
+# Follow captured shell helpers through literal runtime/Python/script prefixes, not quoted data.
+def shell_routes(text):
+    executable, bodies = heredocs(text)
+    route, imports, warnings, invoked = False, set(), [], set()
+    inline = [body for path, body, _ in bodies if path is None]
+    written = {path for path, _, _ in bodies if path is not None and PurePosixPath(script_name(path)).suffix in SCRIPT_SUFFIXES}
+    warnings.extend(f'shell helper writes {path}; source effects require review' for path in sorted(written))
+    for command in shell_commands(executable):
+        name = script_name(command[0])
+        if name in ('cua-driver', 'cua-driver.exe'):
+            route |= len(command) > 1 and command[1] not in ('--help', '--version', 'describe')
+        elif name in ('acu', 'acu.exe'):
+            route |= len(command) > 1 and command[1] == 'run'
+        elif PYTHON_COMMAND.fullmatch(name):
+            if '-c' in command and command.index('-c') + 1 < len(command):
+                inline.append(command[command.index('-c') + 1])
+            invoked.update(argument for argument in command[1:] if script_name(argument).endswith('.py'))
+        elif name in ('sh', 'bash', 'source') or command[0] == '.':
+            invoked.update(argument for argument in command[1:] if script_name(argument).endswith('.sh'))
+        elif name in EXECUTION_WRAPPERS:
+            warnings.append(f'unsupported execution wrapper {name}; attribution needs review')
+        elif name in ('mv', 'cp', 'sed', 'perl'):
+            warnings.append(f'shell helper source effects from {name} require review')
+    for source in inline:
+        child_route, child_imports, child_warnings, child_invoked = python_routes(source)
+        # Inline writes inside a helper are not replayed here; suppress stale child links explicitly.
+        for node in ast.walk(ast.parse(source)):
+            target = None
+            if not isinstance(node, ast.Call):
+                continue
+            if isinstance(node.func, ast.Attribute) and node.func.attr in ('write', 'write_text'):
+                receiver = node.func.value
+                if isinstance(receiver, ast.Call) and receiver.args:
+                    target = receiver.args[0]
+            elif isinstance(node.func, ast.Name) and node.func.id == 'open' and len(node.args) > 1:
+                mode = node.args[1]
+                if isinstance(mode, ast.Constant) and isinstance(mode.value, str) and any(char in mode.value for char in 'wax+'):
+                    target = node.args[0]
+            if isinstance(target, ast.Constant) and isinstance(target.value, str) and PurePosixPath(script_name(target.value)).suffix in SCRIPT_SUFFIXES:
+                written.add(target.value)
+                warnings.append(f'shell helper Python writes {target.value}; source effects require review')
+        route |= child_route
+        imports.update(child_imports)
+        warnings.extend(child_warnings)
+        invoked.update(child_invoked)
+    written_names = {script_name(target) for target in written}
+    invoked = {path for path in invoked if script_name(path) not in written_names}
+    imports = {path for path in imports if script_name(path) not in written_names}
+    return route, imports, warnings, invoked
 
 
 # Attribute captured code payloads and execution spans; emit the selection ledger and unresolved cases for review.
@@ -195,15 +292,23 @@ def measure_efficiency(measurements, arm):
             return None
         return key if create else None
 
-    def dependencies(name, call_id, seen=None):
+    def dependencies(name, call_id, seen=None, *, required=False):
         seen = set() if seen is None else seen
         key = binding(name, call_id)
-        if key is None or key in seen:
+        if key is None:
+            if required:
+                notes.append({'call_id': call_id, 'reason': f'captured source unavailable for invoked helper {name}'})
+            return False, set()
+        if key in seen:
             return False, set()
         seen.add(key)
         script = scripts[key]
         try:
-            route, imported, warnings = python_routes(script.text) if name.endswith('.py') else (False, set(), [])
+            route, imported, warnings, invoked = (False, set(), [], set())
+            if name.endswith('.py'):
+                route, imported, warnings, invoked = python_routes(script.text)
+            elif name.endswith('.sh'):
+                route, imported, warnings, invoked = shell_routes(script.text)
             notes.extend({'call_id': call_id, 'reason': f'{name}: {warning}'} for warning in warnings)
         except ValueError as error:
             notes.append({'call_id': call_id, 'reason': f'{name}: {error}'})
@@ -211,12 +316,93 @@ def measure_efficiency(measurements, arm):
         if name.endswith(('.js', '.mjs')):
             route |= bool(re.search(r'\bsky\s*\.', js_code(script.text)))
         used = set(script.payloads)
-        for dep in imported:
-            child_route, child_payloads = dependencies(dep, call_id, seen)
+        for dep in imported | invoked:
+            child_route, child_payloads = dependencies(dep, call_id, seen, required=dep in invoked)
             if child_route:
                 route = True
                 used.update(child_payloads)
         return route, used
+
+    def invalidate_source(path, call_id, reason):
+        notes.append({'call_id': call_id, 'reason': reason})
+        key = binding(path, call_id) if path else None
+        if key is not None:
+            del scripts[key]
+
+    # Replay only literal copies/replacements of already-captured scripts; never read files or eval actor code.
+    def replay_python_writes(text, call_id):
+        tree = ast.parse(text)
+        values, handled = {}, set()
+        aliases = {target.id: node.value for node in ast.walk(tree) if isinstance(node, ast.Assign)
+                   for target in node.targets if isinstance(target, ast.Name)}
+
+        def file_reference(node, seen=None):
+            seen = set() if seen is None else seen
+            if isinstance(node, ast.Name) and node.id in aliases and node.id not in seen:
+                return file_reference(aliases[node.id], seen | {node.id})
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in ('Path', 'open') and node.args:
+                path = node.args[0]
+                if isinstance(path, ast.Constant) and isinstance(path.value, str):
+                    return path.value
+            return None
+
+        def resolve_script(node):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                return Script(node.value)
+            if isinstance(node, ast.Name):
+                return values.get(node.id)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                method, receiver = node.func.attr, node.func.value
+                if method in ('read', 'read_text'):
+                    path = file_reference(receiver)
+                    key = binding(path, call_id) if path else None
+                    return scripts.get(key)
+                if method == 'replace' and len(node.args) == 2:
+                    original, old, new = resolve_script(receiver), resolve_script(node.args[0]), resolve_script(node.args[1])
+                    if original is not None and old is not None and new is not None:
+                        return Script(original.text.replace(old.text, new.text), set(original.payloads))
+            return None
+
+        for node in tree.body:
+            if isinstance(node, ast.Assign):
+                copied = resolve_script(node.value)
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        values[target.id] = copied
+            elif isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
+                operation = node.value
+                if not isinstance(operation.func, ast.Attribute) or operation.func.attr not in ('write', 'write_text') or not operation.args:
+                    continue
+                path = file_reference(operation.func.value)
+                if path and PurePosixPath(script_name(path)).suffix in SCRIPT_SUFFIXES:
+                    handled.add(operation)
+                    handled.add(operation.func.value)
+                    copied = resolve_script(operation.args[0])
+                    if copied is None:
+                        invalidate_source(path, call_id, f'unresolved Python source transformation for {path}')
+                        continue
+                    key = binding(path, call_id, create=True)
+                    if key is not None:
+                        part = payload(call_id, f'transform-{key}', text, 'generated script transformation')
+                        scripts[key] = Script(copied.text, copied.payloads | {part})
+        # Unreplayed write forms must invalidate cached text, not silently certify a stale route.
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or node in handled:
+                continue
+            path = None
+            if isinstance(node.func, ast.Name) and node.func.id == 'open' and len(node.args) > 1:
+                mode = node.args[1]
+                if isinstance(mode, ast.Constant) and isinstance(mode.value, str) and any(char in mode.value for char in 'wax+'):
+                    path = file_reference(node)
+            elif isinstance(node.func, ast.Attribute):
+                if node.func.attr in ('write', 'write_text'):
+                    path = file_reference(node.func.value)
+                elif node.func.attr in ('copy', 'copyfile', 'move', 'rename') and len(node.args) > 1:
+                    destination = node.args[1]
+                    if isinstance(destination, ast.Constant) and isinstance(destination.value, str):
+                        path = destination.value
+            if path and PurePosixPath(script_name(path)).suffix in SCRIPT_SUFFIXES:
+                invalidate_source(path, call_id, f'unreplayed Python source mutation for {path}')
 
     for tool in sorted(measurements['tools'], key=lambda item: item['start_s'] if item['start_s'] is not None else item['end_s']):
         identity, name = tool['id'], tool['name'].casefold()
@@ -225,6 +411,9 @@ def measure_efficiency(measurements, arm):
             notes.append({'call_id': identity, 'reason': 'structured arguments unavailable; reanalyse original events'})
             continue
         if name == 'read':
+            continue
+        # Rejected file mutations never reached the script; do not replay or charge unapplied text.
+        if name in ('write', 'edit') and tool.get('is_error'):
             continue
         if name == 'write':
             path = args.get('path', args.get('file_path', ''))
@@ -241,14 +430,25 @@ def measure_efficiency(measurements, arm):
             edits = args.get('edits')
             if edits is None:
                 edits = [{'oldText': args.get('old_string', ''), 'newText': args.get('new_string', '')}]
+            original, replacements, valid = scripts[key].text, [], True
             for index, edit in enumerate(edits):
                 old, new = edit['oldText'], edit['newText']
-                matches = scripts[key].text.count(old) if old else 0
-                if not matches or (matches != 1 and not args.get('replace_all')):
+                matches = list(re.finditer(re.escape(old), original)) if old else []
+                if not matches or (len(matches) != 1 and not args.get('replace_all')):
                     notes.append({'call_id': identity, 'reason': 'edit match is absent or ambiguous in captured source; attribution needs review'})
+                    valid = False
                     continue
-                scripts[key].text = scripts[key].text.replace(old, new, -1 if args.get('replace_all') else 1)
-                scripts[key].payloads.add(payload(identity, f'edit-{index}', new, 'generated script edit'))
+                replacements.extend((match.start(), match.end(), new) for match in matches)
+            replacements.sort()
+            if any(previous[1] > following[0] for previous, following in zip(replacements, replacements[1:])):
+                notes.append({'call_id': identity, 'reason': 'overlapping captured edit regions; attribution needs review'})
+                valid = False
+            if valid:
+                for start, end, new in reversed(replacements):
+                    original = original[:start] + new + original[end:]
+                scripts[key].text = original
+                for index, edit in enumerate(edits):
+                    scripts[key].payloads.add(payload(identity, f'edit-{index}', edit['newText'], 'generated script edit'))
             continue
 
         code = args.get('code', args.get('command', ''))
@@ -279,6 +479,10 @@ def measure_efficiency(measurements, arm):
             for index, (path, text, append) in enumerate(bodies):
                 if path is None:
                     inline_python.append(text)
+                    try:
+                        replay_python_writes(text, identity)
+                    except SyntaxError:
+                        pass  # python_routes below retains the explicit parse warning.
                     continue
                 if PurePosixPath(script_name(path)).suffix in SCRIPT_SUFFIXES:
                     key = binding(path, identity, create=True)
@@ -302,17 +506,30 @@ def measure_efficiency(measurements, arm):
                             used.update(scripts[key].payloads)
                 elif executable_name in ('cua-driver', 'cua-driver.exe'):
                     is_use |= len(command)>1 and command[1] not in ('--help', '--version', 'describe')
-                elif re.fullmatch(r'(?:python(?:\d+(?:\.\d+)?)?|py)(?:\.exe)?', executable_name):
+                elif PYTHON_COMMAND.fullmatch(executable_name):
                     if '-c' in command:
                         at = command.index('-c')+1
                         if at<len(command):
                             inline_python.append(command[at])
+                            try:
+                                replay_python_writes(command[at], identity)
+                            except SyntaxError:
+                                pass  # python_routes below retains the explicit parse warning.
                     for argument in command[1:]:
                         if script_name(argument).endswith('.py'):
-                            route, found = dependencies(argument, identity)
+                            route, found = dependencies(argument, identity, required=True)
                             is_use |= route
                             if route:
                                 used.update(found)
+                elif executable_name in ('sh', 'bash', 'source') or command[0] == '.':
+                    for argument in command[1:]:
+                        if script_name(argument).endswith('.sh'):
+                            route, found = dependencies(argument, identity, required=True)
+                            is_use |= route
+                            if route:
+                                used.update(found)
+                elif executable_name in EXECUTION_WRAPPERS:
+                    notes.append({'call_id': identity, 'reason': f'unsupported execution wrapper {executable_name}; attribution needs review'})
                 elif executable_name in ('mv', 'cp') and len(command) > 2:
                     destination = command[-1]
                     for source in command[1:-1]:
@@ -325,20 +542,39 @@ def measure_efficiency(measurements, arm):
                         if executable_name == 'mv' and old != new:
                             del scripts[old]
                 elif executable_name in ('sed', 'perl') and any('-i' in argument for argument in command[1:]):
+                    expressions = [argument for argument in command[1:] if re.match(r'^s[^\w\s]', argument)]
                     for argument in command[1:]:
                         key = binding(argument, identity)
-                        if key is not None:
+                        if key is None:
+                            continue
+                        if not expressions:
+                            invalidate_source(argument, identity, f'unsupported in-place source patch for {argument}')
+                            continue
+                        patched, valid = scripts[key].text, True
+                        for expression in expressions:
+                            parts = expression[2:].split(expression[1])
+                            if (executable_name != 'sed' or len(parts) != 3 or not parts[0]
+                                    or parts[2] not in ('', 'g') or any(char in parts[0] for char in '.*[^$\\')
+                                    or any(char in parts[1] for char in '&\\')):
+                                invalidate_source(argument, identity, f'unsupported in-place source patch for {argument}')
+                                valid = False
+                                break
+                            old, new, flags = parts
+                            patched = ''.join(line.replace(old, new, -1 if flags == 'g' else 1)
+                                              for line in patched.splitlines(keepends=True))
+                        if valid:
+                            scripts[key].text = patched
                             scripts[key].payloads.add(payload(identity, f'patch-{key}', code, 'generated script edit command'))
             for text in inline_python:
                 try:
-                    route, imported, warnings = python_routes(text)
+                    route, imported, warnings, invoked = python_routes(text)
                     notes.extend({'call_id': identity, 'reason': warning} for warning in warnings)
                 except ValueError as error:
                     notes.append({'call_id': identity, 'reason': str(error)})
                     continue
                 is_use |= route
-                for key in imported:
-                    child_route, found = dependencies(key, identity)
+                for key in imported | invoked:
+                    child_route, found = dependencies(key, identity, required=key in invoked)
                     is_use |= child_route
                     if child_route:
                         used.update(found)
@@ -366,13 +602,19 @@ def measure_efficiency(measurements, arm):
     tokens = measurements.get('tokens')
     output = tokens.get('output_including_reasoning') if tokens else None
     complete = measurements.get('token_counts_complete') is True
+    scope = measurements.get('token_usage_scope', 'all-requests')
+    if scope not in ('all-requests', 'excluding-interrupted-turns'):
+        raise ValueError(f'unsupported token usage scope: {scope}')
     percentage = 100*estimated/output if complete and output and not notes else None
     timed_calls = [call for call in calls if call['start_s'] is not None and call['duration_s'] is not None]
     durations_complete = len(timed_calls) == len(calls) and not measurements.get('unfinished_tools')
     known_busy = busy_seconds((call['start_s'], call['end_s']) for call in timed_calls)
     known_sum = sum(call['duration_s'] for call in timed_calls)
-    return {'policy': 'tokens-and-computer-use-v1', 'runtime': runtime, 'api_tokens': tokens,
-            'token_counts_complete': complete,
+    policy = 'tokens-and-computer-use-excluding-interrupted-turns-v1' if scope == 'excluding-interrupted-turns' else 'tokens-and-computer-use-v1'
+    return {'policy': policy, 'runtime': runtime, 'api_tokens': tokens,
+            'token_counts_complete': complete, 'token_usage_scope': scope,
+            'excluded_model_turn_count': len(measurements.get('excluded_model_turns', [])),
+            'full_request_consumption_complete': measurements.get('full_request_consumption_complete', complete),
             'code_tokens': {'estimated_tokens': estimated, 'encoding': ENCODING, 'tokenizer': 'tiktoken', 'tokenizer_version': version('tiktoken'),
                             'denominator_output_including_reasoning': output,
                             'output_share_percent_estimate': percentage, 'payloads': ledger,

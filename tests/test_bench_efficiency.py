@@ -88,6 +88,157 @@ def test_imported_cua_helpers_survive_moves_and_cli_aliases():
     assert {p['call_id'] for p in result['code_tokens']['payloads']} == {'ui', 'pen', 'draw', 'again'}
 
 
+def test_nested_python_subprocess_helper_is_attributed_without_executing_dynamic_arguments():
+    tools = [
+        call('ui', 'write', {'path': 'scratch/act.py', 'content':
+            "import subprocess,sys\nsubprocess.run(['cua-driver',sys.argv[1],sys.argv[2]])\n"}, 1, 2),
+        call('pen', 'write', {'path': 'scratch/pen.py', 'content':
+            "import subprocess,sys,json\nsubprocess.run([sys.executable,'scratch/act.py',tool,json.dumps(args)])\n"}, 3, 4),
+        call('draw', 'bash', {'command': 'python scratch/pen.py 0'}, 5, 8),
+        call('again', 'bash', {'command': 'python scratch/pen.py 1'}, 9, 11),
+    ]
+    result = measure_efficiency(metrics(tools), 'pi-cua')
+    assert result['computer_use']['attribution_complete']
+    assert result['computer_use']['call_count'] == 2
+    assert result['computer_use']['busy_seconds'] == 5
+    assert {p['call_id'] for p in result['code_tokens']['payloads']} == {'ui', 'pen', 'draw', 'again'}
+
+
+def test_shell_substitution_keeps_quoted_python_source_separate_from_closing_parenthesis():
+    command = 'id=$(cua-driver call get_window_state \'{}\' | python -I -c "import json,sys;print(json.load(sys.stdin)[\'capture_id\'])"); echo "$id"'
+    result = measure_efficiency(metrics([call('capture', 'Bash', {'command': command}, 1, 4)]), 'claude-cua')
+    assert result['computer_use']['attribution_complete']
+    assert result['computer_use']['call_count'] == 1
+    assert result['computer_use']['busy_seconds'] == 3
+
+
+def test_shell_helpers_environment_prefixes_and_loop_bodies_are_attributed_once_per_host_call():
+    tools = [
+        call('shot', 'write', {'path': 'shot.sh', 'content': "cua-driver call get_window_state '{}'\n"}, 1, 2),
+        call('ui', 'write', {'path': 'ui.py', 'content': "import subprocess\nsubprocess.run(['cua-driver','click','{}'])\n"}, 3, 4),
+        call('capture', 'Bash', {'command': 'sh shot.sh'}, 5, 7),
+        call('loop', 'Bash', {'command': 'for i in 1 2; do WIN=10 python ui.py; done; sh shot.sh'}, 8, 12),
+    ]
+    result = measure_efficiency(metrics(tools), 'claude-cua')
+    assert result['computer_use']['attribution_complete']
+    assert result['computer_use']['call_count'] == 2
+    assert result['computer_use']['busy_seconds'] == 6
+    assert {p['call_id'] for p in result['code_tokens']['payloads']} == {'shot', 'ui', 'capture', 'loop'}
+
+
+@pytest.mark.parametrize('replacement', ['cua-driver', 'echo'])
+def test_literal_python_helper_copy_preserves_provenance_and_follows_replaced_runtime(replacement):
+    tools = [
+        call('source', 'write', {'path': 'act.py', 'content':
+            "import subprocess\nsubprocess.run(['cua-driver','click','{}'])\n"}, 1, 2),
+        call('copy', 'bash', {'command':
+            'python -c "from pathlib import Path;p=Path(\'act.py\').read_text();Path(\'dlg.py\').write_text(p.replace(\'cua-driver\',\'' + replacement + '\'))"'}, 3, 4),
+        call('run', 'bash', {'command': 'python dlg.py'}, 5, 8),
+    ]
+    result = measure_efficiency(metrics(tools), 'pi-cua')
+    assert result['computer_use']['attribution_complete']
+    if replacement == 'cua-driver':
+        assert result['computer_use']['call_count'] == 1
+        assert result['computer_use']['busy_seconds'] == 3
+        assert {p['call_id'] for p in result['code_tokens']['payloads']} == {'source', 'copy', 'run'}
+    else:
+        assert result['computer_use']['call_count'] == 0
+        assert result['code_tokens']['payloads'] == []
+
+
+def test_literal_sed_replacement_removes_the_old_runtime_route_from_helper_state():
+    tools = [
+        call('source', 'write', {'path': 'ui.py', 'content': "import subprocess\nsubprocess.run(['cua-driver','click','{}'])\n"}, 1, 2),
+        call('patch', 'bash', {'command': "sed -i 's/cua-driver/echo/g' ui.py"}, 3, 4),
+        call('run', 'bash', {'command': 'python ui.py'}, 5, 6),
+    ]
+    result = measure_efficiency(metrics(tools), 'pi-cua')
+    assert result['computer_use']['attribution_complete']
+    assert result['computer_use']['call_count'] == 0
+    assert result['code_tokens']['payloads'] == []
+
+
+def test_uncaptured_nested_helper_keeps_attribution_explicitly_unknown():
+    tools = [
+        call('source', 'write', {'path': 'pen.py', 'content': "import subprocess,sys\nsubprocess.run([sys.executable,'missing.py'])\n"}, 1, 2),
+        call('run', 'bash', {'command': 'python pen.py'}, 3, 4),
+    ]
+    result = measure_efficiency(metrics(tools), 'pi-cua')
+    assert not result['computer_use']['attribution_complete']
+    assert 'captured source unavailable' in result['code_tokens']['review_notes'][0]['reason']
+    assert result['code_tokens']['output_share_percent_estimate'] is None
+
+
+@pytest.mark.parametrize('mutation', [
+    'python -c "with open(\'ui.py\',\'w\') as f: f.write(\'print(1)\')"',
+    "sed -i '2d' ui.py",
+])
+def test_unreplayed_source_mutation_invalidates_stale_helper_attribution(mutation):
+    tools = [
+        call('source', 'write', {'path': 'ui.py', 'content': "import subprocess\nsubprocess.run(['cua-driver','click','{}'])\n"}, 1, 2),
+        call('patch', 'bash', {'command': mutation}, 3, 4),
+        call('run', 'bash', {'command': 'python ui.py'}, 5, 6),
+    ]
+    result = measure_efficiency(metrics(tools), 'pi-cua')
+    assert not result['computer_use']['attribution_complete']
+    assert result['computer_use']['call_count'] == 0
+    assert result['code_tokens']['output_share_percent_estimate'] is None
+
+
+def test_shell_helper_with_generated_child_source_requires_review():
+    tools = [
+        call('ui', 'write', {'path': 'ui.py', 'content': "import subprocess\nsubprocess.run(['cua-driver','click','{}'])\n"}, 1, 2),
+        call('wrapper', 'write', {'path': 'wrapper.sh', 'content': "cat > ui.py <<'PY'\nprint(1)\nPY\npython ui.py\n"}, 3, 4),
+        call('run', 'bash', {'command': 'sh wrapper.sh'}, 5, 6),
+    ]
+    result = measure_efficiency(metrics(tools), 'pi-cua')
+    assert not result['computer_use']['attribution_complete']
+
+
+def test_shell_helper_inline_python_rewrite_does_not_certify_a_stale_child():
+    tools = [
+        call('ui', 'write', {'path': 'ui.py', 'content': "import subprocess\nsubprocess.run(['cua-driver','click','{}'])\n"}, 1, 2),
+        call('wrapper', 'write', {'path': 'wrapper.sh', 'content':
+            'python -c "from pathlib import Path;Path(\'ui.py\').write_text(\'print(1)\')"\npython ui.py\n'}, 3, 4),
+        call('run', 'bash', {'command': 'sh wrapper.sh'}, 5, 6),
+    ]
+    result = measure_efficiency(metrics(tools), 'pi-cua')
+    assert not result['computer_use']['attribution_complete']
+    assert result['computer_use']['call_count'] == 0
+
+
+def test_python_shell_string_and_condition_prefix_preserve_helper_routes():
+    tools = [
+        call('ui', 'write', {'path': 'ui.py', 'content': "import subprocess\nsubprocess.run(['cua-driver','click','{}'])\n"}, 1, 2),
+        call('outer', 'write', {'path': 'outer.py', 'content': "import subprocess\nsubprocess.run('python ui.py',shell=True)\n"}, 3, 4),
+        call('run', 'bash', {'command': 'if python outer.py; then echo ok; fi'}, 5, 8),
+    ]
+    result = measure_efficiency(metrics(tools), 'pi-cua')
+    assert result['computer_use']['attribution_complete']
+    assert result['computer_use']['call_count'] == 1
+    assert {p['call_id'] for p in result['code_tokens']['payloads']} == {'ui','outer','run'}
+
+
+def test_dot_sourced_shell_helper_and_os_system_routes_are_captured():
+    tools = [
+        call('shot', 'write', {'path': 'shot.sh', 'content': "cua-driver call get_window_state '{}'\n"}, 1, 2),
+        call('outer', 'write', {'path': 'outer.py', 'content': "import os\nos.system('sh shot.sh')\n"}, 3, 4),
+        call('dot', 'bash', {'command': '. shot.sh'}, 5, 6),
+        call('python', 'bash', {'command': 'python outer.py'}, 7, 9),
+    ]
+    result = measure_efficiency(metrics(tools), 'pi-cua')
+    assert result['computer_use']['attribution_complete']
+    assert result['computer_use']['call_count'] == 2
+    assert result['computer_use']['busy_seconds'] == 3
+
+
+@pytest.mark.parametrize('command', ['timeout 30 cua-driver click {}', 'uv run ui.py'])
+def test_unresolved_execution_wrapper_requires_review_instead_of_a_certified_zero(command):
+    result = measure_efficiency(metrics([call('wrapped','bash',{'command':command},1,2)]),'pi-cua')
+    assert not result['computer_use']['attribution_complete']
+    assert result['code_tokens']['output_share_percent_estimate'] is None
+
+
 def test_unused_script_and_old_edit_match_text_do_not_inflate_executable_code():
     tools = [
         call('unused', 'write', {'path': 'unused.ahk', 'content': 'SendText "unused"'}, 1, 2),
@@ -101,7 +252,8 @@ def test_unused_script_and_old_edit_match_text_do_not_inflate_executable_code():
     assert next(p for p in ledger if p['call_id'] == 'edit')['characters'] == 5
 
 
-def test_cli_reanalysis_reports_new_metrics_without_rewriting_historical_measurements(tmp_path):
+@pytest.mark.parametrize('python_runtime', ['project', 'bare-system'])
+def test_cli_reanalysis_reports_new_metrics_without_rewriting_historical_measurements(tmp_path, python_runtime):
     import json
     import subprocess
     import sys
@@ -123,7 +275,8 @@ def test_cli_reanalysis_reports_new_metrics_without_rewriting_historical_measure
         {'elapsed_s':8,'event':{'type':'agent_settled','aborted':False}},
     ]
     (tmp_path / 'events.jsonl').write_text('\n'.join(json.dumps(r) for r in records), encoding='utf-8')
-    result = subprocess.run([sys.executable,str(ROOT/'bench/run.py'),'analyse','--run-dir',str(tmp_path)],
+    python = [sys.executable] if python_runtime == 'project' else [sys._base_executable, '-S']
+    result = subprocess.run([*python,str(ROOT/'bench/run.py'),'analyse','--run-dir',str(tmp_path)],
                             capture_output=True,text=True,encoding='utf-8',timeout=20)
     assert result.returncode == 0, result.stderr
     output = json.loads(result.stdout)
@@ -167,6 +320,39 @@ def test_python_acu_list_invocation_and_redirect_after_heredoc():
     assert result['computer_use']['call_count'] == 1
     assert {p['call_id'] for p in result['code_tokens']['payloads']} == {'source','run'}
     assert not result['code_tokens']['review_notes']
+
+
+def test_failed_edit_does_not_change_replayed_source_or_charge_unapplied_replacements():
+    source = 'Click 1,1\nClick 2,2'
+    failed = call('failed', 'edit', {'path': 'draw.ahk', 'edits': [
+        {'oldText': 'Click 1,1', 'newText': 'Click 3,3'},
+        {'oldText': 'Click', 'newText': 'AcuClick'},
+    ]}, 3, 4)
+    failed['is_error'] = True
+    tools = [
+        call('source', 'write', {'path': 'draw.ahk', 'content': source}, 1, 2),
+        failed,
+        call('fix', 'edit', {'path': 'draw.ahk', 'edits': [
+            {'oldText': source, 'newText': 'Click 4,4'},
+        ]}, 5, 6),
+        call('run', 'bash', {'command': 'acu run draw.ahk'}, 7, 8),
+    ]
+    result = measure_efficiency(metrics(tools), 'pi-acu')
+    assert result['computer_use']['attribution_complete']
+    assert {p['call_id'] for p in result['code_tokens']['payloads']} == {'source', 'fix', 'run'}
+
+
+def test_successful_batch_edits_match_the_original_source_not_earlier_replacements():
+    tools = [
+        call('source', 'write', {'path': 'draw.ahk', 'content': 'one\ntwo'}, 1, 2),
+        call('edit', 'edit', {'path': 'draw.ahk', 'edits': [
+            {'oldText': 'one', 'newText': 'two'}, {'oldText': 'two', 'newText': 'three'},
+        ]}, 3, 4),
+        call('run', 'bash', {'command': 'acu run draw.ahk'}, 5, 6),
+    ]
+    result = measure_efficiency(metrics(tools), 'pi-acu')
+    assert result['computer_use']['attribution_complete']
+    assert len([p for p in result['code_tokens']['payloads'] if p['call_id'] == 'edit']) == 2
 
 
 def test_dynamic_subprocess_and_ambiguous_edits_require_review_not_a_silent_zero():
