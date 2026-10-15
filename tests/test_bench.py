@@ -9,7 +9,7 @@ def test_pi_launch_exposes_only_selected_skill_with_fixed_model_and_reasoning(tm
     command = pi_command(tmp_path, tmp_path / 'acu', 'task')
     assert command[1:6] == ['-ne', '-ns', '-nc', '-np', '--no-themes']
     assert command[command.index('--skill') + 1] == str(tmp_path / 'acu')
-    assert command[command.index('--model') + 1] == 'openai/gpt-6-astra'
+    assert command[command.index('--model') + 1] == 'openai-codex/gpt-6-astra'
     assert command[command.index('--thinking') + 1] == 'low'
     assert command[command.index('--tools') + 1] == 'read,bash,edit,write'
     assert '--continue' not in command and '--resume' not in command
@@ -209,7 +209,7 @@ def test_controller_preserves_actor_outcome_and_separates_maintainer_export_fail
     credential = tmp_path / 'fixture-auth.json'
     credential.write_text('{}', encoding='utf-8')
     monkeypatch.setitem(bench.CREDENTIALS, 'pi', (str(credential), 'auth.json'))
-    entries = [{'type': 'model_change', 'provider': 'openai', 'modelId': 'gpt-6-astra'},
+    entries = [{'type': 'model_change', 'provider': 'openai-codex', 'modelId': 'gpt-6-astra'},
                {'type': 'thinking_level_change', 'thinkingLevel': 'low'},
                {'type': 'message', 'message': {'role': 'system', 'sections': {'skills': '<name>acu</name>'},
                 'toolsAdded': [{'name': name} for name in bench.TOOLS]}}]
@@ -327,13 +327,15 @@ def test_model_timing_includes_wait_before_pi_emits_message_start():
     assert result['estimated_wall_at_reference_tps_s'] == 3
 
 
-def test_isolation_audit_rejects_extra_skills_context_and_wrong_reasoning():
+def test_isolation_audit_rejects_extra_skills_context_wrong_reasoning_and_wrong_provider():
     entries = [
-        {'type': 'model_change', 'provider': 'openai', 'modelId': 'gpt-6-astra'},
+        {'type': 'model_change', 'provider': 'openai-codex', 'modelId': 'gpt-6-astra'},
         {'type': 'thinking_level_change', 'thinkingLevel': 'low'},
         {'type': 'message', 'message': {'role': 'system', 'sections': {'skills': '<name>acu</name>', 'cwd': '/work'}, 'toolsAdded': [{'name': n} for n in ['read', 'bash', 'edit', 'write']]}},
     ]
     assert audit_pi_session(entries, 'acu')['passed']
+    wrong_provider = [{**entries[0], 'provider': 'openai'}, *entries[1:]]
+    assert not audit_pi_session(wrong_provider, 'acu')['passed']
     polluted = [*entries, {'type': 'message', 'message': {'role': 'system', 'sections': {'skills': '<name>acu</name><name>cua-driver</name>', 'project_context': 'AGENTS.md'}}}]
     assert not audit_pi_session(polluted, 'acu')['passed']
     assert not audit_pi_session([*entries, {'type': 'thinking_level_change', 'thinkingLevel': 'high'}], 'acu')['passed']

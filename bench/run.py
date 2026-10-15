@@ -27,6 +27,7 @@ from bench.intervals import busy_seconds
 from bench.runtime import ensure_project_runtime
 
 MODEL = 'gpt-6-astra'
+PI_PROVIDER = 'openai-codex'
 REASONING = 'low'
 # Freeze normal Pi session recovery so retries/compaction remain reproducible within the same scheduled trial.
 PI_RECOVERY_POLICY = {
@@ -98,7 +99,7 @@ def pi_command(run_dir, skill, prompt, *, native=False):
     tools = TOOLS + NATIVE_TOOLS if native else TOOLS
     return ['pi', '-ne', '-ns', '-nc', '-np', '--no-themes', *runtime,
             '--skill', str(skill), '--tools', ','.join(tools),
-            '--model', f'openai/{MODEL}', '--thinking', 'low', '--offline',
+            '--model', f'{PI_PROVIDER}/{MODEL}', '--thinking', 'low', '--offline',
             '--approve', '--session', str(run_dir / 'session.jsonl'),
             '--mode', 'json', '--print', prompt]
 
@@ -267,7 +268,7 @@ def analyse_pi(records, wall_s, reference_tps=None, *, cancelled=False, exclude_
 
 
 # Audit the actual persisted prompt, declarations and model state, not just intended launch flags.
-def audit_pi_session(entries, expected_skill, *, expected_model=MODEL):
+def audit_pi_session(entries, expected_skill, *, expected_model=MODEL, expected_provider=PI_PROVIDER):
     problems = []
     expected_tools = set(TOOLS + (NATIVE_TOOLS if expected_skill == 'computer-use' else []))
     declared_tools = set()
@@ -277,7 +278,7 @@ def audit_pi_session(entries, expected_skill, *, expected_model=MODEL):
     for entry in entries:
         if entry['type'] == 'model_change':
             saw_model = True
-            if (entry['provider'], entry['modelId']) != ('openai', expected_model):
+            if (entry['provider'], entry['modelId']) != (expected_provider, expected_model):
                 problems.append('model/provider changed')
         if entry['type'] == 'thinking_level_change':
             saw_thinking = True
@@ -673,6 +674,8 @@ def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=No
             'workspace': str(workspace), 'run_dir': str(run_dir), 'command': command,
             'environment_overrides': environment, 'isolation': 'configuration/prompt, not OS sandbox',
             'runtime_validated': False}
+    if harness(arm) == 'pi':
+        plan['provider'] = PI_PROVIDER
     if session_id is not None:
         plan['session_id'] = session_id
     if arm == 'pi-computer-use':
@@ -1034,6 +1037,8 @@ def run_trial(plan, reference_tps=None):
     token_count('')  # Load the pinned reference encoding before starting any desktop work.
     run_dir = Path(plan['run_dir'])
     arm = plan['arm']
+    if harness(arm) == 'pi' and plan.get('provider') != PI_PROVIDER:
+        raise ValueError('Prepared Pi provider does not match the current explicit provider; prepare a fresh trial')
     source, private_name = CREDENTIALS[harness(arm)]
     credential = Path.home() / source
     private_auth = run_dir / 'agent-home' / private_name

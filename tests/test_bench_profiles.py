@@ -46,6 +46,17 @@ def test_all_illustrator_configurations_receive_the_same_simple_drawing_and_appe
     assert len(set(templates)) == 1
 
 
+def test_stale_provider_profile_is_rejected_before_actor_or_desktop_startup(tmp_path):
+    from bench.run import run_trial
+    plan = prepare('pi-acu', tmp_path/'trial', skill=skill_fixture(tmp_path, 'acu'))
+    plan['provider'] = 'openai'
+    with pytest.raises(ValueError, match='explicit provider'):
+        run_trial(plan)
+    assert not (tmp_path/'trial/state.json').exists()
+    assert not (tmp_path/'trial/agent-home/auth.json').exists()
+    assert not (tmp_path/'trial/observer-probe-before.log').exists()
+
+
 def test_actor_prompt_paths_use_the_current_user_root_without_exposing_the_account(tmp_path, monkeypatch):
     import shutil
     from pathlib import Path
@@ -76,6 +87,10 @@ def test_prepare_pi_arms_share_scenario_and_do_not_inherit_user_configuration(tm
     cua = prepare('pi-cua', tmp_path / 'cua-run', scenario=scenario, skill=skill_fixture(tmp_path, 'cua-driver'))
     assert acu['scenario_sha256'] == cua['scenario_sha256']
     assert acu['model'] == cua['model'] == 'gpt-6-astra'
+    assert acu['provider'] == cua['provider'] == 'openai-codex'
+    for profile in (acu, cua):
+        command = profile['command']
+        assert command[command.index('--model') + 1] == 'openai-codex/gpt-6-astra'
     assert acu['reasoning'] == cua['reasoning'] == 'low'
     assert acu['skill_names'] == ['acu']
     assert cua['skill_names'] == ['cua-driver']
@@ -152,7 +167,9 @@ def test_prepare_pi_native_keeps_the_same_gpt_profile_and_only_native_mcp(tmp_pa
     assert settings['retry']['enabled'] and settings['compaction']['enabled']
     assert plan['recovery_policy'] == {'retry': settings['retry'], 'compaction': settings['compaction']}
     assert (plan['model'], plan['reasoning']) == ('gpt-6-astra', 'low')
+    assert plan['provider'] == 'openai-codex'
     command = plan['command']
+    assert command[command.index('--model') + 1] == 'openai-codex/gpt-6-astra'
     assert command[0] == 'pi' and '--no-mcp' not in command
     assert command[command.index('-e') + 1] == 'builtin:mcp'
     assert command[command.index('--tools') + 1] == 'read,bash,edit,write,mcp__node_repl__js,mcp__node_repl__js_reset,mcp__node_repl__js_add_node_module_dir,mcp__node_repl__turn_ended'

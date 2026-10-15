@@ -74,6 +74,7 @@ def test_cli_reads_three_attempts_per_arm_and_keeps_safeguard_failures_out(tmp_p
             (folder/'prompt-template.txt').write_text(template, encoding='utf-8')
             (folder/'prompt.txt').write_text(prompt, encoding='utf-8')
             plan = {'arm':arm,'model':'gpt-6-astra' if arm.startswith('pi-') else 'claude-opus-5-5','reasoning':'low','scenario':'illustrator-pen-export',
+                    'provider':'openai-codex' if arm.startswith('pi-') else None,
                     'workspace':str(workspace), 'prompt_sha256':hashlib.sha256(prompt.encode('utf-8')).hexdigest(),
                     'prompt_template_sha256':hashlib.sha256(template.encode('utf-8')).hexdigest(), 'skill_sha256':'skill-' + arm,
                     'assets':{'reference':'fixed'},'measurement_policy':'tokens-and-computer-use-v1',
@@ -152,6 +153,16 @@ def test_cli_reads_three_attempts_per_arm_and_keeps_safeguard_failures_out(tmp_p
                              capture_output=True,text=True,encoding='utf-8',timeout=20)
     assert reordered.returncode==0,reordered.stderr
     assert json.loads(reordered.stdout)['configurations']['claude-cua']['retained_ids'] == groups['claude-cua']['retained_ids']
+    # A previous provider cannot be silently pooled into the new matched cohort.
+    provider_plan_path = tmp_path/'pi-computer-use/0/plan.json'
+    provider_plan = json.loads(provider_plan_path.read_text(encoding='utf-8'))
+    provider_plan['provider'] = 'openai'
+    provider_plan_path.write_text(json.dumps(provider_plan), encoding='utf-8')
+    wrong_provider = subprocess.run([sys.executable,str(ROOT/'bench/aggregate.py'),str(manifest)],
+                                    capture_output=True,text=True,encoding='utf-8',timeout=20)
+    assert wrong_provider.returncode != 0 and 'explicit openai-codex Pi provider' in wrong_provider.stderr
+    provider_plan['provider'] = 'openai-codex'
+    provider_plan_path.write_text(json.dumps(provider_plan), encoding='utf-8')
     # Only the canonical maintainer output inside this run is valid evidence.
     summary_path = tmp_path/'claude-cua/2/summary.json'
     summary = json.loads(summary_path.read_text(encoding='utf-8'))

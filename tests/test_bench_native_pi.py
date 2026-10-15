@@ -5,7 +5,7 @@ from bench.run import NATIVE_TOOLS, TOOLS, audit_pi_session, task_time
 
 def test_native_pi_audit_accepts_only_the_selected_runtime_and_frozen_model():
     entries = [
-        {'type': 'model_change', 'provider': 'openai', 'modelId': 'gpt-6-astra'},
+        {'type': 'model_change', 'provider': 'openai-codex', 'modelId': 'gpt-6-astra'},
         {'type': 'thinking_level_change', 'thinkingLevel': 'low'},
         {'type': 'message', 'message': {'role': 'system',
             'sections': {'skills': '<name>computer-use</name>'},
@@ -17,6 +17,8 @@ def test_native_pi_audit_accepts_only_the_selected_runtime_and_frozen_model():
             'content': [{'type': 'toolCall', 'name': 'mcp__node_repl__js', 'arguments': {'code': 'await sky.list_apps()'}}]}},
     ]
     assert audit_pi_session(entries, 'computer-use')['passed']
+    other_provider = [{**entries[0], 'provider': 'openai'}, *entries[1:]]
+    assert not audit_pi_session(other_provider, 'computer-use')['passed']
     assert not audit_pi_session(entries[:3], 'computer-use')['passed'], 'missing MCP declarations cannot pass'
     polluted = {'type': 'message', 'message': {'role': 'system', 'toolsAdded': [{'name': 'mcp__browser__click'}]}}
     assert not audit_pi_session([*entries, polluted], 'computer-use')['passed']

@@ -72,7 +72,7 @@ def comparison_statistics(benchmark, quality):
 
 # Load a maintainer-authored manifest after session review; no JSON is requested from the actor.
 def aggregate_round(manifest_path):
-    from bench.run import ARMS, PI_RECOVERY_POLICY, CLAUDE_RECOVERY_POLICY, WINDOW_AUDIT_POLICY, actor_path, harness
+    from bench.run import ARMS, PI_PROVIDER, PI_RECOVERY_POLICY, CLAUDE_RECOVERY_POLICY, WINDOW_AUDIT_POLICY, actor_path, harness
     from bench.illustrator_pen_export import EXPORT_POLICY
 
     manifest_path = Path(manifest_path).resolve()
@@ -95,6 +95,8 @@ def aggregate_round(manifest_path):
             raise ValueError('this round must contain the five Illustrator configurations')
         if plan.get('scenario_version') != 'Adobe Illustrator Pen and Export v0.11' or plan.get('skill_guidance_policy') != 'benchmark-neutral-v1':
             raise ValueError('round requires the neutral v0.11 simple drawing-and-appearance baseline; historical protocols are not eligible')
+        if harness(plan['arm']) == 'pi' and plan.get('provider') != PI_PROVIDER:
+            raise ValueError('round requires the explicit openai-codex Pi provider; historical providers cannot be mixed')
         if plan.get('window_audit_policy') != WINDOW_AUDIT_POLICY:
             raise ValueError('round requires the diagnostic-only window audit policy')
         if plan.get('export_policy') != EXPORT_POLICY or plan.get('actor_deliverables') != []:
@@ -115,6 +117,7 @@ def aggregate_round(manifest_path):
                 or prompt != template.replace('<WORKSPACE>', actor_path(workspace))):
             raise ValueError('rendered prompt does not match its frozen template and workspace')
         identity = {key: plan[key] for key in ('model', 'reasoning', 'scenario', 'scenario_version', 'prompt_template_sha256', 'skill_sha256', 'assets', 'measurement_policy', 'skill_guidance_policy', 'trial_policy', 'recovery_policy', 'export_policy', 'window_audit_policy')}
+        identity['provider'] = plan.get('provider')
         attempt_record = json.loads((run / 'run-attempt.json').read_text(encoding='utf-8'))
         started_at = datetime.fromisoformat(attempt_record['started_at'])
         if started_at.tzinfo is None:
