@@ -447,6 +447,61 @@ def test_illustrator_conduct_keeps_resource_tampering_gated_and_window_changes_d
 
 
 @pytest.mark.desktop
+@pytest.mark.parametrize('initially_enabled', [False, True])
+def test_real_preparation_enables_smart_guides_and_snap_to_point(initially_enabled):
+    from bench.run import acu_observer
+    from bench.illustrator_pen_export import prepare_desktop, cleanup_desktop
+
+    directory = ROOT / '.pi/illustrator-pen-export-validation' / f'snapping-check-{uuid4().hex[:8]}'
+    plan = prepare('pi-acu', directory, scenario='illustrator-pen-export')
+    acu_observer(directory, ROOT / 'bench/probe.ahk', suffix='-before')
+
+    # Seed the real application immediately before production setup, not a simulated preference store.
+    def seeded_observer(run_dir, script, *args, **kwargs):
+        if script.name == 'run-jsx.ahk':
+            content = args[0].read_text(encoding='utf-8')
+            first, body = content.split('\n', 1)
+            config = json.loads(first.removeprefix('var config = ').removesuffix(';'))
+            if config['phase'] == 'prepare':
+                seed = str(initially_enabled).lower()
+                args[0].write_text(first + '\n' +
+                    f'app.preferences.setBooleanPreference("showSnapping", {seed});\n' +
+                    f'app.preferences.setBooleanPreference("snapToPoint", {seed});\n' + body, encoding='utf-8')
+        return acu_observer(run_dir, script, *args, **kwargs)
+
+    try:
+        prepared = prepare_desktop(plan, seeded_observer)
+        identity = json.loads((directory / 'illustrator-identity.json').read_text(encoding='utf-8'))
+        result = directory / 'snapping-readback.json'
+        check = directory / 'snapping-readback.jsx'
+        check.write_text('(function () {\n' +
+            'var values = [app.preferences.getBooleanPreference("showSnapping"), '
+            'app.preferences.getBooleanPreference("snapToPoint")];\n' +
+            'var report = new File(' + json.dumps(str(result)) + ');\n' +
+            'report.encoding = "UTF-8"; report.open("w");\n'
+            'report.write("[" + values.join(",") + "]"); report.close();\n}());\n', encoding='utf-8')
+        acu_observer(directory, ROOT / 'bench/illustrator/run-jsx.ahk', check, result,
+                     identity['hwnd'], identity['pid'], suffix='-snapping-readback', timeout=40)
+        assert json.loads(result.read_text(encoding='utf-8-sig')) == [True, True]
+        assert prepared['snapping'] == {'smart_guides': True, 'snap_to_point': True}
+        assert json.loads((directory / 'illustrator-prepared.json').read_text(encoding='utf-8'))['snapping'] == prepared['snapping']
+        prompt = (directory / 'prompt.txt').read_text(encoding='utf-8').lower()
+        assert 'smart guides' not in prompt and 'snap to point' not in prompt
+        menu_check = directory / 'snapping-menu.ahk'
+        menu_check.write_text(f'target := "ahk_id {identity["hwnd"]}"\n'
+            'AcuActivate(target)\nAcuKeys(target, "!v")\n'
+            'try\n    AcuScreenshot({monitor:1}, A_ScriptDir "\\view-menu.png", 1600)\n'
+            'finally\n    AcuKeys(target, "{Esc}")\n', encoding='utf-8')
+        acu_observer(directory, menu_check)
+    finally:
+        if (directory / 'illustrator-before.json').exists():
+            try:
+                assert cleanup_desktop(directory, acu_observer)['passed']
+            finally:
+                acu_observer(directory, ROOT / 'bench/restore_cursor.ahk')
+
+
+@pytest.mark.desktop
 def test_illustrator_pen_export_real_illustrator_preparation_and_owned_document_cleanup(tmp_path):
     from bench.run import acu_observer
     from bench.illustrator_pen_export import prepare_desktop, cleanup_desktop

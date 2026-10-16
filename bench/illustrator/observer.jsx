@@ -124,9 +124,16 @@
             if (!app.switchWorkspace('Getting Started') || !app.resetWorkspace()) throw new Error('Cannot establish the benchmark workspace');
             doc.views[0].zoom = 1;
             doc.views[0].centerPoint = [(rect[0] + rect[2]) / 2, (rect[1] + rect[3]) / 2];
+            // Establish the next trial's baseline regardless of settings changed by the previous actor.
+            app.preferences.setBooleanPreference('showSnapping', true);
+            app.preferences.setBooleanPreference('snapToPoint', true);
+            var snapping = {smart_guides: app.preferences.getBooleanPreference('showSnapping'),
+                            snap_to_point: app.preferences.getBooleanPreference('snapToPoint')};
+            if (!snapping.smart_guides || !snapping.snap_to_point) throw new Error('Cannot enable Smart Guides and Snap to Point');
             app.redraw();
             result = {before: before, documents: documents(), zoom: doc.views[0].zoom,
-                      center: doc.views[0].centerPoint, artboard: rect, workspace: 'Getting Started', png_preferences: pngPreferences()};
+                      center: doc.views[0].centerPoint, artboard: rect, workspace: 'Getting Started',
+                      snapping: snapping, png_preferences: pngPreferences()};
             doc = null; // Leave the task document open for the actor.
         } else if (config.phase === 'drawing') {
             var drawing = taskDocument(), rect = drawing.artboards[0].artboardRect, paths = [], types = {}, otherFilled = false, visibleNonPaths = false;
