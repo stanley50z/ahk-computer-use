@@ -35,6 +35,49 @@ def test_without_an_actor_claim_the_one_new_calculator_window_is_the_actors():
         new_calculator_window(before, two)
 
 
+def test_calculator_main_frame_with_xaml_popup_is_one_task_window():
+    # Relevant lines from issue #16's independent observer-probe-bind.log.
+    observed = (
+        'window=21434504 pid=46536\nclass=21434504 Xaml_WindowedPopupClass\n'
+        'window=33165728 pid=8044\nclass=33165728 ApplicationFrameWindow\n'
+        'calculator=21434504\npid=46536\ncalculator=33165728\npid=8044\n'
+    )
+    assert new_calculator_window('', observed) == ('33165728', 8044)
+    assert actor_window('', None, observed) == ('33165728', 8044)
+
+
+@pytest.mark.parametrize('other_class', [
+    'ApplicationFrameWindow', 'Windows.UI.Core.CoreWindow', 'UnknownWindowClass', None,
+])
+def test_only_identified_popups_are_excluded_from_multiple_window_refusal(other_class):
+    observed = (
+        'window=100 pid=8044\nclass=100 ApplicationFrameWindow\ncalculator=100\npid=8044\n'
+        'window=101 pid=8044\ncalculator=101\npid=8044\n'
+        'window=102 pid=46536\nclass=102 Xaml_WindowedPopupClass\ncalculator=102\npid=46536\n'
+    )
+    if other_class is not None:
+        observed += f'class=101 {other_class}\n'
+    with pytest.raises(ValueError, match="exactly one.*\\['100', '101'\\]"):
+        new_calculator_window('', observed)
+
+
+def test_a_popup_alone_is_not_a_calculator_task_window():
+    observed = 'window=100 pid=9\nclass=100 Xaml_WindowedPopupClass\ncalculator=100\npid=9\n'
+    with pytest.raises(ValueError, match='exactly one'):
+        new_calculator_window('', observed)
+
+
+@pytest.mark.parametrize(('before', 'identity', 'message'), [
+    ('window=100 pid=8044\n', 'window=100 pid=8044\n', 'pre-existing'),
+    ('', 'window=100 pid=0\n', 'identity'),
+    ('', '', 'process identity'),
+])
+def test_observed_main_window_requires_new_visible_handle_and_valid_pid(before, identity, message):
+    observed = identity + 'class=100 ApplicationFrameWindow\ncalculator=100\npid=8044\n'
+    with pytest.raises(ValueError, match=message):
+        new_calculator_window(before, observed)
+
+
 def test_hidden_preexisting_frame_host_shell_reused_by_the_new_window_is_still_owned():
     before = 'window=50 pid=9\nhiddenwindow=100 pid=8044\n'
     observed = 'window=100 pid=8044\ncalculator=100\npid=8044\n'

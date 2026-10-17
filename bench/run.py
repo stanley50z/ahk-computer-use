@@ -824,16 +824,18 @@ def bind_owned_window(before, claim, observed):
 
 
 # Scenario v1.1 asks the actor for the task and result.json only, so the bench finds the actor's window itself: the one
-# visible Calculator present after the trial that was not there before. None or several is an explicit failure, never a guess.
+# visible Calculator present after the trial that was not there before, excluding independently observed XAML popups.
+# Keep the raw probe intact for protection/cleanup checks. None or several main candidates is an error, never a guess.
 def new_calculator_window(before, observed):
     old = set(re.findall(r'^calculator=(\d+)', before, re.MULTILINE))
-    new = sorted(set(re.findall(r'^calculator=(\d+)', observed, re.MULTILINE)) - old)
+    popups = set(re.findall(r'^class=(\d+) Xaml_WindowedPopupClass\s*$', observed, re.MULTILINE))
+    new = sorted(set(re.findall(r'^calculator=(\d+)', observed, re.MULTILINE)) - old - popups)
     if len(new) != 1:
         raise ValueError(f'expected exactly one new Calculator window, observed {new}')
     pids = dict(re.findall(r'^window=(\d+) pid=(\d+)\s*$', observed, re.MULTILINE))
     if new[0] not in pids:
         raise ValueError('the new Calculator window has no observed process identity')
-    return new[0], int(pids[new[0]])
+    return owned_window(before, {'hwnd': new[0], 'pid': pids[new[0]]})
 
 
 # The actor's window: its own claim when it wrote one (ownership.json or result.json), else the observed new window.
