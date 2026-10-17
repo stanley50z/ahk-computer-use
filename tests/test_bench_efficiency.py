@@ -1,5 +1,8 @@
 """Token and runtime scoring uses generated payloads, not model-response or end-to-end latency."""
 
+import json
+from pathlib import Path
+
 import pytest
 
 from bench.efficiency import measure_efficiency
@@ -146,6 +149,38 @@ def test_literal_python_helper_copy_preserves_provenance_and_follows_replaced_ru
         assert result['code_tokens']['payloads'] == []
 
 
+@pytest.mark.parametrize('operands', [
+    "'s/, 0)/, 1600)/' s.ahk",
+    "-e 's/, 0)/, 1600)/' -- s.ahk",
+    "--expression='s/, 0)/, 1600)/' s.ahk",
+])
+def test_sed_expression_operands_do_not_include_a_filename_starting_with_s(operands):
+    tools = [
+        call('source', 'write', {'path': 's.ahk', 'content': 'Click(1, 0)\n'}, 1, 2),
+        call('patch', 'bash', {'command': 'sed -i ' + operands}, 3, 4),
+        call('run', 'bash', {'command': 'acu run s.ahk'}, 5, 6),
+    ]
+    result = measure_efficiency(metrics(tools), 'claude-acu')
+    assert result['computer_use']['attribution_complete']
+    assert result['code_tokens']['output_share_percent_estimate'] is not None
+    assert {p['call_id'] for p in result['code_tokens']['payloads']} == {'source', 'patch', 'run'}
+
+
+@pytest.mark.parametrize(('operands', 'expected_calls'), [
+    ("s.sh -e 's/cua-driver/echo/'", 0),
+    ("'s/cua-driver/echo/' -e 's/noop/noop/' s.sh", 1),
+])
+def test_sed_explicit_program_options_determine_bare_operands_even_when_they_come_later(operands, expected_calls):
+    tools = [
+        call('source', 'write', {'path': 's.sh', 'content': 'cua-driver click {}\n'}, 1, 2),
+        call('patch', 'bash', {'command': 'sed -i ' + operands}, 3, 4),
+        call('run', 'bash', {'command': 'bash s.sh'}, 5, 6),
+    ]
+    result = measure_efficiency(metrics(tools), 'claude-cua')
+    assert result['computer_use']['attribution_complete']
+    assert result['computer_use']['call_count'] == expected_calls
+
+
 def test_literal_sed_replacement_removes_the_old_runtime_route_from_helper_state():
     tools = [
         call('source', 'write', {'path': 'ui.py', 'content': "import subprocess\nsubprocess.run(['cua-driver','click','{}'])\n"}, 1, 2),
@@ -156,6 +191,64 @@ def test_literal_sed_replacement_removes_the_old_runtime_route_from_helper_state
     assert result['computer_use']['attribution_complete']
     assert result['computer_use']['call_count'] == 0
     assert result['code_tokens']['payloads'] == []
+
+
+def test_captured_shell_patches_keep_the_follow_on_host_execution_and_source_provenance():
+    tools = json.loads((Path(__file__).parent / 'fixtures/estimator-source-patches.json').read_text(encoding='utf-8'))
+    result = measure_efficiency(metrics(tools), 'claude-cua')
+    assert [c['id'] for c in result['computer_use']['calls']] == [
+        'toolu_01PLfvUr7aK4BHrzmk7N2TSi',
+        'toolu_01Ddh3RCetRDbHmZbcC2SZz7',
+        'toolu_01W5s3uSaNhUiCjFfJbDJdaS',
+    ]
+    assert result['computer_use']['busy_seconds'] == pytest.approx(65.4358812)
+    assert result['computer_use']['attribution_complete']
+    assert result['code_tokens']['estimated_tokens'] == 805
+    assert [(p['call_id'], p['estimated_tokens']) for p in result['code_tokens']['payloads']] == [
+        ('toolu_01Ddh3RCetRDbHmZbcC2SZz7', 129),
+        ('toolu_01PLfvUr7aK4BHrzmk7N2TSi', 587),
+        ('toolu_01W5s3uSaNhUiCjFfJbDJdaS', 89),
+    ]
+
+
+@pytest.mark.parametrize('program', [
+    's/^cua-driver.*/echo removed/',
+    's/cua-driver click {}$/echo/; s/echo/printf/',
+    's/cua-driver/echo/g',
+])
+def test_supported_sed_program_rechecks_the_route_after_replacing_it(program):
+    tools = [
+        call('source', 'write', {'path': 's.sh', 'content': 'cua-driver click {}\n'}, 1, 2),
+        call('patch', 'bash', {'command': f"sed -i '{program}' s.sh; bash s.sh"}, 3, 4),
+    ]
+    result = measure_efficiency(metrics(tools), 'claude-cua')
+    assert result['computer_use']['attribution_complete']
+    assert result['computer_use']['call_count'] == 0
+    assert result['code_tokens']['payloads'] == []
+
+
+@pytest.mark.parametrize('operands', [
+    "'s/^cua-driver.*$/echo removed/' s.sh",
+    "-E 's/cua-driver/echo/' s.sh",
+    "-f rules.sed s.sh",
+    "--file=rules.sed s.sh",
+    "-e 's/cua-driver/echo/; 1d' s.sh",
+    "'s/^cua-driver.*/echo\n/' s.sh",
+])
+def test_unsupported_sed_mutations_leave_an_unresolved_execution_not_a_stale_route(operands):
+    tools = [
+        call('source', 'write', {'path': 's.sh', 'content': 'cua-driver click {}\n'}, 1, 2),
+        call('patch', 'bash', {'command': 'sed -i ' + operands}, 3, 4),
+        call('run', 'bash', {'command': 'bash s.sh'}, 5, 6),
+    ]
+    result = measure_efficiency(metrics(tools), 'claude-cua')
+    assert result['computer_use']['call_count'] == 0
+    assert not result['computer_use']['attribution_complete']
+    assert result['code_tokens']['output_share_percent_estimate'] is None
+    assert any(note['call_id'] == 'patch' and 'unsupported in-place' in note['reason']
+               for note in result['code_tokens']['review_notes'])
+    assert any(note['call_id'] == 'run' and 'source unavailable' in note['reason']
+               for note in result['code_tokens']['review_notes'])
 
 
 def test_uncaptured_nested_helper_keeps_attribution_explicitly_unknown():
