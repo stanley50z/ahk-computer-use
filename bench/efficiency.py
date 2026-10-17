@@ -139,6 +139,91 @@ def shell_commands(text):
     return normalized
 
 
+# Separate sed program operands from filenames; unsupported options must not certify a replay.
+def sed_operands(arguments):
+    expressions, files = [], []
+    supported, positional, program_supplied = True, False, False
+    iterator = iter(arguments)
+    for argument in iterator:
+        if not positional and argument == '--':
+            positional = True
+        elif not positional and (argument.startswith('-i') or argument == '--in-place' or argument.startswith('--in-place=')):
+            continue
+        elif not positional and argument in ('-e', '--expression', '-f', '--file'):
+            program_supplied = True
+            operand = next(iterator, None)
+            if operand is None:
+                supported = False
+            elif argument in ('-e', '--expression'):
+                expressions.append(operand)
+            else:
+                supported = False
+        elif not positional and (argument.startswith('-e') or argument.startswith('--expression=')):
+            program_supplied = True
+            expressions.append(argument[2:] if argument.startswith('-e') else argument.split('=', 1)[1])
+        elif not positional and (argument.startswith('-f') or argument.startswith('--file=')):
+            program_supplied, supported = True, False
+        elif not positional and argument.startswith('-'):
+            supported = False
+        else:
+            files.append(argument)
+    # GNU sed recognizes options after bare operands; any -e/-f makes every bare operand a filename.
+    if not program_supplied and files:
+        expressions.append(files.pop(0))
+    return expressions, files, supported
+
+
+# Replay a restricted sed BRE subset: literals, literal suffixes, and anchored literal-prefix whole lines.
+# Replacement escapes are limited to a literal backslash or delimiter; no actor code is executed.
+def replay_sed(text, expressions):
+    for expression in expressions:
+        if '\n' in expression:
+            raise ValueError('unsupported multiline sed expression')
+        remaining = expression.strip()
+        while remaining:
+            if len(remaining) < 2 or remaining[0] != 's' or remaining[1].isalnum() or remaining[1] in '\\ \t\n':
+                raise ValueError('unsupported sed expression')
+            delimiter = remaining[1]
+            fields, position = [], 2
+            for _ in range(2):
+                start = position
+                while position < len(remaining) and remaining[position] != delimiter:
+                    position += 2 if remaining[position] == '\\' else 1
+                if position >= len(remaining):
+                    raise ValueError('unterminated sed substitution')
+                fields.append(remaining[start:position])
+                position += 1
+            flags, separator, rest = remaining[position:].partition(';')
+            flags = flags.strip()
+            if flags not in ('', 'g'):
+                raise ValueError('unsupported sed substitution flags')
+            old, new = fields
+            prefix = old.startswith('^') and old.endswith('.*')
+            suffix = old.endswith('$')
+            literal = old[1:-2] if prefix else old[:-1] if suffix else old
+            if not literal or any(char in literal for char in '.*[^$\\'):
+                raise ValueError('unsupported sed search pattern')
+            replacement, index = '', 0
+            while index < len(new):
+                char = new[index]
+                if char == '&':
+                    raise ValueError('unsupported sed replacement reference')
+                if char == '\\':
+                    index += 1
+                    if index == len(new) or new[index] not in ('\\', delimiter):
+                        raise ValueError('unsupported sed replacement escape')
+                    char = new[index]
+                replacement += char
+                index += 1
+            pattern = ('^' if prefix else '') + re.escape(literal) + ('.*' if prefix else '$' if suffix else '')
+            # sed's pattern space excludes LF only, not CR or other Python splitlines separators.
+            lines = text.split('\n')
+            text = '\n'.join(re.sub(pattern, lambda match: replacement, line, count=0 if flags == 'g' else 1)
+                             for line in lines)
+            remaining = rest.lstrip() if separator else ''
+    return text
+
+
 # Identify Python helper imports and actual subprocess invocation literals; quoted report text is not a route.
 def python_routes(text):
     try:
@@ -541,30 +626,27 @@ def measure_efficiency(measurements, arm):
                         scripts[new] = scripts[old]
                         if executable_name == 'mv' and old != new:
                             del scripts[old]
-                elif executable_name in ('sed', 'perl') and any('-i' in argument for argument in command[1:]):
-                    expressions = [argument for argument in command[1:] if re.match(r'^s[^\w\s]', argument)]
-                    for argument in command[1:]:
+                elif executable_name in ('sed', 'perl') and any(
+                        argument.startswith('-i') or argument == '--in-place' or argument.startswith('--in-place=')
+                        for argument in command[1:]):
+                    if executable_name == 'sed':
+                        expressions, targets, supported = sed_operands(command[1:])
+                    else:
+                        expressions, targets, supported = [], command[1:], False
+                    for argument in targets:
                         key = binding(argument, identity)
                         if key is None:
                             continue
-                        if not expressions:
+                        if not supported or not expressions:
                             invalidate_source(argument, identity, f'unsupported in-place source patch for {argument}')
                             continue
-                        patched, valid = scripts[key].text, True
-                        for expression in expressions:
-                            parts = expression[2:].split(expression[1])
-                            if (executable_name != 'sed' or len(parts) != 3 or not parts[0]
-                                    or parts[2] not in ('', 'g') or any(char in parts[0] for char in '.*[^$\\')
-                                    or any(char in parts[1] for char in '&\\')):
-                                invalidate_source(argument, identity, f'unsupported in-place source patch for {argument}')
-                                valid = False
-                                break
-                            old, new, flags = parts
-                            patched = ''.join(line.replace(old, new, -1 if flags == 'g' else 1)
-                                              for line in patched.splitlines(keepends=True))
-                        if valid:
-                            scripts[key].text = patched
-                            scripts[key].payloads.add(payload(identity, f'patch-{key}', code, 'generated script edit command'))
+                        try:
+                            patched = replay_sed(scripts[key].text, expressions)
+                        except ValueError as error:
+                            invalidate_source(argument, identity, f'unsupported in-place source patch for {argument}: {error}')
+                            continue
+                        scripts[key].text = patched
+                        scripts[key].payloads.add(payload(identity, f'patch-{key}', code, 'generated script edit command'))
             for text in inline_python:
                 try:
                     route, imported, warnings, invoked = python_routes(text)
