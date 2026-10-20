@@ -28,6 +28,10 @@ ACU skills and prompts must remain benchmark-neutral. Never add Illustrator-, Pe
 
 Inside this repository `acu` is the computer-use skill and the user-level `cua-driver` skill is switched off: by `skillOverrides` in `.claude/settings.json` for Claude Code, by `permission.skill` in `opencode.json` for OpenCode, and by `.pi/extensions/acu-only.ts` for Pi. Codex has no per-project switch, so in Codex use `acu` for desktop work and leave `cua-driver` alone.
 
+## Benchmark reports
+
+Write benchmark reports as self-contained HTML, with findings and summaries in the HTML rather than a separate Markdown deliverable. When final-image evidence exists, embed a labeled side-by-side comparison of all scheduled trials, including failed or incomplete outputs; mark missing images explicitly. Use consistent scale and label each arm, trial and outcome. Keep raw evidence unchanged; external links to it may supplement the embedded comparison. A link alone is not the comparison. By the user's 2026-10-20 decision, apply this to the current and future reports; leave historical reports unchanged unless asked.
+
 ## Wiki maintenance
 
 Read `docs/openwiki-sync.md` when installing the post-commit hook, investigating Wiki sync failures, or retrying publication. Project commit and push operations finish without waiting for or repairing the background Wiki job.

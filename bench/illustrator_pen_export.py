@@ -242,7 +242,13 @@ def _export_live_drawing(run_dir, observer, before, document, expected_document)
         encoded = run_dir / f'grading/encoded-export-{uuid.uuid4().hex[:6]}.png'
         try:
             exported = native_observer(run_dir, observer, 'export', before=before, document=document, render=str(raw))
-            if exported['document_before'] != expected_document or exported['document_after'] != expected_document:
+            # Illustrator can mark unchanged artwork dirty, even on a failed export.
+            # Accept that flag on retry too; identity and all other metadata must still match.
+            expected_dirty = dict(expected_document, saved=False)
+            expected_before = (expected_document,) if attempt == 1 else (expected_document, expected_dirty)
+            expected_after = (exported['document_before'], expected_dirty)
+            if (exported['document_before'] not in expected_before
+                    or exported['document_after'] not in expected_after):
                 raise ValueError('Drawing changed during maintainer export; refusing cleanup')
             with Image.open(raw) as image:
                 image.load()

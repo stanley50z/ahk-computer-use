@@ -234,7 +234,8 @@ def test_illustrator_pen_export_cleanup_protects_existing_documents_and_refuses_
 
 # Simulate only the external AHK/Illustrator boundary; cleanup, ownership, encoding and grading run normally.
 def drawing_cleanup_fixture(tmp_path, *, export_errors=0, straight=False, wrong_fill=False,
-                            render_size=(800, 800), export_mutates_drawing=False, flat_loop=False, native_fill_unknown=False):
+                            render_size=(800, 800), export_mutates_drawing=False, flat_loop=False,
+                            native_fill_unknown=False, export_marks_dirty=False):
     directory = tmp_path / 'trial'
     prepare('pi-acu', directory, scenario='illustrator-pen-export')
     existing = {'path': str(tmp_path / 'existing.ai'), 'name': 'existing.ai', 'saved': False,
@@ -269,11 +270,13 @@ def drawing_cleanup_fixture(tmp_path, *, export_errors=0, straight=False, wrong_
                       'paths': [{'closed': True, 'points': points}]}
         elif phase == 'export':
             state['export_attempts'] += 1
+            original = dict(drawing)
+            if export_marks_dirty:
+                drawing['saved'] = False
             if state['export_attempts'] <= export_errors:
                 result = {'error': 'fixture export failed', 'stack': 'fixture native stack'}
             else:
                 image.save(config['render'])  # Metadata encoding belongs to the maintainer, not the drawing.
-                original = dict(drawing)
                 if export_mutates_drawing:
                     drawing['artwork_signature'] = 'changed-by-export'
                 result = {'document_before': original, 'document_after': drawing}
@@ -293,10 +296,12 @@ def drawing_cleanup_fixture(tmp_path, *, export_errors=0, straight=False, wrong_
     return directory, observer, state, image
 
 
-def test_cleanup_exports_unsaved_drawing_unchanged_before_closing_and_preserves_existing_documents(tmp_path):
+@pytest.mark.parametrize('initial_saved', [False, True])
+def test_cleanup_exports_unchanged_artwork_when_export_marks_document_dirty(tmp_path, initial_saved):
     from bench.illustrator_pen_export import cleanup_desktop
 
-    directory, observer, state, native_image = drawing_cleanup_fixture(tmp_path)
+    directory, observer, state, native_image = drawing_cleanup_fixture(tmp_path, export_marks_dirty=True)
+    state['documents'][-1]['saved'] = initial_saved
     # An unsolicited actor file is not the new protocol's export evidence.
     Image.new('RGB', (400, 400), 'red').save(directory / 'workspace/Cloud9-Recreated.png')
     result = cleanup_desktop(directory, observer, export_drawing=True)
@@ -408,7 +413,8 @@ def test_cleanup_retains_invalid_sized_export_as_infrastructure_failure_with_log
 def test_cleanup_retries_only_export_and_classifies_exhaustion_as_infrastructure_failure(tmp_path, failures):
     from bench.illustrator_pen_export import cleanup_desktop
 
-    directory, observer, state, _ = drawing_cleanup_fixture(tmp_path, export_errors=failures)
+    directory, observer, state, _ = drawing_cleanup_fixture(tmp_path, export_errors=failures, export_marks_dirty=True)
+    state['documents'][-1]['saved'] = True
     result = cleanup_desktop(directory, observer, export_drawing=True)
     assert state['export_attempts'] == 2
     assert state['png_preferences'] == {'ResolutionR': 144}, 'restore preferences even when preserving an unexported drawing'
