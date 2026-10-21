@@ -58,11 +58,14 @@ def is_tb3(scenario):
     return str(scenario).startswith('tb3.')
 
 
-# Actor prompt: where the document is, the task request, and the shared open-document ending.
+# Actor prompt: where the document is, the task request, where to keep files, and the shared open-document ending.
+# prepare() replaces <WORKSPACE> with the trial workspace, the actor's working directory.
 def prompt(scenario):
     task = TASKS[scenario]
     app = APPS[task['app']]
-    return f"{app['name']} has {task['template']} open.\n\n{task['request']}\n\nStop when the task is done, leaving the {app['noun']} open.\n"
+    return (f"{app['name']} has {task['template']} open.\n\n{task['request']}\n\n"
+            "Your working directory is <WORKSPACE>. Save any screenshots or other files you create there.\n\n"
+            f"Stop when the task is done, leaving the {app['noun']} open.\n")
 
 
 def office_processes():

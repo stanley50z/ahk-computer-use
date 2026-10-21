@@ -127,6 +127,7 @@ def test_run_trial_persists_bounded_snapshots_and_integrates_conduct(tmp_path, m
         assert not summary['conduct_passed']
         assert summary['conduct_problems'] == ['runtime screenshot overwrote pre-existing file']
         assert json.loads((tmp_path / 'conduct.json').read_text(encoding='utf-8'))['runtime_writes']['outputs'][0]['status'] == 'preexisting_changed'
+        assert sentinel.is_file() and json.loads((tmp_path / 'conduct.json').read_text(encoding='utf-8'))['stray_files'] == [], 'an overwritten pre-existing file stays put'
     before = json.loads((tmp_path / 'runtime-files-before.json').read_text(encoding='utf-8'))
     after = json.loads((tmp_path / 'runtime-files-after.json').read_text(encoding='utf-8'))
     assert len(before['roots']) == 2
@@ -206,3 +207,30 @@ def test_complete_json_in_mixed_shell_stdout_detects_replaced_file_identity(tmp_
     body = 'helper output\n' + json.dumps({'structuredContent': {'screenshot_file_path': path}}, indent=2) + '\nfinished'
     result = audit(tmp_path, events('claude', path, body=body), before, after)
     assert not result['passed']
+
+
+# Files the actor created outside its run folder move into <run>/stray/; files that existed before stay put.
+def test_actor_files_outside_the_run_folder_move_into_stray(tmp_path):
+    from pathlib import Path
+    from bench.run import move_stray_files
+    run_dir, home = tmp_path / 'run', tmp_path / 'home'
+    for directory in (run_dir / 'workspace', home / 'repo'):
+        directory.mkdir(parents=True)
+    repo_file, fresh, older, kept, inside = (home / 'repo/excel.png', home / 'shot.png', home / 'excel.png',
+                                            home / 'age-before.png', run_dir / 'workspace/own.png')
+    for path in (repo_file, fresh, older, kept, inside):
+        path.write_bytes(b'png')
+    identity = {'size': 3}
+    conduct = {'guarded_files': {'added': [str(repo_file), str(inside)]},
+               'runtime_writes': {'outputs': [{'path': str(fresh), 'before': None, 'after': identity},
+                                              {'path': str(older), 'before': None, 'after': identity},
+                                              {'path': str(kept), 'before': identity, 'after': identity},
+                                              {'path': str(home / 'gone.png'), 'before': None, 'after': None},
+                                              {'path': 'c:/tmp/uncovered.png', 'status': 'unverified'}]}}
+
+    moved = move_stray_files(run_dir, conduct)
+
+    assert [Path(m['to']).name for m in moved] == ['excel.png', 'shot.png', 'excel-2.png']
+    assert not repo_file.exists() and not fresh.exists() and not older.exists()
+    assert kept.is_file() and inside.is_file(), 'pre-existing files and files inside the run folder are not moved'
+    assert all(Path(m['to']).parent == run_dir / 'stray' for m in moved)

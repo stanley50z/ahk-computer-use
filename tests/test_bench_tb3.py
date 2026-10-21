@@ -6,7 +6,7 @@ import shutil
 import zipfile
 from xml.sax.saxutils import escape
 
-from bench.run import ROOT, prepare
+from bench.run import ROOT, actor_path, prepare
 from bench.tb3 import SENTENCES, TASKS, check_document, check_input, docx_paragraphs, grade, prompt, template_path
 
 ASSETS = ROOT / 'bench/assets/gui360'
@@ -19,6 +19,7 @@ def test_every_tb3_scenario_prepares_its_request_and_unmodified_template(tmp_pat
         assert scenario_file.partition('\n')[2] == prompt(scenario), 'regenerate the scenario file from bench.tb3'
         sent = (tmp_path / scenario / 'prompt.txt').read_text(encoding='utf-8')
         assert task['request'] in sent and task['template'] in sent
+        assert f"Your working directory is {actor_path(tmp_path / scenario / 'workspace')}." in sent and '<WORKSPACE>' not in sent
         copied = tmp_path / scenario / 'workspace' / task['template']
         assert copied.read_bytes() == template_path(task['template']).read_bytes()
         assert plan['assets'] == {task['template']: hashlib.sha256(copied.read_bytes()).hexdigest()}

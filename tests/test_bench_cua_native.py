@@ -18,8 +18,8 @@ if args[0] == 'status':
     print('Cua Driver daemon is running' if state.read_text() == 'up' else 'Cua Driver daemon is not running')
 elif args[0] == 'stop':
     state.write_text('down'); print('stopped')
-elif args[:2] == ['autostart', 'kick']:
-    state.write_text('up'); print('Started autostart entry')
+elif args[:2] == ['autostart', 'kick'] or args[0] == 'bench-task':
+    state.write_text('up'); print('Started ' + args[0])
 elif args[0] == 'list_sessions':
     print(json.dumps({'next_cursor': None, 'sessions': []}, indent=2))
 '''
@@ -36,7 +36,8 @@ def test_only_the_cua_arm_restarts_the_daemon():
     assert [arm for arm in ARMS if uses_cua_daemon(arm)] == ['pi-cua', 'claude-cua'], 'the selected runtime, not the harness prefix, decides'
 
 
-def test_cua_daemon_is_stopped_and_restarted_before_a_trial_and_the_record_is_kept(tmp_path):
+# A stand-in cua-driver whose daemon state lives in a file; every call is logged beside it.
+def driver_stub(tmp_path):
     stub = tmp_path / 'driver.py'
     stub.write_text(STUB, encoding='utf-8')
     state = tmp_path / 'daemon.state'
@@ -47,6 +48,11 @@ def test_cua_daemon_is_stopped_and_restarted_before_a_trial_and_the_record_is_ke
     else:
         wrapper.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{stub}" "$@" "{state}"\n', encoding='utf-8')
         wrapper.chmod(0o755)
+    return wrapper
+
+
+def test_cua_daemon_is_stopped_and_restarted_before_a_trial_and_the_record_is_kept(tmp_path):
+    wrapper = driver_stub(tmp_path)
 
     record = restart_cua_daemon(tmp_path, driver=str(wrapper))
 
@@ -55,6 +61,27 @@ def test_cua_daemon_is_stopped_and_restarted_before_a_trial_and_the_record_is_ke
     assert calls.index('stop') < calls.index('autostart kick') < calls.index('list_sessions {}')
     saved = json.loads((tmp_path / 'daemon-restart.json').read_text(encoding='utf-8'))
     assert 'is running' in saved['after'] and 'not running' not in saved['after']
+
+
+# A trial restarts the daemon through the bench task in its workspace; the restore uses the installed entry.
+def test_cua_daemon_starts_in_the_trial_workspace_through_the_bench_task(tmp_path, monkeypatch):
+    import bench.cua_bench_task as task
+    wrapper = driver_stub(tmp_path)
+    monkeypatch.setattr(task, 'CWD_FILE', tmp_path / 'cwd.txt')
+    monkeypatch.setattr(task, 'installed', lambda: True)
+    monkeypatch.setattr(task, 'start_command', lambda: [str(wrapper), 'bench-task'])
+
+    record = restart_cua_daemon(tmp_path, driver=str(wrapper), cwd=tmp_path / 'workspace')
+    restore = restart_cua_daemon(tmp_path, driver=str(wrapper), record_name='daemon-restore.json')
+
+    assert record['passed'] and restore['passed']
+    assert (tmp_path / 'cwd.txt').read_text(encoding='utf-8') == str((tmp_path / 'workspace').resolve())
+    calls = (tmp_path / 'daemon.log').read_text(encoding='utf-8').splitlines()
+    assert calls.index('bench-task') < calls.index('autostart kick')
+    assert (tmp_path / 'daemon-restart.json').is_file() and (tmp_path / 'daemon-restore.json').is_file()
+    monkeypatch.setattr(task, 'installed', lambda: False)
+    with pytest.raises(RuntimeError, match='cua_bench_task.py install'):
+        restart_cua_daemon(tmp_path, driver=str(wrapper), cwd=tmp_path)
 
 
 def test_native_app_pipe_transport_keeps_the_app_pipe_and_records_it(tmp_path):

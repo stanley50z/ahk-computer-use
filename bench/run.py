@@ -529,24 +529,36 @@ def task_time(agent_start_s, tools, pattern, workspace):
 # The shared cua-driver daemon remembers ended session labels, and every fresh CUA actor named its first session after
 # the scenario, so each trial after the first paid a rejected call. By the user's decision (2026-10-10) the daemon is
 # restarted before every CUA trial, outside timing, so the actor meets the same empty state the first one did.
-def restart_cua_daemon(run_dir, driver='cua-driver', timeout_s=30):
+# With cwd, the daemon restarts through the bench copy of its autostart task (bench/cua_bench_task.py) in that
+# directory, so a relative screenshot_out_file lands there instead of the home folder; without cwd, the installed
+# autostart entry restores the as-installed daemon.
+def restart_cua_daemon(run_dir, driver='cua-driver', timeout_s=30, cwd=None, record_name='daemon-restart.json'):
+    from bench.cua_bench_task import BENCH_TASK, CWD_FILE, installed, start_command
+
+    if cwd and not installed():
+        raise RuntimeError(f'{BENCH_TASK} is not registered; run python bench/cua_bench_task.py install once (UAC)')
+
     def status():
         return subprocess.run([driver, 'status'], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=30).stdout
 
-    record = {'driver': driver, 'before': status()}
+    record = {'driver': driver, 'cwd': str(cwd) if cwd else None, 'before': status()}
     record['stop'] = subprocess.run([driver, 'stop'], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=60).stdout
     deadline = time.monotonic() + timeout_s
     while 'is running' in status() and time.monotonic() < deadline:
         time.sleep(0.5)
-    record['start'] = subprocess.run([driver, 'autostart', 'kick'], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=60).stdout
+    if cwd:
+        CWD_FILE.parent.mkdir(parents=True, exist_ok=True)
+        CWD_FILE.write_text(str(Path(cwd).resolve()), encoding='utf-8')
+    start = start_command() if cwd else [driver, 'autostart', 'kick']
+    record['start'] = subprocess.run(start, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=60).stdout
     while 'is running' not in status() and time.monotonic() < deadline:
         time.sleep(0.5)
     record['after'] = status()
     record['sessions'] = subprocess.run([driver, 'list_sessions', '{}'], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=60).stdout
     record['passed'] = 'is running' in record['after'] and '"sessions": []' in record['sessions'].replace('\n', '').replace(' ', '').replace('"sessions":[]', '"sessions": []')
-    save_json(Path(run_dir) / 'daemon-restart.json', record)
+    save_json(Path(run_dir) / record_name, record)
     if not record['passed']:
-        raise RuntimeError('cua-driver daemon did not come back empty; see daemon-restart.json')
+        raise RuntimeError(f'cua-driver daemon did not come back empty; see {record_name}')
     return record
 
 
@@ -902,6 +914,32 @@ def guarded_roots(plan):
     return [root for root in roots if root.exists()]
 
 
+# Move files the actor demonstrably created outside its run folder into <run>/stray/, so none outlives the trial and
+# trips a later one. Evidence: files added under a guarded root, and screenshot paths the runtime reported that were
+# absent from the home or temp folder before the trial. Overwritten pre-existing files stay put; conduct is unchanged.
+def move_stray_files(run_dir, conduct):
+    run_dir = Path(run_dir).resolve()
+    candidates = list(conduct['guarded_files']['added'])
+    candidates += [output['path'] for output in conduct['runtime_writes']['outputs']
+                   if 'after' in output and output['before'] is None and output['after'] is not None]
+    moved = []
+    for source in dict.fromkeys(Path(path) for path in candidates):
+        if not source.is_file() or source.resolve().is_relative_to(run_dir):
+            continue
+        target = run_dir / 'stray' / source.name
+        for number in range(2, 1000):
+            if not target.exists():
+                break
+            target = target.with_name(f'{source.stem}-{number}{source.suffix}')
+        target.parent.mkdir(exist_ok=True)
+        try:
+            shutil.move(source, target)
+            moved.append({'from': str(source), 'to': str(target)})
+        except OSError as error:
+            moved.append({'from': str(source), 'error': str(error)})
+    return moved
+
+
 def fingerprint_diff(before, after):
     return {'changed': sorted(p for p in before if p in after and before[p] != after[p]),
             'added': sorted(p for p in after if p not in before), 'removed': sorted(p for p in before if p not in after)}
@@ -1074,7 +1112,7 @@ def run_trial(plan, reference_tps=None):
     environment.update(plan['environment_overrides'])
     environment['PYTHONUTF8'] = '1'
     if uses_cua_daemon(arm):
-        restart_cua_daemon(run_dir)
+        restart_cua_daemon(run_dir, cwd=plan['workspace'])
     if plan.get('native_transport') == 'app-pipe':
         pipe_name = plan['native_pipe'].rsplit('\\', 1)[-1]
         if os.name == 'nt' and pipe_name not in os.listdir('\\\\.\\pipe\\'):
@@ -1159,6 +1197,7 @@ def run_trial(plan, reference_tps=None):
             if changed:
                 conduct['passed'] = False
                 conduct['problems'].append('pre-existing Illustrator documents changed')
+        conduct['stray_files'] = move_stray_files(run_dir, conduct)
         save_json(run_dir / 'conduct.json', conduct)
         if is_office:
             # Audit the actor first, then GUI-360's collection (final screenshot, COM save, quit) and the file check.
@@ -1206,6 +1245,11 @@ def run_trial(plan, reference_tps=None):
         raise
     finally:
         private_auth.unlink(missing_ok=True)
+        if uses_cua_daemon(arm):
+            try:
+                restart_cua_daemon(run_dir, record_name='daemon-restore.json')
+            except Exception:  # noqa: BLE001 - the next CUA trial restarts it anyway; keep the evidence, finish cleanup
+                (run_dir / 'daemon-restore-error.txt').write_text(traceback.format_exc(), encoding='utf-8')
         ownership_file = run_dir / 'workspace/ownership.json'
         try:
             if is_illustrator:
