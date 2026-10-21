@@ -42,7 +42,7 @@ CLAUDE_TOOLS = ['Read', 'Write', 'Edit', 'Bash']
 ARMS = ('pi-acu', 'pi-cua', 'pi-computer-use', 'claude-acu', 'claude-cua')
 NATIVE_TOOLS = ['mcp__node_repl__js', 'mcp__node_repl__js_reset',
                 'mcp__node_repl__js_add_node_module_dir', 'mcp__node_repl__turn_ended']
-SCENARIOS = ('calculator', 'illustrator-pen-export', 'tb3.1', 'tb3.2')
+SCENARIOS = ('calculator', 'illustrator-pen-export', 'tb3.1', 'tb3.2', 'tb3.3', 'tb3.4')
 WINDOW_AUDIT_POLICY = 'diagnostic-only-v1'
 # Claude Code runs Opus; Pi comparisons hold GPT-6 Astra and low reasoning fixed.
 ARM_MODELS = {arm: ('claude-opus-5-5', 'low') for arm in ('claude-acu', 'claude-cua')}
@@ -705,9 +705,9 @@ def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=No
         from bench.aggregate import TRIAL_POLICY
         plan['trial_policy'] = dict(TRIAL_POLICY)
     if scenario_name.startswith('tb3.'):
-        from bench.tb3 import GUI360_REVISION, STEP_LIMIT, TASKS, WINDOW_DIPS
+        from bench.tb3 import GUI360_REVISION, STEP_LIMIT, TASKS, WINDOW_DIPS, template_path
         task = TASKS[scenario_name]
-        shutil.copyfile(ROOT / 'bench/assets/gui360' / task['template'], workspace / task['template'])
+        shutil.copyfile(template_path(task['template']), workspace / task['template'])
         plan['assets'] = {task['template']: hashlib.sha256((workspace / task['template']).read_bytes()).hexdigest()}
         plan['tb3'] = {**task, 'gui360_revision': GUI360_REVISION, 'window_dips': list(WINDOW_DIPS), 'step_limit': STEP_LIMIT}
         plan['grading'] = {'mode': 'ooxml-file-check-v1', 'llm_judge': None}
@@ -1082,6 +1082,7 @@ def run_trial(plan, reference_tps=None):
     is_illustrator = plan.get('scenario') == 'illustrator-pen-export'
     is_office = str(plan.get('scenario', '')).startswith('tb3.')
     office_collected = False
+    recorder = None
     illustrator_cleanup = None
     illustrator_cleanup_started = False
     actor_started = False
@@ -1099,10 +1100,15 @@ def run_trial(plan, reference_tps=None):
         from bench.runtime_writes import snapshot_runtime_files
         runtime_before = snapshot_runtime_files()
         save_json(run_dir / 'runtime-files-before.json', runtime_before)
+        if is_office:
+            from bench.tb3 import start_recorder, stop_recorder
+            recorder = start_recorder(run_dir)  # only the actor's input falls inside the recording
         actor_started = True
         try:
             records, wall, exit_code = capture(executable_command(plan['command']), plan['workspace'], environment, run_dir)
         finally:
+            if recorder is not None:
+                stop_recorder(run_dir, recorder)
             runtime_after = snapshot_runtime_files()
             save_json(run_dir / 'runtime-files-after.json', runtime_after)
         if harness(arm) == 'pi':
@@ -1190,8 +1196,8 @@ def run_trial(plan, reference_tps=None):
             # Full Pen/Bézier compliance is still reviewed from history; no actor report or arbitrary segment threshold.
         if is_office:
             summary.update(scenario=plan['scenario'], gui360_id=plan['tb3']['gui360_id'],
-                           file_check=verification['file_check'], office_com_used=verification['office_com_used'],
-                           within_step_limit=verification['within_step_limit'])
+                           file_check=verification['file_check'], input_check=verification['input_check'],
+                           office_com_used=verification['office_com_used'], within_step_limit=verification['within_step_limit'])
         save_json(run_dir / 'summary.json', summary)
         return summary
     except Exception:

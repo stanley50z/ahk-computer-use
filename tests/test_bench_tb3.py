@@ -1,14 +1,13 @@
-"""TB3 GUI-360 Office scenarios: offline preparation, OOXML checks and the file-check verdict; no Office or desktop."""
+"""TB3 Office scenarios: offline preparation, OOXML checks, recorded-input checks and the verdict; no Office or desktop."""
 
 import hashlib
+import json
 import shutil
 import zipfile
 from xml.sax.saxutils import escape
 
-import pytest
-
 from bench.run import ROOT, prepare
-from bench.tb3 import SENTENCES, STEP_LIMIT, TASKS, check_document, docx_paragraphs, grade, prompt
+from bench.tb3 import SENTENCES, STEP_LIMIT, TASKS, check_document, check_input, docx_paragraphs, grade, prompt, template_path
 
 ASSETS = ROOT / 'bench/assets/gui360'
 
@@ -21,22 +20,26 @@ def test_every_tb3_scenario_prepares_its_request_and_unmodified_template(tmp_pat
         sent = (tmp_path / scenario / 'prompt.txt').read_text(encoding='utf-8')
         assert task['request'] in sent and task['template'] in sent
         copied = tmp_path / scenario / 'workspace' / task['template']
-        assert copied.read_bytes() == (ASSETS / task['template']).read_bytes()
+        assert copied.read_bytes() == template_path(task['template']).read_bytes()
         assert plan['assets'] == {task['template']: hashlib.sha256(copied.read_bytes()).hexdigest()}
         assert plan['tb3']['gui360_id'] == task['gui360_id'] and plan['grading'] == {'mode': 'ooxml-file-check-v1', 'llm_judge': None}
 
 
-# Rewrite one archive member, standing in for the document Office saves after a correct or partial actor run.
-def edited(template, tmp_path, member, old, new):
+# Rewrite archive members, standing in for the document Office saves after a correct or partial actor run.
+def edited(template, tmp_path, member, old, new, *more, added=None):
     target = tmp_path / f'{len(list(tmp_path.iterdir()))}-{template}'
-    with zipfile.ZipFile(ASSETS / template) as source, zipfile.ZipFile(target, 'w', zipfile.ZIP_DEFLATED) as output:
+    changes = [(member, old, new), *zip(more[::3], more[1::3], more[2::3])]
+    with zipfile.ZipFile(template_path(template)) as source, zipfile.ZipFile(target, 'w', zipfile.ZIP_DEFLATED) as output:
         for item in source.infolist():
             data = source.read(item)
-            if item.filename == member:
-                text = data.decode('utf-8')
-                assert old in text
-                data = text.replace(old, new, 1).encode('utf-8')
+            for name, before, after in changes:
+                if item.filename == name:
+                    text = data.decode('utf-8')
+                    assert before in text
+                    data = text.replace(before, after, 1).encode('utf-8')
             output.writestr(item, data)
+        for name, data in (added or {}).items():
+            output.writestr(name, data)
     return target
 
 
@@ -97,3 +100,71 @@ def test_verdict_is_the_saved_file_check_within_the_step_limit_and_com_is_only_r
     (run_dir / 'grading/template1.docx').unlink()
     missing = grade(run_dir, plan, [])
     assert missing['passed'] is False and missing['file_check']['error'] == 'no saved document to check'
+
+
+SHEET = 'xl/worksheets/sheet1.xml'
+
+
+def test_fill_formatting_check_needs_exactly_b3_to_b10_restyled_with_values_kept(tmp_path):
+    template = template_path('budget.xlsx')
+    rows = [f'<c r="B{row}">' for row in range(3, 11)]
+    restyle = lambda refs: [part for ref in refs for part in (SHEET, ref, ref.replace('">', '" s="2">'))]
+    assert check_document('tb3.3', template, template)['passed'] is False
+    short = edited('budget.xlsx', tmp_path, *restyle(rows[:-1]))
+    assert check_document('tb3.3', short, template)['sub_scores']["B3:B10 have B2's formatting"] == 'no'
+    overwritten = edited('budget.xlsx', tmp_path, *restyle(rows), SHEET, '<v>185.4</v>', '<v>1200</v>')
+    assert check_document('tb3.3', overwritten, template)['sub_scores']['No cell values changed'] == 'no'
+    result = check_document('tb3.3', edited('budget.xlsx', tmp_path, *restyle(rows)), template)
+    assert result['passed'] is True and set(result['sub_scores'].values()) == {'yes'}
+
+
+def test_sheet_copy_check_needs_an_identical_budget_2_sheet(tmp_path):
+    template = template_path('budget.xlsx')
+    sheet = zipfile.ZipFile(template).read(SHEET)
+    copy = ('xl/workbook.xml', '</sheets>', '<sheet name="Budget (2)" sheetId="2" r:id="rId99"/></sheets>',
+            'xl/_rels/workbook.xml.rels', '</Relationships>',
+            '<Relationship Id="rId99" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+            'Target="worksheets/sheet2.xml"/></Relationships>')
+    assert check_document('tb3.4', template, template)['passed'] is False
+    altered = edited('budget.xlsx', tmp_path, *copy, added={'xl/worksheets/sheet2.xml': sheet.replace(b'<v>185.4</v>', b'<v>1</v>')})
+    assert check_document('tb3.4', altered, template)['sub_scores']['Copy has the same values and formatting'] == 'no'
+    result = check_document('tb3.4', edited('budget.xlsx', tmp_path, *copy, added={'xl/worksheets/sheet2.xml': sheet}), template)
+    assert result['passed'] is True and set(result['sub_scores'].values()) == {'yes'}
+
+
+# A recorder log of button presses and releases on window 7 (the owned Excel window) or elsewhere.
+def input_run(tmp_path, scenario, events):
+    plan = prepare('pi-acu', tmp_path / scenario, scenario=scenario)
+    run_dir = tmp_path / scenario
+    (run_dir / 'office-identity.json').write_text(json.dumps({'hwnd': 7}), encoding='utf-8')
+    lines = []
+    for kind, name, action, x, y, window in events:
+        event = {'kind': kind, 'action': action, 'x': x, 'y': y, 'window': window}
+        event.update({'button': name} if kind == 'mouse' else {'vk': name})
+        lines.append(json.dumps(event))
+    (run_dir / 'input-log.jsonl').write_text('\n'.join(lines), encoding='utf-8')
+    return check_input(run_dir, plan)
+
+
+def test_right_drag_requirement_rejects_clicks_and_other_windows(tmp_path):
+    drag = [('mouse', 'right', 'down', 100, 100, 7), ('mouse', 'right', 'up', 100, 400, 7)]
+    assert input_run(tmp_path / 'a', 'tb3.3', drag)['passed'] is True
+    assert input_run(tmp_path / 'b', 'tb3.3', [('mouse', 'right', 'down', 100, 100, 7), ('mouse', 'right', 'up', 102, 101, 7)])['passed'] is False
+    assert input_run(tmp_path / 'c', 'tb3.3', [('mouse', 'right', 'down', 100, 100, 9), ('mouse', 'right', 'up', 100, 400, 9)])['passed'] is False
+    assert input_run(tmp_path / 'd', 'tb3.3', [('mouse', 'left', 'down', 100, 100, 7), ('mouse', 'left', 'up', 100, 400, 7)])['passed'] is False
+
+
+def test_ctrl_drag_requirement_needs_ctrl_held_from_press_to_release(tmp_path):
+    held = [('key', 17, 'down', 0, 0, 7), ('mouse', 'left', 'down', 100, 900, 7), ('mouse', 'left', 'up', 300, 900, 7), ('key', 17, 'up', 0, 0, 7)]
+    assert input_run(tmp_path / 'a', 'tb3.4', held)['passed'] is True
+    early = [held[0], held[1], held[3], held[2]]
+    assert input_run(tmp_path / 'b', 'tb3.4', early)['passed'] is False, 'Ctrl released before the drop moves the sheet instead'
+    assert input_run(tmp_path / 'c', 'tb3.4', held[1:3])['passed'] is False
+    assert input_run(tmp_path / 'd', 'tb3.1', held) is None, 'a task that names no input method has no input requirement'
+
+
+def test_recorder_reads_mouse_button_flags_at_the_windows_offset():
+    import ctypes
+    from bench.input_recorder import RAWINPUT, RAWINPUTHEADER, RAWMOUSE
+    assert RAWMOUSE.usButtonFlags.offset == 4 and RAWMOUSE.lLastX.offset == 12 and ctypes.sizeof(RAWMOUSE) == 24
+    assert RAWINPUT.data.offset == ctypes.sizeof(RAWINPUTHEADER)
