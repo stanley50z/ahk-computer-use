@@ -1,0 +1,169 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>GUI-360 for ACU: feasibility and test selection</title><style>
+:root{--ink:#142b3a;--muted:#475d6b;--blue:#006d92;--pale:#eff7fb;--line:#cbdce5;--amber:#8f4800;--green:#176143;--red:#9b1c1c;--white:#fff}
+*{box-sizing:border-box}body{margin:0;background:var(--white);color:var(--ink);font:16px/1.6 "Segoe UI",Calibri,sans-serif}
+main{max-width:1240px;margin:auto;padding:44px 40px 64px}h1{font-size:2.1rem;line-height:1.2;margin:0 0 6px}h2{font-size:1.4rem;margin:44px 0 10px;padding-top:14px;border-top:2px solid var(--line)}h3{font-size:1.1rem;margin:26px 0 8px}
+.meta{color:var(--muted);margin:0 0 22px}a{color:var(--blue)}code{font:.88em Consolas,monospace;background:var(--pale);padding:1px 4px;border-radius:3px}
+.verdict{background:var(--pale);border-left:5px solid var(--blue);padding:16px 22px;margin:18px 0}.verdict p{margin:6px 0}
+.pick{border:2px solid var(--green);padding:16px 22px;margin:18px 0;border-radius:4px}.pick h3{margin-top:0;color:var(--green)}
+.table-wrap{overflow-x:auto;margin:12px 0}table{border-collapse:collapse;width:100%;font-size:.92rem}th,td{border:1px solid var(--line);padding:6px 9px;text-align:left;vertical-align:top}th{background:var(--pale)}td.n{text-align:right;font-variant-numeric:tabular-nums}
+.tag{display:inline-block;font-size:.78rem;font-weight:600;padding:0 6px;border-radius:3px;border:1px solid}.v{color:var(--green);border-color:var(--green)}.p{color:var(--blue);border-color:var(--blue)}.u{color:var(--amber);border-color:var(--amber)}.x{color:var(--red);border-color:var(--red)}
+nav ol{columns:2;margin:0;padding-left:20px}li{margin:3px 0}.small{font-size:.88rem;color:var(--muted)}
+</style></head><body><main>
+<h1>GUI-360 is a usable source of Office tasks for ACU, not a ready-made live benchmark</h1>
+<p class="meta">Feasibility research and test selection · 20 October 2026 · dataset revision <code>1c46362e</code> · read-only; nothing in <code>bench/</code> or <code>acu/</code> was changed</p>
+
+<div class="verdict">
+<p><strong>Coverage.</strong> GUI-360 covers Word, Excel and PowerPoint on Windows 11 in depth, and nothing else. Its published benchmark is offline: it scores grounding, screen parsing and next-action prediction against recorded screenshots. It ships no live task runner, reset scripts or outcome checkers.</p>
+<p><strong>What ACU can use.</strong> The task requests and the 135 template documents. A live ACU test opens a template, gives the actor the original request, and checks the resulting document with an independent maintainer checker.</p>
+<p><strong>Do not reuse the gold labels as ground truth.</strong> In the 29 trajectories I read in full, three tasks marked complete are wrong or contradictory, and about a third lean on Office API shortcuts an ACU actor does not have.</p>
+<p><strong>Recommendation.</strong> Add <code>excel_4_6298</code> as the single test. For a subset, add the 8 core tasks in <a href="#subset">section 5</a>, with 3 easy smoke tasks for integration bring-up. All of them need about 0.5 MB of templates (4.3 MB with the smoke set) and no screenshot archives. Office 16.0.20430 (Click-to-Run) is installed on this machine.</p>
+</div>
+
+<nav aria-label="Report sections"><ol>
+<li><a href="#facts">What GUI-360 contains</a></li>
+<li><a href="#catalog">Test-set catalog</a></li>
+<li><a href="#labels">Gold-label quality</a></li>
+<li><a href="#single">Best single test</a></li>
+<li><a href="#subset">Best subset</a></li>
+<li><a href="#excluded">Rejected candidates</a></li>
+<li><a href="#integration">How to add them to the bench</a></li>
+<li><a href="#leakage">Leakage and validity</a></li>
+<li><a href="#unknowns">Unknowns</a></li>
+<li><a href="#sources">Sources and method</a></li>
+</ol></nav>
+<p class="small">Labels: <span class="tag v">verified</span> read from primary source or file · <span class="tag p">proposal</span> my recommendation, not implemented · <span class="tag u">unknown</span> not established.</p>
+
+<h2 id="facts">1. What GUI-360 contains</h2>
+<div class="table-wrap"><table><thead><tr><th>Question</th><th>Finding</th><th>Status</th></tr></thead><tbody>
+<tr><td>Scale</td><td>1,225,177 recorded action steps including failed runs; successful subset: train 13,750 trajectories / 105,368 steps, bench 3,439 / 26,284. Reported images 210,736 + 52,568. The steps are not independent tasks. [1][2]</td><td><span class="tag v">verified</span></td></tr>
+<tr><td>Split</td><td>80/20 trajectory split shared by all three evaluation tasks. Test set: Word 1,409, Excel 1,087, PowerPoint 943 (file listing agrees). [2][3]</td><td><span class="tag v">verified</span></td></tr>
+<tr><td>Platform</td><td>Collected on 15 Windows 11 VMs (4 cores each) by GPT-4o, with failures re-run by GPT-4.1. No other OS or application family. [2]</td><td><span class="tag v">verified</span></td></tr>
+<tr><td>Benchmark type</td><td>Offline. <code>evaluation.py</code> scores point-in-box grounding, control matching for parsing, and function/argument/status agreement for next-action prediction. Model inference may still call an API. [4][6]</td><td><span class="tag v">verified</span></td></tr>
+<tr><td>Live environment</td><td>Templates ship (135 files under <code>templates/</code>). The paper describes TrajAgent environment prep/reset and links Microsoft UFO, but the GUI-360 code tree has no VM image, reset scripts or document-state checkers. [1][2][7]</td><td><span class="tag v">verified</span></td></tr>
+<tr><td>Action schema</td><td>Raw steps record <code>action_type</code> GUI/API, <code>function</code>, <code>args</code>, rectangle, window and desktop coordinates, status. The field is spelled <code>control_test</code> in the data, not <code>control_text</code> as the card says. Raw drag uses <code>start_x…</code>; the evaluator normalizes to <code>start_coordinate</code>. Office API functions include <code>select_text</code>, <code>select_table_range</code>, <code>insert_table</code>, <code>set_cell_value</code>. [1][5][8]</td><td><span class="tag v">verified</span></td></tr>
+<tr><td>Evaluator quirks</td><td>The action-prediction loader skips <code>drag</code> steps and steps with empty rectangles, maps <code>OVERALL_FINISH</code>→<code>FINISH</code> and <code>FINISH</code>→<code>CONTINUE</code>, and feeds prior recorded thoughts as history. [6]</td><td><span class="tag v">verified</span></td></tr>
+<tr><td>Download size</td><td>Listed files total 573.83 GB: train 41.29, test 10.08, fail 449.95, processed 72.48 GB, templates 27.2 MB. The test screenshot archive alone is 6.30 GB and PNGs are not individually addressable. <code>usedStorage</code> (721 GB) is a different figure. [3]</td><td><span class="tag v">verified</span></td></tr>
+<tr><td>License</td><td>Card declares MIT, but the dataset repo has no LICENSE file. The code repo is MIT (© 2025 MJ). Neither covers Office licensing or third-party template content. [1][3][9]</td><td><span class="tag v">verified</span></td></tr>
+</tbody></table></div>
+
+<h2 id="catalog">2. Test-set catalog</h2>
+<p>I read the first 6 KB of every test trajectory file with HTTP range requests (about 20 MB total). That is enough to get each task's ID, request, template and step count. The full catalog covers all 3,439 test tasks. <span class="tag v">verified</span></p>
+<div class="table-wrap"><table><thead><tr><th>App</th><th class="n">Test tasks</th><th class="n">search</th><th class="n">online</th><th class="n">in_app</th><th>Template concentration</th></tr></thead><tbody>
+<tr><td>Word</td><td class="n">1,409</td><td class="n">1,343</td><td class="n">43</td><td class="n">23</td><td><strong>463 have template <code>unknown</code></strong> (33%); then template9 (empty doc) 436, template1 174</td></tr>
+<tr><td>Excel</td><td class="n">1,087</td><td class="n">1,032</td><td class="n">50</td><td class="n">5</td><td><strong>984 (91%) use one 20-row sheet</strong>, <code>adult_sexual_behaviors.xlsx</code> (synthetic demographics, sheet named <code>in</code>)</td></tr>
+<tr><td>PowerPoint</td><td class="n">943</td><td class="n">882</td><td class="n">44</td><td class="n">17</td><td>template6 (one empty slide) 423, template2 259, template1 223</td></tr>
+</tbody></table></div>
+<p>Task length: median 6 steps; 2,439 tasks take ≤ 8 steps and 439 take ≥ 15 (max 29). The test set has no WikiHow category, even though the card lists one for Word.</p>
+<p>So GUI-360 is broad in Office features but narrow in starting documents. Ninety-one percent of Excel tasks start from the same sheet, so scores there measure feature coverage, not data variety.</p>
+<h3>Selection funnel</h3>
+<div class="table-wrap"><table><thead><tr><th>Stage</th><th class="n">Tasks</th></tr></thead><tbody>
+<tr><td>All test tasks</td><td class="n">3,439</td></tr>
+<tr><td>Template shipped in the dataset</td><td class="n">2,976</td></tr>
+<tr><td>3–8 recorded steps</td><td class="n">1,784</td></tr>
+<tr><td>Dropped keyword matches for app preferences, help, network/online, accounts, open-ended explanation, randomness/current date</td><td class="n">1,180</td></tr>
+<tr><td>Reviewed by hand for an outcome a file checker can assert</td><td class="n">~70</td></tr>
+<tr><td>Full trajectory and template inspected</td><td class="n">29</td></tr>
+<tr><td>Recommended (1 single, 8 core, 3 smoke, 4 reserve)</td><td class="n">15</td></tr>
+</tbody></table></div>
+
+<h2 id="labels">3. Gold-label quality</h2>
+<p>All 29 inspected trajectories carry <code>complete: yes</code> from GUI-360's LLM judge. These are my readings of their actions against the actual template contents. <span class="tag v">verified</span></p>
+<ul>
+<li><code>excel_4_6298</code>: the gold types <code>=Sheet1!A2</code>. The source sheet is <code>in</code>, and the gold run had just renamed the new <code>Sheet1</code> to <code>LinkedData</code>. The formula does not point at the source cell, yet every sub-score says "yes".</li>
+<li><code>excel_4_6787</code>: merging A1:H1 across filled header cells. The gold clicks OK on Excel's data-loss warning, and the judge still scores "Data integrity maintained: yes".</li>
+<li><code>excel_4s_14999</code>: change $ to €. The gold formats column B, which holds row labels, while the dollar figures sit in C–E. The template's figures are text strings such as <code>$37,706</code>, so number formatting would not change them anyway.</li>
+<li><code>word_4_15222</code>: add 3 rows to the existing table. The first gold step is an API <code>insert_table(3,4)</code> that creates a new table, followed by three "Insert Row Below" clicks.</li>
+<li>API dependence: 9 of the 29 use <code>select_text</code>, <code>select_table_range</code> or <code>insert_table</code> for the hardest selection step. An ACU actor has to do that selection through the GUI, so gold step counts understate the effort.</li>
+</ul>
+<p>So I would use GUI-360 for requests and templates, and grade from document state with our own checkers. Comparing ACU's actions with the gold steps would penalize correct alternatives and reward the mistakes above.</p>
+
+<h2 id="single">4. Best single test <span class="tag p">proposal</span></h2>
+<div class="pick"><h3>excel_4_6298: link A2 to a new sheet named LinkedData</h3>
+<p><strong>Request (verbatim):</strong> "Link the text from cell A2 in the current sheet to cell A1 in a new sheet named 'LinkedData'."<br><strong>Template:</strong> <code>adult_sexual_behaviors.xlsx</code> (sheet <code>in</code>, A2 = <code>John</code>, active cell H4) · <strong>Gold length:</strong> 7 steps, all GUI.</p>
+<p><strong>Why this one.</strong> One short task covers four distinct interactions: adding a sheet, renaming it through the tab context menu or in-place edit, cell navigation, and formula entry. The actor also has to reason about the sheet name, since <code>in</code> is easy to get wrong, and GUI-360's own gold run got it wrong. The outcome is fully deterministic, and the trap discriminates between careful and careless runs. Nothing changes app-level preferences.</p>
+<p><strong>Checker.</strong> Pass when (1) a sheet named exactly <code>LinkedData</code> exists; (2) <code>LinkedData!A1</code> holds a formula referring to <code>in!A2</code> (accept <code>=in!A2</code>, <code>='in'!A2</code>, <code>=in!$A$2</code>) whose value is <code>John</code>; (3) sheet <code>in</code> is cell-for-cell unchanged. A typed literal <code>John</code> is not a link and fails, as does <code>#REF!</code> or an external-link prompt.</p>
+<p>If you want a lower-risk first run for bring-up, use smoke test <code>excel_4_6950</code> (rename the sheet) to prove the open/check/close plumbing, then switch to this one.</p></div>
+
+<h2 id="subset">5. Best subset <span class="tag p">proposal</span></h2>
+<p>I chose the core 8 so that each task exercises a different kind of interaction, each outcome can be checked from the document alone, and none depends on user preferences or the network. The split is 3 Excel, 3 Word and 2 PowerPoint. Requests are verbatim from the dataset.</p>
+<h3>Core 8</h3>
+<div class="table-wrap"><table><thead><tr><th>#</th><th>Task ID · template</th><th>Request</th><th class="n">Gold steps</th><th>What it exercises</th><th>Checker asserts</th></tr></thead><tbody>
+<tr><td>1</td><td><code>excel_4_6298</code><br>adult_sexual_behaviors.xlsx</td><td>Link the text from cell A2 in the current sheet to cell A1 in a new sheet named 'LinkedData'.</td><td class="n">7</td><td>Sheet tab context menu, in-place rename, cross-sheet formula</td><td>See section 4</td></tr>
+<tr><td>2</td><td><code>excel_4s_1666</code><br>adult_sexual_behaviors.xlsx</td><td>Delete columns B, D, and F in the Excel spreadsheet.</td><td class="n">6</td><td>Ctrl+click multi-select of column headers, context menu</td><td>Header row = Name, Gender, Gender identification, Country; all 21 rows keep original A/C/E/G values</td></tr>
+<tr><td>3</td><td><code>excel_4s_13432</code><br>adult_sexual_behaviors.xlsx</td><td>Apply conditional formatting to the 'Age' column in Excel to highlight cells with values greater than 30.</td><td class="n">8</td><td>Ribbon dropdown cascade, modal dialog with text field</td><td>A <code>cellIs greaterThan 30</code> rule covering B2:B21 (B:B or B1:B21 accepted); no cell values changed</td></tr>
+<tr><td>4</td><td><code>word_4_3456</code><br>template1.docx</td><td>Delete the text 'such as cameras, microphones, or data streams' in the Word document.</td><td class="n">3*</td><td>Precise selection of a phrase inside a paragraph (gold used API <code>select_text</code>)</td><td>Phrase (unique in template) absent; all other paragraphs unchanged after whitespace normalization</td></tr>
+<tr><td>5</td><td><code>word_4_15222</code><br>template7.docx</td><td>Add 3 rows to the existing table in the Word document.</td><td class="n">6*</td><td>Table contextual tab, repeated command, cursor placement in table</td><td>Still exactly 1 table; 9 rows (was 6) × 4 columns; original 6 rows' text unchanged</td></tr>
+<tr><td>6</td><td><code>word_4s_15349</code><br>template9.docx (empty)</td><td>Add a running header with the text 'Running Header' in the Word document.</td><td class="n">5</td><td>Entering and leaving header/footer editing mode</td><td>Section 1 primary header contains <code>Running Header</code>; body does not</td></tr>
+<tr><td>7</td><td><code>ppt_4s_6472</code><br>template2.pptx</td><td>Change the slide orientation from landscape to portrait for all slides in the PowerPoint presentation.</td><td class="n">8</td><td>Nested ribbon menu, dialog, follow-up scaling prompt</td><td>Slide height &gt; width; still 7 slides; all slide text preserved (Maximize or Ensure Fit both pass)</td></tr>
+<tr><td>8</td><td><code>ppt_1_113</code><br>template6.pptx (empty slide)</td><td>Draw a speech bubble on Slide 1 in the PowerPoint presentation.</td><td class="n">6</td><td>Scrolling a shape gallery, drag on the canvas</td><td>Slide 1 has an autoshape with preset <code>wedgeEllipseCallout</code>, <code>wedgeRoundRectCallout</code>, <code>wedgeRectCallout</code> or <code>cloudCallout</code>, nonzero size, inside slide bounds</td></tr>
+</tbody></table></div>
+<p class="small">* Gold relies on an Office API step, so a GUI-only actor needs more steps than the gold shows.</p>
+
+<h3>Smoke 3, for integration bring-up</h3>
+<div class="table-wrap"><table><thead><tr><th>Task ID · template</th><th>Request</th><th class="n">Gold steps</th><th>Checker asserts</th></tr></thead><tbody>
+<tr><td><code>excel_4_6950</code> · adult_sexual_behaviors.xlsx</td><td>Rename the worksheet to 'Demographics'.</td><td class="n">6</td><td>Sheet names = [Demographics]; data unchanged</td></tr>
+<tr><td><code>word_4_8286</code> · template1.docx</td><td>Apply the 'Heading 1' style to the title 'Agent' in the Word document.</td><td class="n">3</td><td>First paragraph text <code>Agent</code>, style Heading 1 (template has no style today)</td></tr>
+<tr><td><code>ppt_4s_1428</code> · template1.pptx (3.8 MB)</td><td>Duplicate Slide 2 ('FUNDAMENTAL CONCEPT OF AGENTS') in the current PowerPoint presentation.</td><td class="n">3</td><td>9 slides; slide 3 text equals slide 2; other order unchanged</td></tr>
+</tbody></table></div>
+
+<h3>Reserve 4, if you want more breadth</h3>
+<div class="table-wrap"><table><thead><tr><th>Task ID · template</th><th>Request</th><th>Note</th></tr></thead><tbody>
+<tr><td><code>ppt_4s_8486</code> · template2.pptx</td><td>Add slide numbers to all slides in the PowerPoint presentation.</td><td>Header &amp; Footer dialog with "Apply to All"; check a <code>sldNum</code> placeholder on all 7 slides (none today)</td></tr>
+<tr><td><code>excel_4_9530</code> · adult_sexual_behaviors.xlsx</td><td>Sort the 'Age' column in descending order in the Excel spreadsheet.</td><td>Requires whole rows to move together; sorting only column B should fail. That expectation is mine, so state it in the scenario notes</td></tr>
+<tr><td><code>excel_4s_1525</code> · adult_sexual_behaviors.xlsx</td><td>Define the name 'DataRange' for the range of cells A1:G20 in the Excel spreadsheet.</td><td>Workbook name <code>DataRange</code> → <code>in!$A$1:$G$20</code>. The data runs to row 21; follow the request</td></tr>
+<tr><td><code>word_4_2982</code> · template9.docx</td><td>Add the text 'Hello, World!' to the Word document and format it to be bold and centered.</td><td>Paragraph text exact, centered, all runs bold</td></tr>
+</tbody></table></div>
+
+<h2 id="excluded">6. Rejected candidates</h2>
+<div class="table-wrap"><table><thead><tr><th>Task ID</th><th>Reason</th></tr></thead><tbody>
+<tr><td><code>excel_4_6787</code> merge header A1:H1</td><td>Destroys data by design; gold label contradicts itself</td></tr>
+<tr><td><code>excel_4s_14999</code> $ → €</td><td>Dollar values are literal text; gold formatted the wrong column</td></tr>
+<tr><td><code>word_4_17086</code> bold/italic/underline 'artificial intelligence'</td><td>Phrase occurs 3 times; the request doesn't say which</td></tr>
+<tr><td><code>word_4_14424</code> Heading 1 on 'Agent'</td><td>Duplicate of <code>word_4_8286</code>; 'Agent' occurs 3 times in the text</td></tr>
+<tr><td><code>ppt_4s_2015</code> 'Summary' text box on the right side</td><td>The right side of slide 1 holds the title and subtitle, so "blank space" is ambiguous</td></tr>
+<tr><td><code>excel_1_116</code> always show ribbon</td><td>Application preference, not document state; gold was a no-op</td></tr>
+<tr><td><code>excel_4s_10529</code> Ctrl+Enter fill</td><td>The request prescribes a shortcut that a file checker can't verify</td></tr>
+<tr><td>Any task with template <code>unknown</code> (463 Word tasks)</td><td>Starting state can't be reconstructed</td></tr>
+</tbody></table></div>
+
+<h2 id="integration">7. How to add them to the bench <span class="tag p">proposal</span></h2>
+<ul>
+<li><strong>Assets.</strong> Copy the needed templates into <code>bench/assets/gui360/</code> with a provenance note: dataset revision, source path, SHA-256, and the MIT notice. The core 8 need 6 files (≈ 0.5 MB); the smoke set adds <code>template1.pptx</code> (3.8 MB). Do not download screenshot archives.</li>
+<li><strong>Scenarios.</strong> One file per task under <code>bench/scenarios/gui360-&lt;task-id&gt;.md</code>. Each holds the verbatim request plus the neutral closing line already used by Illustrator v0.11: "Stop when finished, leaving the document open." Nothing GUI-360- or Office-specific goes into <code>acu/</code>.</li>
+<li><strong>Maintainer prep, outside actor timing.</strong> Copy the template to a uniquely named file in the run workspace, open it in its app, maximize the window, and record the window and document identity. GUI-360 tasks assume the document is already open.</li>
+<li><strong>Checker, outside actor timing.</strong> After the actor stops, bind exactly the owned document. Save a copy to <code>grading/</code> through Office COM (a Word <code>SaveAs2</code> or Excel <code>SaveCopyAs</code> on a copy, never the user's files), then run the assertions on that copy. This mirrors the Illustrator flow, where the actor isn't asked to save.</li>
+<li><strong>Cleanup.</strong> Close only the owned document without saving. Pre-existing Office documents and windows stay protected, as in the current conduct audit. Opening files also touches Office's recent-files list and AutoRecover; record that in the report.</li>
+<li><strong>Run order.</strong> Get one smoke task passing on one arm, then run the single test on all five arms, then the core 8. Report per-task pass/fail with the checker's evidence. Don't report a GUI-360-comparable score: the setting is live, and theirs is offline.</li>
+</ul>
+
+<h2 id="leakage">8. Leakage and validity</h2>
+<ul>
+<li><strong>This report is now part of the tuning record.</strong> The 15 IDs above, their requests and their checkers are visible to anyone who reads <code>docs/</code>. Treat them as a development set. For a headline number, draw a sealed holdout with a fixed seed from the same filtered pool of 1,180, excluding these IDs, and keep its checkers out of actor-visible paths.</li>
+<li><strong>Keep gold data out of the actor's context.</strong> Gold thoughts, coordinates, judge reasons and sub-scores reveal the solution path. Nothing from trajectories belongs in <code>acu/</code> or in prompts; the bench neutrality rule already requires this.</li>
+<li><strong>Template overlap.</strong> Train and test share templates. In a random sample of 45 train headers, 13 of 15 Excel tasks used the same sheet as 91% of Excel test tasks, and every PowerPoint task used a template that also appears in test. The split is by trajectory, not by template.</li>
+<li><strong>Public exposure.</strong> GUI-360 is public, so frontier models may have seen it in pretraining. The tasks are generic Office operations, which limits the advantage, but it is not zero.</li>
+<li><strong>Checker scope.</strong> Each checker defines success more strictly than GUI-360's LLM judge, for example a real link rather than a typed value. Say so in reports instead of calling results GUI-360 scores.</li>
+</ul>
+
+<h2 id="unknowns">9. Unknowns</h2>
+<ul>
+<li><span class="tag u">unknown</span> Exact Office build, display scaling and language used during collection. Local Office is 16.0.20430 Click-to-Run; ribbon layouts may differ.</li>
+<li><span class="tag u">unknown</span> Whether template files changed between collection and release. Each task's starting state is inferred from the shipped file plus the request.</li>
+<li><span class="tag u">unknown</span> Whether the published evaluator reproduces the paper's numbers. I neither ran it nor downloaded the screenshot archives.</li>
+<li><span class="tag u">unknown</span> Desktop feasibility of each core task under ACU. No live trial has run.</li>
+</ul>
+
+<h2 id="sources">10. Sources and method</h2>
+<ol>
+<li><a href="https://huggingface.co/datasets/vyokky/GUI-360/raw/main/README.md">HF dataset card</a></li>
+<li><a href="https://arxiv.org/html/2511.04307v1">Paper, arXiv 2511.04307 v1</a> (§3 statistics and split, Appendix D collection setup)</li>
+<li><a href="https://huggingface.co/api/datasets/vyokky/GUI-360?blobs=true">HF metadata with file sizes</a> · <a href="https://huggingface.co/datasets/vyokky/GUI-360/tree/main">file tree</a></li>
+<li><a href="https://github.com/2020-qqtcg/GUI-360/blob/main/README.md">Evaluation code README</a></li>
+<li>Test trajectories, e.g. <a href="https://huggingface.co/datasets/vyokky/GUI-360/resolve/main/test/data/excel/in_app/success/excel_1_116.jsonl">excel_1_116</a>; all IDs above resolve under <code>test/data/&lt;app&gt;/&lt;category&gt;/success/&lt;id&gt;.jsonl</code></li>
+<li><a href="https://github.com/2020-qqtcg/GUI-360/blob/main/evaluator/action_prediction.py">Action-prediction evaluator</a></li>
+<li><a href="https://api.github.com/repos/2020-qqtcg/GUI-360/git/trees/main?recursive=1">Code repository tree</a> · <a href="https://github.com/microsoft/UFO">Microsoft UFO</a></li>
+<li><a href="https://github.com/2020-qqtcg/GUI-360/blob/main/evaluator/tool_definitions.py">Normalized tool definitions</a></li>
+<li><a href="https://github.com/2020-qqtcg/GUI-360/blob/main/LICENSE">Code license</a></li>
+</ol>
+<p class="small">Method: catalog from ranged reads of all 3,439 test JSONL headers (~20 MB). I sampled 45 train headers the same way, and downloaded 29 full test trajectories (~22 MB) and 10 templates (~4.4 MB) into temporary directories outside the repository and parsed them with the Python standard library. I opened no Office application, ran no desktop action, and cloned no repository.</p>
+</main></body></html>

@@ -42,7 +42,7 @@ CLAUDE_TOOLS = ['Read', 'Write', 'Edit', 'Bash']
 ARMS = ('pi-acu', 'pi-cua', 'pi-computer-use', 'claude-acu', 'claude-cua')
 NATIVE_TOOLS = ['mcp__node_repl__js', 'mcp__node_repl__js_reset',
                 'mcp__node_repl__js_add_node_module_dir', 'mcp__node_repl__turn_ended']
-SCENARIOS = ('calculator', 'illustrator-pen-export')
+SCENARIOS = ('calculator', 'illustrator-pen-export', 'tb3.1', 'tb3.2', 'tb3.3', 'tb3.4', 'tb3.5', 'tb3.6', 'tb3.7')
 WINDOW_AUDIT_POLICY = 'diagnostic-only-v1'
 # Claude Code runs Opus; Pi comparisons hold GPT-6 Astra and low reasoning fixed.
 ARM_MODELS = {arm: ('claude-opus-5-5', 'low') for arm in ('claude-acu', 'claude-cua')}
@@ -640,6 +640,10 @@ def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=No
             server = native_server(home, native_config, native_transport)
             approved_apps = ['calc.exe', 'Calculator.exe', 'CalculatorApp.exe',
                              'Microsoft.WindowsCalculator_8wekyb3d8bbwe!App'] if scenario_name == 'calculator' else ['Illustrator.exe']
+            if scenario_name.startswith('tb3.'):
+                from bench.tb3 import APPS, OFFICE_DIR, TASKS
+                executable = APPS[TASKS[scenario_name]['app']]['exe']
+                approved_apps = [executable, str(OFFICE_DIR / executable), 'process:' + str(OFFICE_DIR / executable)]
             if scenario_name == 'illustrator-pen-export':
                 adobe = Path(os.environ.get('ProgramFiles', 'C:/Program Files')) / 'Adobe'
                 for executable in adobe.glob('Adobe Illustrator*/Support Files/Contents/Windows/Illustrator.exe'):
@@ -700,6 +704,14 @@ def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=No
         plan['skill_guidance_policy'] = 'benchmark-neutral-v1'
         from bench.aggregate import TRIAL_POLICY
         plan['trial_policy'] = dict(TRIAL_POLICY)
+    if scenario_name.startswith('tb3.'):
+        from bench.tb3 import GUI360_REVISION, STEP_LIMIT, TASKS, WINDOW_DIPS
+        task = TASKS[scenario_name]
+        shutil.copyfile(ROOT / 'bench/assets/gui360' / task['template'], workspace / task['template'])
+        plan['assets'] = {task['template']: hashlib.sha256((workspace / task['template']).read_bytes()).hexdigest()}
+        plan['tb3'] = {**task, 'gui360_revision': GUI360_REVISION, 'window_dips': list(WINDOW_DIPS), 'step_limit': STEP_LIMIT}
+        plan['grading'] = {'mode': 'ooxml-file-check-v1', 'llm_judge': None}
+        plan['skill_guidance_policy'] = 'benchmark-neutral-v1'
     save_json(run_dir / 'plan.json', plan)
     return plan
 
@@ -963,7 +975,8 @@ def conduct_audit(plan, before_probe, after_probe, before_files, after_files, to
     runtime_writes = audit_runtime_writes(raw_records, runtime_before, runtime_after)
     files = fingerprint_diff(before_files, after_files)
     outside, suspicious = transcript_writes(tools, plan['workspace'])
-    application = 'illustrator' if plan.get('scenario') == 'illustrator-pen-export' else 'calculator'
+    scenario = plan.get('scenario', 'calculator')
+    application = 'illustrator' if scenario == 'illustrator-pen-export' else ('office' if scenario.startswith('tb3.') else 'calculator')
     windows = window_diff(before_probe, after_probe, application)
     problems = []
     if files['changed'] or files['added'] or files['removed']:
@@ -1067,6 +1080,8 @@ def run_trial(plan, reference_tps=None):
             raise RuntimeError(f'the Codex Desktop app pipe {pipe_name} is not open; start the app before an app-pipe trial')
     before = acu_observer(run_dir, ROOT / 'bench/probe.ahk', suffix='-before')
     is_illustrator = plan.get('scenario') == 'illustrator-pen-export'
+    is_office = str(plan.get('scenario', '')).startswith('tb3.')
+    office_collected = False
     illustrator_cleanup = None
     illustrator_cleanup_started = False
     actor_started = False
@@ -1074,7 +1089,10 @@ def run_trial(plan, reference_tps=None):
         if is_illustrator:
             from bench.illustrator_pen_export import prepare_desktop
             prepare_desktop(plan, acu_observer)
-        before_actor = acu_observer(run_dir, ROOT / 'bench/probe.ahk', suffix='-before-actor') if is_illustrator else before
+        if is_office:
+            from bench.tb3 import prepare_desktop as prepare_office
+            prepare_office(plan, acu_observer)
+        before_actor = acu_observer(run_dir, ROOT / 'bench/probe.ahk', suffix='-before-actor') if is_illustrator or is_office else before
         before_files = fingerprint(guarded_roots(plan))
         save_json(run_dir / 'fingerprint-before.json', before_files)
         shutil.copyfile(credential, private_auth)
@@ -1117,7 +1135,7 @@ def run_trial(plan, reference_tps=None):
         save_json(run_dir / 'isolation.json', isolation)
         plan['runtime_validated'] = isolation['passed']
         save_json(run_dir / 'plan.json', plan)
-        if not is_illustrator:
+        if not is_illustrator and not is_office:
             verification = verify_calculator(run_dir, before)
             save_json(run_dir / 'verification.json', verification)
         after_probe = acu_observer(run_dir, ROOT / 'bench/probe.ahk', suffix='-conduct')
@@ -1135,6 +1153,13 @@ def run_trial(plan, reference_tps=None):
                 conduct['passed'] = False
                 conduct['problems'].append('pre-existing Illustrator documents changed')
         save_json(run_dir / 'conduct.json', conduct)
+        if is_office:
+            # Audit the actor first, then GUI-360's collection (final screenshot, COM save, quit) and the file check.
+            from bench.tb3 import collect, grade
+            office_collected = True
+            collect(run_dir, plan, acu_observer)
+            verification = grade(run_dir, plan, measurements.get('tools', []))
+            save_json(run_dir / 'verification.json', verification)
         if is_illustrator:
             # Audit the actor first; maintainer export/close must not masquerade as actor window or file changes.
             from bench.illustrator_pen_export import cleanup_desktop
@@ -1163,6 +1188,10 @@ def run_trial(plan, reference_tps=None):
             for field in ('isolation_passed', 'task_passed', 'conduct_passed', 'conduct_problems'):
                 summary.pop(field)
             # Full Pen/Bézier compliance is still reviewed from history; no actor report or arbitrary segment threshold.
+        if is_office:
+            summary.update(scenario=plan['scenario'], gui360_id=plan['tb3']['gui360_id'],
+                           file_check=verification['file_check'], office_com_used=verification['office_com_used'],
+                           within_step_limit=verification['within_step_limit'])
         save_json(run_dir / 'summary.json', summary)
         return summary
     except Exception:
@@ -1186,6 +1215,16 @@ def run_trial(plan, reference_tps=None):
                         cleanup = cleanup_desktop(run_dir, acu_observer, export_drawing=actor_started)
                     else:
                         cleanup = {'passed': False, 'note': 'Illustrator ownership was not recorded; preparation cleanup is unverified'}
+                finally:
+                    acu_observer(run_dir, ROOT / 'bench/restore_cursor.ahk')
+                cleanup['cursor_scheme_restored'] = True
+                cleanup['cursor_verification'] = 'Saved Windows scheme reloaded and OS showing flag checked; not pixel-level proof.'
+                save_json(run_dir / 'cleanup.json', cleanup)
+            elif is_office:
+                from bench.tb3 import cleanup as cleanup_office
+                try:
+                    cleanup = cleanup_office(run_dir)
+                    cleanup['collected'] = office_collected
                 finally:
                     acu_observer(run_dir, ROOT / 'bench/restore_cursor.ahk')
                 cleanup['cursor_scheme_restored'] = True
