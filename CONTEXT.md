@@ -101,7 +101,7 @@ The benchmark for reconstructing a reference image with genuine Illustrator Pen-
 _Avoid_: Testbench 2 or TB2 in current naming; treating one arm as the complete benchmark
 
 **TB3.1–TB3.4**:
-The official names of the live Office tasks (scenario ids `tb3.1` … `tb3.4`), run in GUI-360's environment: a fresh Office instance on a copied template, the task request and a COM save after the actor stops. TB3.1 is a GUI-360 task, TB3.2 is adapted from one, and TB3.3 and TB3.4 are the bench's own input tasks. A programmatic OOXML check of the saved document decides the task, and for TB3.3 and TB3.4 the input the prompt names must also appear in the recorded input; there is no LLM judge.
+The official names of the live Office tasks (scenario ids `tb3.1` … `tb3.4`), run in GUI-360's environment: a fresh Office instance on a copied template, the task request and a COM save after the actor stops. TB3.1 is a GUI-360 task, TB3.2 is adapted from one, and TB3.3 and TB3.4 are the bench's own input tasks. A programmatic OOXML check of the saved document decides the task, and for TB3.2 (mouse only), TB3.3 and TB3.4 the input the prompt names must also appear in the recorded input; there is no LLM judge.
 _Avoid_: calling them Testbench 3; comparing TB3 results with GUI-360's LLM-judged success rates
 
 **Task tokens**:

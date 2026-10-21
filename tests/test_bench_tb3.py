@@ -92,6 +92,8 @@ def test_verdict_is_the_saved_file_check_and_step_count_and_com_are_only_reporte
     run_dir = tmp_path / 'trial'
     (run_dir / 'grading').mkdir()
     shutil.copyfile(highlighted_docx(tmp_path, SENTENCES), run_dir / 'grading/template1.docx')
+    (run_dir / 'office-identity.json').write_text(json.dumps({'hwnd': 7}), encoding='utf-8')
+    (run_dir / 'input-log.jsonl').write_text(json.dumps({'kind': 'mouse', 'button': 'left', 'action': 'down', 'x': 1, 'y': 1, 'window': 7, 'foreground': 7}), encoding='utf-8')
     com_call = {'text': 'ComObjActive("Word.Application").ActiveDocument.Paragraphs(4)'}
     result = grade(run_dir, plan, [com_call])
     assert result['passed'] is True and result['file_check']['passed'] is True
@@ -140,7 +142,7 @@ def input_run(tmp_path, scenario, events):
     (run_dir / 'office-identity.json').write_text(json.dumps({'hwnd': 7}), encoding='utf-8')
     lines = []
     for kind, name, action, x, y, window in events:
-        event = {'kind': kind, 'action': action, 'x': x, 'y': y, 'window': window}
+        event = {'kind': kind, 'action': action, 'x': x, 'y': y, 'window': window, 'foreground': window}
         event.update({'button': name} if kind == 'mouse' else {'vk': name})
         lines.append(json.dumps(event))
     (run_dir / 'input-log.jsonl').write_text('\n'.join(lines), encoding='utf-8')
@@ -201,3 +203,11 @@ def test_collection_retries_a_save_that_busy_office_rejects(tmp_path, monkeypatc
     record = tb3.collect(run_dir, plan, lambda run, script, *args, **kw: observed.append(args[0]))
     assert Busy.saved and Busy.quit and record['saved'] is True
     assert observed == ['escape'] and len(record['interventions']) == 1
+
+
+def test_mouse_only_requirement_fails_any_key_press_in_word(tmp_path):
+    clicks = [('mouse', 'left', 'down', 100, 100, 7), ('mouse', 'left', 'up', 300, 100, 7)]
+    assert input_run(tmp_path / 'a', 'tb3.2', clicks)['passed'] is True
+    assert input_run(tmp_path / 'b', 'tb3.2', clicks + [('key', 17, 'down', 0, 0, 7)])['passed'] is False
+    assert input_run(tmp_path / 'c', 'tb3.2', clicks + [('key', 17, 'down', 0, 0, 9)])['passed'] is True, 'keys in another window do not count'
+    assert input_run(tmp_path / 'd', 'tb3.2', [])['passed'] is False, 'no mouse use on Word fails'

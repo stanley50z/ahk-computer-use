@@ -39,7 +39,9 @@ TASKS = {
               'request': "Apply conditional formatting to the 'Age' column in Excel to highlight cells with values greater than 30."},
     'tb3.2': {'gui360_id': 'word_4s_1023', 'app': 'word', 'template': 'template1.docx', 'adapted': True,
               'request': 'Highlight these three sentences in the Word document: '
-                         + ', '.join(f"'{s}'" for s in SENTENCES[:2]) + f", and '{SENTENCES[2]}'"},
+                         + ', '.join(f"'{s}'" for s in SENTENCES[:2]) + f", and '{SENTENCES[2]}' Use only the mouse: "
+                         "do not press any keys while Word is in front.",
+              'required_input': 'mouse only: no key presses while Word is in front, and mouse clicks on the Word window'},
     'tb3.3': {'gui360_id': None, 'app': 'excel', 'template': 'budget.xlsx', 'adapted': False,
               'request': "Copy cell B2's formatting onto B3:B10 without changing their values. Do it by right-dragging "
                          "B2's fill handle down to B10 with the right mouse button, releasing it, and choosing Fill Formatting Only.",
@@ -291,6 +293,12 @@ def check_input(run_dir, plan):
     hwnd = json.loads((run_dir / 'office-identity.json').read_text(encoding='utf-8'))['hwnd']
     events = [json.loads(line) for line in log.read_text(encoding='utf-8').splitlines() if line.strip()]
     on_window = lambda drag: drag['down']['window'] == hwnd and drag['up']['window'] == hwnd
+    if scenario == 'tb3.2':
+        keys = [e for e in events if e.get('kind') == 'key' and e['action'] == 'down' and e['foreground'] == hwnd]
+        clicks = [e for e in events if e.get('kind') == 'mouse' and e['action'] == 'down' and e['window'] == hwnd]
+        return {'passed': not keys and bool(clicks), 'required': plan['tb3']['required_input'], 'key_presses_in_word': len(keys),
+                'first_keys': [e['vk'] for e in keys[:10]], 'mouse_presses_on_word': len(clicks),
+                'recorded_events': sum(e.get('kind') in ('mouse', 'key', 'wheel', 'hwheel') for e in events)}
     if scenario == 'tb3.3':
         matches = [d for d in drags(events, 'right') if on_window(d) and abs(d['dy']) >= MIN_DRAG_PX]
     else:
