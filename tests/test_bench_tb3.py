@@ -7,7 +7,7 @@ import zipfile
 from xml.sax.saxutils import escape
 
 from bench.run import ROOT, prepare
-from bench.tb3 import SENTENCES, STEP_LIMIT, TASKS, check_document, check_input, docx_paragraphs, grade, prompt, template_path
+from bench.tb3 import SENTENCES, TASKS, check_document, check_input, docx_paragraphs, grade, prompt, template_path
 
 ASSETS = ROOT / 'bench/assets/gui360'
 
@@ -87,7 +87,7 @@ def test_highlight_check_needs_all_three_sentences_and_nothing_else(tmp_path):
     assert result['passed'] is True and set(result['sub_scores'].values()) == {'yes'}
 
 
-def test_verdict_is_the_saved_file_check_within_the_step_limit_and_com_is_only_reported(tmp_path):
+def test_verdict_is_the_saved_file_check_and_step_count_and_com_are_only_reported(tmp_path):
     plan = prepare('pi-acu', tmp_path / 'trial', scenario='tb3.2')
     run_dir = tmp_path / 'trial'
     (run_dir / 'grading').mkdir()
@@ -96,7 +96,8 @@ def test_verdict_is_the_saved_file_check_within_the_step_limit_and_com_is_only_r
     result = grade(run_dir, plan, [com_call])
     assert result['passed'] is True and result['file_check']['passed'] is True
     assert result['office_com_used'] is True, 'GUI-360 allows COM, so it is reported without failing the task'
-    assert grade(run_dir, plan, [{'text': 'acu run step.ahk'}] * (STEP_LIMIT + 1))['passed'] is False
+    many = grade(run_dir, plan, [{'text': 'acu run step.ahk'}] * 80)
+    assert many['passed'] is True and many['tool_calls'] == 80, 'a correct end product passes however many steps it took'
     (run_dir / 'grading/template1.docx').unlink()
     missing = grade(run_dir, plan, [])
     assert missing['passed'] is False and missing['file_check']['error'] == 'no saved document to check'
@@ -168,3 +169,35 @@ def test_recorder_reads_mouse_button_flags_at_the_windows_offset():
     from bench.input_recorder import RAWINPUT, RAWINPUTHEADER, RAWMOUSE
     assert RAWMOUSE.usButtonFlags.offset == 4 and RAWMOUSE.lLastX.offset == 12 and ctypes.sizeof(RAWMOUSE) == 24
     assert RAWINPUT.data.offset == ctypes.sizeof(RAWINPUTHEADER)
+
+
+# A busy Office rejects even the method lookup, so collection must retry it and send Escape instead of crashing.
+def test_collection_retries_a_save_that_busy_office_rejects(tmp_path, monkeypatch):
+    import bench.tb3 as tb3
+    plan = prepare('pi-acu', tmp_path / 'trial', scenario='tb3.2')
+    run_dir = tmp_path / 'trial'
+    (run_dir / 'grading').mkdir()
+    document_path = run_dir / 'workspace/template1.docx'
+    (run_dir / 'office-identity.json').write_text(json.dumps({'hwnd': 7, 'pid': 70, 'launched_pid': 70, 'document': str(document_path)}), encoding='utf-8')
+
+    class Busy:
+        rejections = 2
+        saved = quit = False
+
+        def __getattr__(self, name):
+            if name == 'Save' and Busy.rejections:
+                Busy.rejections -= 1
+                raise AttributeError('<unknown>.Save')  # what win32com raises for RPC_E_CALL_REJECTED on lookup
+            if name == 'Save':
+                return lambda: setattr(Busy, 'saved', True)
+            if name == 'Application':
+                return type('App', (), {'Quit': lambda self, *_: setattr(Busy, 'quit', True)})()
+            raise AttributeError(name)
+    observed = []
+    monkeypatch.setattr(tb3, 'bind_document', lambda path: Busy())
+    monkeypatch.setattr(tb3, 'screenshot', lambda *a: run_dir / 'grading/final.png')
+    monkeypatch.setattr(tb3, 'stop_office', lambda identity, timeout_s=30: {'exited': True, 'terminated': []})
+    monkeypatch.setattr(tb3.time, 'sleep', lambda s: None)
+    record = tb3.collect(run_dir, plan, lambda run, script, *args, **kw: observed.append(args[0]))
+    assert Busy.saved and Busy.quit and record['saved'] is True
+    assert observed == ['escape'] and len(record['interventions']) == 1

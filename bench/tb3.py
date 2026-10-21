@@ -3,7 +3,7 @@
 GUI-360 (arXiv 2511.04307) collected tasks with UFO's dataflow: copy a template, open it in Office, let the agent act,
 take a final screenshot, save through COM, quit Office. TB3 repeats that environment with an ACU/CUA actor. TB3.1 is a
 GUI-360 task, TB3.2 is adapted from one, TB3.3 and TB3.4 are the bench's own input tasks. Grading reads the saved OOXML
-and checks the request literally; UFO's 30-step limit is applied after the run to tool calls. Tasks that name an input
+and checks the request literally; the number of tool calls is reported but never fails a task. Tasks that name an input
 method are also graded on that input, observed by bench/input_recorder.py while the actor runs.
 """
 
@@ -24,7 +24,6 @@ GUI360_REVISION = '1c46362efaae836c601004e77b98a1aba89a530f'
 OFFICE_DIR = Path(os.environ.get('ProgramFiles', 'C:/Program Files')) / 'Microsoft Office/root/Office16'
 # GUI-360 ran Office maximized on a 1024x768 Windows 11 VM; its window frame was 1024x720 logical pixels.
 WINDOW_DIPS = (1024, 720)
-STEP_LIMIT = 30  # UFO dataflow MAX_STEPS
 APPS = {
     'excel': {'exe': 'EXCEL.EXE', 'class': 'XLMAIN', 'name': 'Microsoft Excel', 'noun': 'workbook'},
     'word': {'exe': 'WINWORD.EXE', 'class': 'OpusApp', 'name': 'Microsoft Word', 'noun': 'document'},
@@ -186,12 +185,13 @@ def collect(run_dir, plan, observer):
         document = bind_document(identity['document'])
         record['document_open'] = document is not None
         if document is not None:
-            _com_retry(document.Save, 'save', record['log'], escape)
+            # Even the method lookup is a COM call that a busy Office rejects, so it must sit inside the retry.
+            _com_retry(lambda: document.Save(), 'save', record['log'], escape)
             record['saved'] = True
-            application = document.Application
+            application = _com_retry(lambda: document.Application, 'application', record['log'], escape)
             if plan['tb3']['app'] == 'excel':
                 application.DisplayAlerts = False
-                _com_retry(application.Quit, 'quit', record['log'], escape)
+                _com_retry(lambda: application.Quit(), 'quit', record['log'], escape)
             else:
                 _com_retry(lambda: application.Quit(0), 'quit', record['log'], escape)
             record['log'].append('quit requested')
@@ -299,7 +299,7 @@ def check_input(run_dir, plan):
             'recorded_events': sum(e.get('kind') in ('mouse', 'key', 'wheel', 'hwheel') for e in events)}
 
 
-# Task success is the saved-file check, the named input when there is one, and the step limit; COM use is an observation.
+# Task success is the saved-file check and the named input when there is one; tool calls and COM use are observations.
 def grade(run_dir, plan, tools):
     task = plan['tb3']
     graded = Path(run_dir) / 'grading' / task['template']
@@ -307,9 +307,8 @@ def grade(run_dir, plan, tools):
         else {'passed': False, 'sub_scores': {}, 'error': 'no saved document to check'}
     observed = check_input(run_dir, plan)
     com = sorted({m.group(0) for t in tools for m in re.finditer(COM_PATTERN, t.get('text', ''))})
-    within = len(tools) <= STEP_LIMIT
-    return {'passed': check['passed'] and (observed is None or observed['passed']) and within, 'file_check': check,
-            'input_check': observed, 'tool_calls': len(tools), 'step_limit': STEP_LIMIT, 'within_step_limit': within,
+    return {'passed': check['passed'] and (observed is None or observed['passed']), 'file_check': check,
+            'input_check': observed, 'tool_calls': len(tools),
             'office_com_used': bool(com), 'office_com_evidence': com}
 
 

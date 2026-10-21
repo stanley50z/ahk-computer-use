@@ -705,11 +705,11 @@ def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=No
         from bench.aggregate import TRIAL_POLICY
         plan['trial_policy'] = dict(TRIAL_POLICY)
     if scenario_name.startswith('tb3.'):
-        from bench.tb3 import GUI360_REVISION, STEP_LIMIT, TASKS, WINDOW_DIPS, template_path
+        from bench.tb3 import GUI360_REVISION, TASKS, WINDOW_DIPS, template_path
         task = TASKS[scenario_name]
         shutil.copyfile(template_path(task['template']), workspace / task['template'])
         plan['assets'] = {task['template']: hashlib.sha256((workspace / task['template']).read_bytes()).hexdigest()}
-        plan['tb3'] = {**task, 'gui360_revision': GUI360_REVISION, 'window_dips': list(WINDOW_DIPS), 'step_limit': STEP_LIMIT}
+        plan['tb3'] = {**task, 'gui360_revision': GUI360_REVISION, 'window_dips': list(WINDOW_DIPS)}
         plan['grading'] = {'mode': 'ooxml-file-check-v1', 'llm_judge': None}
         plan['skill_guidance_policy'] = 'benchmark-neutral-v1'
     save_json(run_dir / 'plan.json', plan)
@@ -887,9 +887,10 @@ def fingerprint(roots):
     return digest
 
 
-# The roots an actor of this arm could tamper with: the repository (skill, launcher, bench) and its installed skill.
+# The roots an actor of this arm could tamper with: the whole checkout (minus FINGERPRINT_SKIP) and its installed skill.
+# On 2026-10-21 a TB3 actor saved a screenshot into the repository root, which the earlier per-directory list missed.
 def guarded_roots(plan):
-    roots = [ROOT / 'acu', ROOT / 'bench', ROOT / 'tests', ROOT / 'README.md', ROOT / 'AGENTS.md', Path(plan['skill_path']).parent]
+    roots = [ROOT, Path(plan['skill_path']).parent]
     if plan.get('arm') == 'pi-computer-use':
         roots += [Path(plan['run_dir']) / 'agent-home/mcp.json', Path(plan['run_dir']) / 'agent-home/native-bridge.json']
     if plan.get('scenario') == 'illustrator-pen-export':
@@ -1197,7 +1198,7 @@ def run_trial(plan, reference_tps=None):
         if is_office:
             summary.update(scenario=plan['scenario'], gui360_id=plan['tb3']['gui360_id'],
                            file_check=verification['file_check'], input_check=verification['input_check'],
-                           office_com_used=verification['office_com_used'], within_step_limit=verification['within_step_limit'])
+                           office_com_used=verification['office_com_used'], tool_calls=verification['tool_calls'])
         save_json(run_dir / 'summary.json', summary)
         return summary
     except Exception:
