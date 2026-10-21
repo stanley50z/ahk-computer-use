@@ -100,8 +100,8 @@ _Avoid_: Testbench 1 in current naming; using Calculator to mean the ACU arm alo
 The benchmark for reconstructing a reference image with genuine Illustrator Pen-tool Bézier curves across the same five configurations, with an open drawing as the actor's result and an unchanged maintainer-exported PNG as evidence. Saving/exporting is not actor work; historical reports call this Testbench 2 or TB2.
 _Avoid_: Testbench 2 or TB2 in current naming; treating one arm as the complete benchmark
 
-**TB3.1–TB3.7**:
-The official names for seven live GUI-360 Office tasks (scenario ids `tb3.1` … `tb3.7`), run in GUI-360's environment: a fresh Office instance on a copied template, the verbatim request and a COM save after the actor stops. A programmatic OOXML check of the saved document decides the task; there is no LLM judge.
+**TB3.1, TB3.2**:
+The official names of the live GUI-360 Office tasks (scenario ids `tb3.1`, `tb3.2`), run in GUI-360's environment: a fresh Office instance on a copied template, the task request and a COM save after the actor stops. TB3.2 is adapted from its GUI-360 task. A programmatic OOXML check of the saved document decides the task; there is no LLM judge.
 _Avoid_: calling them Testbench 3; comparing TB3 results with GUI-360's LLM-judged success rates
 
 **Task tokens**:

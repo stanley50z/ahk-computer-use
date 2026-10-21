@@ -42,7 +42,7 @@ CLAUDE_TOOLS = ['Read', 'Write', 'Edit', 'Bash']
 ARMS = ('pi-acu', 'pi-cua', 'pi-computer-use', 'claude-acu', 'claude-cua')
 NATIVE_TOOLS = ['mcp__node_repl__js', 'mcp__node_repl__js_reset',
                 'mcp__node_repl__js_add_node_module_dir', 'mcp__node_repl__turn_ended']
-SCENARIOS = ('calculator', 'illustrator-pen-export', 'tb3.1', 'tb3.2', 'tb3.3', 'tb3.4', 'tb3.5', 'tb3.6', 'tb3.7')
+SCENARIOS = ('calculator', 'illustrator-pen-export', 'tb3.1', 'tb3.2')
 WINDOW_AUDIT_POLICY = 'diagnostic-only-v1'
 # Claude Code runs Opus; Pi comparisons hold GPT-6 Astra and low reasoning fixed.
 ARM_MODELS = {arm: ('claude-opus-5-5', 'low') for arm in ('claude-acu', 'claude-cua')}

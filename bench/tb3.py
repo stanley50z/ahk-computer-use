@@ -1,9 +1,10 @@
-"""TB3.1-TB3.7: live GUI-360 Office tasks in GUI-360's environment, graded by a programmatic check of the saved file.
+"""TB3.1 and TB3.2: live GUI-360 Office tasks in GUI-360's environment, graded by a programmatic check of the saved file.
 
 GUI-360 (arXiv 2511.04307) collected these tasks with UFO's dataflow: copy a template, open it in Office, let the
 agent act, take a final screenshot, save through COM, quit Office. TB3 repeats that environment with an ACU/CUA actor.
 Grading differs by the user's 2026-10-20 decision: GUI-360 asked an LLM judge, TB3 reads the saved OOXML and checks
-the request literally. UFO's 30-step limit is applied after the run to tool calls.
+the request literally. UFO's 30-step limit is applied after the run to tool calls. TB3.2 is adapted from its GUI-360 task to three
+sentences spread over the document.
 """
 
 import ctypes
@@ -27,31 +28,28 @@ STEP_LIMIT = 30  # UFO dataflow MAX_STEPS
 APPS = {
     'excel': {'exe': 'EXCEL.EXE', 'class': 'XLMAIN', 'name': 'Microsoft Excel', 'noun': 'workbook'},
     'word': {'exe': 'WINWORD.EXE', 'class': 'OpusApp', 'name': 'Microsoft Word', 'noun': 'document'},
-    'ppt': {'exe': 'POWERPNT.EXE', 'class': 'PPTFrameClass', 'name': 'Microsoft PowerPoint', 'noun': 'presentation'},
 }
+# Middle sentences of body paragraphs 3, 6 and 10 of template1.docx; at the TB3 window size none is visible without scrolling.
+SENTENCES = (
+    'A software agent is a program that autonomously performs tasks on behalf of users or other programs.',
+    'The study of philosophical agents involves questions about consciousness, moral responsibility, and the nature of decision-making.',
+    'As autonomous agents assume greater roles in decision-making, questions about accountability, bias, and fairness arise.',
+)
 TASKS = {
-    'tb3.1': {'gui360_id': 'excel_4s_1666', 'app': 'excel', 'template': 'adult_sexual_behaviors.xlsx',
-              'request': 'Delete columns B, D, and F in the Excel spreadsheet.'},
-    'tb3.2': {'gui360_id': 'excel_4s_13432', 'app': 'excel', 'template': 'adult_sexual_behaviors.xlsx',
+    'tb3.1': {'gui360_id': 'excel_4s_13432', 'app': 'excel', 'template': 'adult_sexual_behaviors.xlsx', 'adapted': False,
               'request': "Apply conditional formatting to the 'Age' column in Excel to highlight cells with values greater than 30."},
-    'tb3.3': {'gui360_id': 'word_4s_1023', 'app': 'word', 'template': 'template1.docx',
-              'request': "Highlight the text from 'An agent is a broad concept' to 'and autonomous systems.' in the Word document."},
-    'tb3.4': {'gui360_id': 'word_4_16741', 'app': 'word', 'template': 'template1.docx',
-              'request': "Add Arabic text 'مرحبا' to the Word document and align it to the right."},
-    'tb3.5': {'gui360_id': 'ppt_4s_1846', 'app': 'ppt', 'template': 'template6.pptx',
-              'request': 'Draw a straight line on Slide 1 in PowerPoint by holding the Shift key while drawing the line.'},
-    'tb3.6': {'gui360_id': 'ppt_1_113', 'app': 'ppt', 'template': 'template6.pptx',
-              'request': 'Draw a speech bubble on Slide 1 in the PowerPoint presentation.'},
-    'tb3.7': {'gui360_id': 'ppt_4s_9417', 'app': 'ppt', 'template': 'template6.pptx',
-              'request': 'Add a shape with rounded corners to Slide 1 in the PowerPoint presentation and adjust its corner properties.'},
+    'tb3.2': {'gui360_id': 'word_4s_1023', 'app': 'word', 'template': 'template1.docx', 'adapted': True,
+              'request': 'Highlight these three sentences in the Word document: '
+                         + ', '.join(f"'{s}'" for s in SENTENCES[:2]) + f", and '{SENTENCES[2]}'"},
 }
 OFFICE_EXES = [app['exe'] for app in APPS.values()]
+
 
 def is_tb3(scenario):
     return str(scenario).startswith('tb3.')
 
 
-# Actor prompt: where the document is, the verbatim GUI-360 request, and the shared open-document ending.
+# Actor prompt: where the document is, the task request, and the shared open-document ending.
 def prompt(scenario):
     task = TASKS[scenario]
     app = APPS[task['app']]
@@ -183,22 +181,13 @@ def collect(run_dir, plan, observer):
             _com_retry(document.Save, 'save', record['log'], escape)
             record['saved'] = True
             application = document.Application
-            app = plan['tb3']['app']
-            if app == 'excel':
+            if plan['tb3']['app'] == 'excel':
                 application.DisplayAlerts = False
                 _com_retry(application.Quit, 'quit', record['log'], escape)
-            elif app == 'word':
-                _com_retry(lambda: application.Quit(0), 'quit', record['log'], escape)
             else:
-                presentations = list(application.Presentations)
-                for presentation in presentations:
-                    presentation.Saved = True
-                    presentation.Close()
-                record['log'].append(f'closed {len(presentations)} presentation(s)')
-                presentations = presentation = None
-                _com_retry(application.Quit, 'quit', record['log'], escape)
+                _com_retry(lambda: application.Quit(0), 'quit', record['log'], escape)
             record['log'].append('quit requested')
-            # PowerPoint stays alive while any client reference remains, so release them before waiting for exit.
+            # Office can stay alive while a client reference remains, so release them before waiting for exit.
             document = application = None
             import gc
             gc.collect()
@@ -227,7 +216,7 @@ def stop_office(identity, timeout_s=30):
 
 
 # Recognizes Office automation in actor tool calls; GUI-360 allows COM, so this is reported, not a failure.
-COM_PATTERN = r'(?:Excel|Word|PowerPoint)\.Application|win32com|ComObj(?:Get|Active|ect)\b|GetObject\(|New-Object\s+-ComObject'
+COM_PATTERN = r'(?:Excel|Word)\.Application|win32com|ComObj(?:Get|Active|ect)\b|GetObject\(|New-Object\s+-ComObject'
 
 
 # Task success is the saved-file check within the step limit; COM use is an observation.
@@ -258,10 +247,7 @@ def cleanup(run_dir):
 
 M = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
 W = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
-P = '{http://schemas.openxmlformats.org/presentationml/2006/main}'
-A = '{http://schemas.openxmlformats.org/drawingml/2006/main}'
 R = '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}'
-QUARTER_INCH_EMU = 228600
 
 
 def _xml(archive, name):
@@ -306,17 +292,6 @@ def _ref(ref):
     return column, int(row)
 
 
-def _check_delete_columns(saved, template):
-    before, _ = xlsx_sheet(template)
-    after, _ = xlsx_sheet(saved)
-    expected = {'ABCD'['ACEG'.index(_ref(ref)[0])] + str(_ref(ref)[1]): value for ref, value in before.items() if _ref(ref)[0] in 'ACEG'}
-    header = {ref: value for ref, value in after.items() if _ref(ref)[1] == 1}
-    return {'Columns B, D and F deleted (header is Name, Gender, Gender identification, Country)':
-                header == {ref: value for ref, value in expected.items() if _ref(ref)[1] == 1},
-            'Remaining data shifted intact in all rows': all(after.get(ref) == value for ref, value in expected.items()),
-            'No other columns or cells changed': after == expected}
-
-
 def _covers_age_column(sqref):
     rows = set()
     for part in sqref.split():
@@ -348,7 +323,7 @@ def _check_conditional_format(saved, template):
             'No cell values changed': after == before}
 
 
-# Paragraph text with per-character highlight flags and paragraph alignment.
+# Paragraph text with a per-character flag for Word's text highlight color.
 def docx_paragraphs(path):
     body = _xml(zipfile.ZipFile(path), 'word/document.xml').find(W + 'body')
     paragraphs = []
@@ -359,103 +334,36 @@ def docx_paragraphs(path):
             highlight = run.find(f'{W}rPr/{W}highlight')
             text += piece
             marks += [highlight is not None and highlight.get(W + 'val') not in (None, 'none')] * len(piece)
-        alignment = paragraph.find(f'{W}pPr/{W}jc')
-        paragraphs.append({'text': unicodedata.normalize('NFC', text), 'highlighted': marks,
-                           'jc': alignment.get(W + 'val') if alignment is not None else None})
+        paragraphs.append({'text': unicodedata.normalize('NFC', text), 'highlighted': marks})
     return paragraphs
 
 
-def _texts(paragraphs, remove=''):
-    return [t for t in ((p['text'].replace(remove, '') if remove else p['text']).strip() for p in paragraphs) if t]
+def _texts(paragraphs):
+    return [t for t in (p['text'].strip() for p in paragraphs) if t]
 
 
-def _check_highlight_span(saved, template):
+# Every visible character of each sentence highlighted, nothing else; whitespace next to a sentence may go either way.
+def _check_highlight_sentences(saved, template):
     before, after = docx_paragraphs(template), docx_paragraphs(saved)
-    span = before[1]['text']  # the request's span is exactly the first body paragraph
-    targets = [p for p in after if p['text'] == span]
-    whole = len(targets) == 1 and all(on or c.isspace() for c, on in zip(span, targets[0]['highlighted']))
-    others = [p for p in after if not (targets and p is targets[0]) and any(on and not c.isspace() for c, on in zip(p['text'], p['highlighted']))]
-    return {"Whole span 'An agent is a broad concept' ... 'and autonomous systems.' highlighted": whole,
-            'No text outside the span highlighted': whole and not others,
-            'Document text unchanged': _texts(after) == _texts(before)}
+    allowed = [set() for _ in after]
+    scores = {}
+    for sentence in SENTENCES:
+        hits = [(i, p['text'].find(sentence)) for i, p in enumerate(after) if sentence in p['text']]
+        lit = False
+        if len(hits) == 1:
+            index, start = hits[0]
+            span = range(start, start + len(sentence))
+            allowed[index].update(span)
+            lit = all(after[index]['highlighted'][k] or after[index]['text'][k].isspace() for k in span)
+        scores[f"Highlighted: '{sentence[:40]}...'"] = lit
+    scores['No other text highlighted'] = not any(
+        on and not char.isspace() and k not in allowed[i]
+        for i, p in enumerate(after) for k, (char, on) in enumerate(zip(p['text'], p['highlighted'])))
+    scores['Document text unchanged'] = _texts(after) == _texts(before)
+    return scores
 
 
-ARABIC = unicodedata.normalize('NFC', 'مرحبا')
-
-
-def _check_arabic_right(saved, template):
-    before, after = docx_paragraphs(template), docx_paragraphs(saved)
-    holders = [p for p in after if ARABIC in p['text']]
-    return {"Arabic text 'مرحبا' added": bool(holders),
-            'Its paragraph is right-aligned': any(p['jc'] == 'right' for p in holders),
-            'Existing document text unchanged': _texts(after, ARABIC) == _texts(before)}
-
-
-# Slide size and count, and slide 1 shapes with preset geometry, position, extent and adjustments.
-def pptx_slide1(path):
-    archive = zipfile.ZipFile(path)
-    presentation = _xml(archive, 'ppt/presentation.xml')
-    size, ids = presentation.find(P + 'sldSz'), presentation.find(P + 'sldIdLst').findall(P + 'sldId')
-    slide = _xml(archive, _target(archive, 'ppt/_rels/presentation.xml.rels', ids[0].get(R + 'id'), 'ppt/'))
-    shapes = []
-    for element in slide.find(f'{P}cSld/{P}spTree').iter():
-        if element.tag not in (P + 'sp', P + 'cxnSp', P + 'pic', P + 'graphicFrame'):
-            continue
-        geometry = element.find(f'{P}spPr/{A}prstGeom')
-        offset, extent = element.find(f'{P}spPr/{A}xfrm/{A}off'), element.find(f'{P}spPr/{A}xfrm/{A}ext')
-        shapes.append({'prst': geometry.get('prst') if geometry is not None else None,
-                       'x': int(offset.get('x')) if offset is not None else None, 'y': int(offset.get('y')) if offset is not None else None,
-                       'cx': int(extent.get('cx')) if extent is not None else None, 'cy': int(extent.get('cy')) if extent is not None else None,
-                       'adjust': {gd.get('name'): gd.get('fmla') for gd in geometry.iter(A + 'gd')} if geometry is not None else {}})
-    return {'width': int(size.get('cx')), 'height': int(size.get('cy')), 'slides': len(ids), 'shapes': shapes}
-
-
-def _on_slide(shape, deck):
-    return None not in (shape['x'], shape['cx']) and shape['x'] >= 0 and shape['y'] >= 0 \
-        and shape['x'] + shape['cx'] <= deck['width'] and shape['y'] + shape['cy'] <= deck['height']
-
-
-def _single(deck, kinds):
-    return deck['shapes'][0] if len(deck['shapes']) == 1 and deck['shapes'][0]['prst'] in kinds else None
-
-
-def _check_shift_line(saved, template):
-    deck = pptx_slide1(saved)
-    line = _single(deck, {'line', 'straightConnector1'})
-    constrained = line is not None and (line['cx'] == 0 or line['cy'] == 0 or abs(line['cx'] - line['cy']) <= 0.01 * max(line['cx'], line['cy']))
-    return {'One line on Slide 1 and nothing else': line is not None,
-            'Line is constrained straight (horizontal, vertical or 45 degrees)': constrained,
-            'Line has visible length and lies on the slide': line is not None and max(line['cx'], line['cy']) >= QUARTER_INCH_EMU and _on_slide(line, deck),
-            'Slide count unchanged': deck['slides'] == pptx_slide1(template)['slides']}
-
-
-def _check_speech_bubble(saved, template):
-    deck = pptx_slide1(saved)
-    bubble = _single(deck, {'wedgeRectCallout', 'wedgeRoundRectCallout', 'wedgeEllipseCallout'})
-    return {'One speech-bubble shape on Slide 1 and nothing else': bubble is not None,
-            'Bubble has visible size and lies on the slide': bubble is not None and min(bubble['cx'], bubble['cy']) >= QUARTER_INCH_EMU and _on_slide(bubble, deck),
-            'Slide count unchanged': deck['slides'] == pptx_slide1(template)['slides']}
-
-
-ROUNDED_DEFAULTS = {'roundRect': {'adj': 16667}, 'round1Rect': {'adj': 16667},
-                    'round2SameRect': {'adj1': 16667, 'adj2': 0}, 'round2DiagRect': {'adj1': 16667, 'adj2': 0}}
-
-
-def _check_rounded_corners(saved, template):
-    deck = pptx_slide1(saved)
-    shape = _single(deck, set(ROUNDED_DEFAULTS))
-    adjusted = False
-    for name, formula in (shape or {}).get('adjust', {}).items():
-        value = re.fullmatch(r'val (-?\d+)', formula or '')
-        adjusted |= value is not None and int(value.group(1)) != ROUNDED_DEFAULTS[shape['prst']].get(name)
-    return {'One rounded-corner shape on Slide 1 and nothing else': shape is not None,
-            'Corner roundness changed from the default': adjusted,
-            'Shape has visible size and lies on the slide': shape is not None and min(shape['cx'], shape['cy']) >= QUARTER_INCH_EMU and _on_slide(shape, deck),
-            'Slide count unchanged': deck['slides'] == pptx_slide1(template)['slides']}
-
-
-CHECKS = {'tb3.1': _check_delete_columns, 'tb3.2': _check_conditional_format, 'tb3.3': _check_highlight_span,
-          'tb3.4': _check_arabic_right, 'tb3.5': _check_shift_line, 'tb3.6': _check_speech_bubble, 'tb3.7': _check_rounded_corners}
+CHECKS = {'tb3.1': _check_conditional_format, 'tb3.2': _check_highlight_sentences}
 
 
 # An unreadable document fails explicitly instead of raising out of grading.
