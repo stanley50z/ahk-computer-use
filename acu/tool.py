@@ -64,10 +64,13 @@ def _expand_snippet_markers(output: str, working_folder: Path) -> str:
     def expand(match: re.Match[str]) -> str:
         if not enabled:
             return ""
-        folder = find_app_folder(snippets_root(), match[1])
-        if folder is None:
-            return ""
-        return format_snippets(folder, list_snippets(folder)) + "\n"
+        try:
+            folder = find_app_folder(snippets_root(), match[1])
+            if folder is None:
+                return ""
+            return format_snippets(folder, list_snippets(folder)) + "\n"
+        except OSError as error:  # The script already acted; report the store problem beside its result.
+            return f"[acu] cannot list snippets: {error}\n"
 
     return marker.sub(expand, output)
 

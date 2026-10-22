@@ -231,3 +231,103 @@ def test_help_states_fixed_rules():
     assert 'two looks' in ' '.join(result.stdout.split())
     assert '3 failures' in result.stdout
     assert '50%' in result.stdout
+
+
+# Persist a native Codex session from (request payload, output) pairs, one second apart.
+def codex_session(tmp_path, steps):
+    rows = [{'type': 'session_meta', 'timestamp': '2026-10-20T10:00:00Z', 'payload': {'cwd': 'C:/history-test'}}]
+    for index, (request, output) in enumerate(steps):
+        call_id = f'c{index}'
+        kind = 'custom_tool_call' if request['name'] == 'apply_patch' else 'function_call'
+        rows.append({'type': 'response_item', 'timestamp': f'2026-10-20T10:00:{index * 2 + 1:02}Z',
+                     'payload': {'type': kind, 'call_id': call_id, **request}})
+        rows.append({'type': 'response_item', 'timestamp': f'2026-10-20T10:00:{index * 2 + 2:02}Z',
+                     'payload': {'type': f'{kind}_output', 'call_id': call_id, 'output': output}})
+    session = tmp_path / 'codex-session.jsonl'
+    session.write_text(''.join(json.dumps(row) + '\n' for row in rows), encoding='utf-8')
+    return session
+
+
+def patch(path, kind, lines):
+    return {'name': 'apply_patch', 'input': f'*** Begin Patch\n*** {kind} File: {path}\n' + ''.join(
+        line + '\n' for line in lines) + '*** End Patch'}
+
+
+def shell(command):
+    return {'name': 'shell_command', 'arguments': json.dumps({'command': command})}
+
+
+@pytest.mark.parametrize('output, changed', [
+    ('{"output":"Success. Updated the following files:\\nA x\\n","metadata":{"exit_code":0}}', True),
+    ('Exit code: 0\nWall time: 0 seconds\nOutput:\nSuccess. Updated the following files:\n', True),
+    ('{"output":"Failed to write file","metadata":{"exit_code":1}}', False),
+    ('apply_patch verification failed: Failed to find expected lines in x', False),
+    ('execution error: Io(Os { code: 206 })', False),
+    ('', False),  # No readable status: the write stays unconfirmed.
+])
+def test_codex_patch_counts_as_snippet_change_only_when_its_result_succeeded(tmp_path, output, changed):
+    snippet = (tmp_path / 'snippets' / 'Editor.exe' / 'open.ahk').as_posix()
+    session = codex_session(tmp_path, [(patch(snippet, 'Add', ['+WinActivate("ahk_exe Editor.exe")']), output)])
+    result = history(tmp_path, session)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (f'Changed snippet (editor.exe): {snippet}' in result.stdout) is changed
+
+
+def test_codex_failed_shell_write_is_not_a_snippet_change(tmp_path):
+    snippet = (tmp_path / 'snippets' / 'Editor.exe' / 'open.ahk').as_posix()
+    session = codex_session(tmp_path, [(shell(f"cat > '{snippet}' <<'AHK'\nExitApp\nAHK"), 'Exit code: 1\nOutput:\n')])
+    assert 'Changed snippet' not in history(tmp_path, session).stdout
+
+
+def test_codex_added_script_keeps_its_failed_first_run_in_the_chain(tmp_path):
+    script = 'C:/history-test/action.ahk'
+    ok = '{"output":"Success.","metadata":{"exit_code":0}}'
+    session = codex_session(tmp_path, [
+        (patch(script, 'Add', ['+WinActivate("ahk_exe Editor.exe")', '+Send("^o")']), ok),
+        (shell(f'acu run {script}'), 'Exit code: 1\nOutput:\n'),
+        (patch(script, 'Update', ['@@', ' WinActivate("ahk_exe Editor.exe")', '-Send("^o")', '+Send("^+o")']), ok),
+        (shell(f'acu run {script}'), 'Exit code: 0\nOutput:\n'),
+    ])
+    result = history(tmp_path, session, logs=[
+        {'ts': '2026-10-20T10:00:03.5Z', 'script': script, 'outcome': 'error'},
+        {'ts': '2026-10-20T10:00:07.5Z', 'script': script, 'outcome': 'ok'},
+    ])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'Editor.exe: 2 runs (1 ok, 1 error, 0 timeout, 0 unknown)' in result.stdout
+    assert f'candidate: 2 runs, 1 errors, 0 looks; last {script} (2 lines)' in result.stdout
+    assert 'unknown app' not in result.stdout
+
+
+def test_store_app_looks_group_under_the_hosted_app_not_its_frame_host(tmp_path):
+    script = (tmp_path / 'square.ahk').as_posix()
+    tree = str(Path('acu/tree.ahk').resolve())
+
+    def result_text(output):
+        return [{'type': 'text', 'text': json.dumps({'outcome': 'ok', 'output': output})}]
+
+    commands = [
+        ('acu run tree.ahk -- "ahk_exe CalculatorApp.exe"', result_text(
+            'window=1 "Calculator" ApplicationFrameHost.exe\nelements=0\ntruncated=no\n')),
+        ('acu run tree.ahk -- Calculator', result_text(
+            'window=1 "Calculator" ApplicationFrameHost.exe\nelements=0\ntruncated=no\n'
+            'snippets C:\\store\\CalculatorApp.exe\nsquare.ahk | args: n | does: Square\n')),
+        (f"cat > '{script}' <<'AHK'\nWinActivate(\"ahk_exe CalculatorApp.exe\")\nAHK\nacu run '{script}'", []),
+    ]
+    rows = [{'type': 'session', 'timestamp': '2026-10-20T10:00:00Z', 'cwd': str(tmp_path)}]
+    for index, (command, content) in enumerate(commands):
+        rows.append({'type': 'message', 'timestamp': f'2026-10-20T10:00:{index * 2 + 1:02}Z', 'message': {
+            'role': 'assistant', 'content': [{'type': 'toolCall', 'id': f'r{index}', 'name': 'bash',
+                                              'arguments': {'command': command}}]}})
+        rows.append({'type': 'message', 'timestamp': f'2026-10-20T10:00:{index * 2 + 2:02}Z', 'message': {
+            'role': 'toolResult', 'toolCallId': f'r{index}', 'content': content}})
+    session = tmp_path / 'store-app.jsonl'
+    session.write_text(''.join(json.dumps(row) + '\n' for row in rows), encoding='utf-8')
+    result = history(tmp_path, session, logs=[
+        {'ts': '2026-10-20T10:00:01.5Z', 'script': tree, 'outcome': 'ok'},
+        {'ts': '2026-10-20T10:00:03.5Z', 'script': tree, 'outcome': 'ok'},
+        {'ts': '2026-10-20T10:00:05.5Z', 'script': script, 'outcome': 'ok'},
+    ])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'CalculatorApp.exe: 3 runs (3 ok, 0 error, 0 timeout, 0 unknown)' in result.stdout
+    assert 'candidate: 3 runs, 0 errors, 2 looks' in result.stdout
+    assert 'ApplicationFrameHost' not in result.stdout

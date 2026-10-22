@@ -32,7 +32,12 @@ class Call:
     cwd: str
     end: float | None = None
     output: str = ""
-    failed: bool = False
+    failed: bool | None = False  # None: the harness recorded no status ACU can read.
+
+    # Writes count only when the result shows they succeeded.
+    @property
+    def succeeded(self):
+        return self.failed is False and self.end is not None
 
 
 # Normalize timestamps across native JSONL formats, not wall-clock file mtimes.
@@ -40,6 +45,32 @@ def timestamp(value):
     if value is None:
         return None
     return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+
+
+CODEX_FAILURES = ("apply_patch verification failed", "execution error", "exec command rejected",
+                  "failed to parse function arguments")
+
+
+# Codex results carry no error flag; read the status its shell and patch tools print. Other output stays unknown.
+def codex_failed(output):
+    if isinstance(output, list):
+        output = "\n".join(block.get("text", "") for block in output if isinstance(block, dict))
+    text = output if isinstance(output, str) else ""
+    if text.lstrip().startswith("{"):
+        try:
+            metadata = json.loads(text).get("metadata")
+        except (json.JSONDecodeError, AttributeError):
+            metadata = None
+        if isinstance(metadata, dict) and isinstance(metadata.get("exit_code"), int):
+            return metadata["exit_code"] != 0
+    status = re.match(r"(?:Exit code:|Process exited with code) (-?\d+)", text)
+    if status:
+        return status.group(1) != "0"
+    if text.startswith(CODEX_FAILURES) or "aborted by user" in text.splitlines()[:2]:
+        return True
+    if text.startswith("Success."):
+        return False
+    return None
 
 
 # Do not reproduce captured data in parse errors: it may contain private document text.
@@ -97,7 +128,7 @@ def session_calls(path):
             elif payload.get("type") == "custom_tool_call":
                 requests.append((payload["call_id"], payload["name"], {"patch": payload["input"]}))
             elif payload.get("type") in ("function_call_output", "custom_tool_call_output"):
-                results.append((payload["call_id"], payload.get("output", ""), False))
+                results.append((payload["call_id"], payload.get("output", ""), codex_failed(payload.get("output", ""))))
         for id_, name, args in requests:
             if id_ not in calls:
                 calls[id_] = Call(id_, name.split("__")[-1].split(".")[-1].lower(), args,
@@ -273,11 +304,14 @@ def python_writes(text, sources, cwd):
                     yield path, value(operation.args[0])
 
 
-# Apply captured patch hunks only when their context matches a known source version.
+# Apply captured patch hunks only when their context matches a known source version. An added file is its + lines.
 def patch_writes(text, sources, cwd):
-    sections = re.split(r"^\*\*\* (?:Update|Add) File: (.+)\n", text, flags=re.M)
-    for index in range(1, len(sections), 2):
-        path, body = sections[index:index + 2]
+    sections = re.split(r"^\*\*\* (Update|Add) File: (.+)\n", text, flags=re.M)
+    for index in range(1, len(sections), 3):
+        kind, path, body = sections[index:index + 3]
+        if kind == "Add":
+            yield path, "".join(line[1:] for line in body.splitlines(keepends=True) if line.startswith("+"))
+            continue
         source = sources.get(normalized(path, cwd).casefold())
         if source is None:
             yield path, None
@@ -303,7 +337,7 @@ def collect(calls, root):
 
     # Record only confirmed successful writes inside the configured snippet store.
     def mark_changed(path, call):
-        if snippet_app(path, root) and not call.failed and call.end is not None:
+        if snippet_app(path, root) and call.succeeded:
             changed.add(path)
 
     for call in calls:
@@ -311,7 +345,7 @@ def collect(calls, root):
         path = args.get("path", args.get("file_path", ""))
         if call.name in ("write", "edit", "multiedit") and path:
             path = normalized(path, call.cwd)
-            if not call.failed and call.end is not None:
+            if call.succeeded:
                 mark_changed(path, call)
                 if call.name == "write":
                     sources[path.casefold()] = args.get("content", "")
@@ -326,7 +360,7 @@ def collect(calls, root):
                         else:
                             source = None
                     sources[path.casefold()] = source
-        if call.name == "apply_patch" and not call.failed and call.end is not None:
+        if call.name == "apply_patch" and call.succeeded:
             for path, source in patch_writes(args.get("patch", ""), sources, call.cwd):
                 path = normalized(path, call.cwd)
                 sources[path.casefold()] = source
@@ -356,7 +390,7 @@ def collect(calls, root):
                         path = normalized(path, cwd)
                         sources[path.casefold()] = source
                         mark_changed(path, call)
-            if name == "apply_patch" and len(words) > 1 and not call.failed and call.end is not None:
+            if name == "apply_patch" and len(words) > 1 and call.succeeded:
                 for path, source in patch_writes(words[1], sources, cwd):
                     path = normalized(path, cwd)
                     sources[path.casefold()] = source
@@ -417,6 +451,9 @@ def join_runs(runs, logs, root):
                 if isinstance(result, dict) and isinstance(result.get("output"), str):
                     output += "\n" + result["output"]
         names.update(re.findall(r"^window=\d+ .*? ([\w.-]+\.exe)\s*$", output, re.M))
+        # The snippet list names a store app's own process; its frame host names no app.
+        names.update(re.findall(r"^snippets .*[\\/]([\w.-]+\.exe)\s*$", output, re.M))
+        names = {name for name in names if name.casefold() != "applicationframehost.exe"}
         if app:
             run.app = app
         elif len({name.casefold() for name in names}) == 1:

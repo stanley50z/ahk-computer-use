@@ -58,6 +58,20 @@ def test_invalid_settings_preserve_completed_run(store, tmp_path, monkeypatch, s
     assert json.loads(log.read_text(encoding="utf-8").splitlines()[-1])["outcome"] == "ok"
 
 
+def test_unreadable_snippet_preserves_completed_run_and_other_snippets(store, tmp_path, monkeypatch):
+    (store / "utf16.ahk").write_text("; does: Wide\n", encoding="utf-16")
+    script = tmp_path / "action.ahk"
+    script.touch()
+    monkeypatch.setattr(tool, "_desktop_lease", nullcontext)
+    monkeypatch.setattr(tool.launcher, "run_script", lambda *args: Run(
+        "before\n[acu:snippets] CalculatorApp.exe\nafter\n", "ok", 0, 1, "[acu] ok 1ms"))
+    result = tool.run(str(script))
+    assert result["outcome"] == "ok" and "run_log" in result["artifacts"]
+    lines = result["output"].splitlines()
+    assert lines[0] == "before" and lines[-1] == "after" and len(lines) == 2 + 1 + 306
+    assert any(line.startswith("utf16.ahk | unreadable: ") for line in lines)
+
+
 @pytest.mark.parametrize("case", ["missing-store", "unknown-app", "empty-folder", "disabled"])
 def test_discovery_without_snippets_is_quiet(case, store, tmp_path, monkeypatch):
     script = tmp_path / "action.ahk"

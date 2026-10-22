@@ -20,6 +20,7 @@ Without keywords, list every `.ahk` snippet. Otherwise search the filename and h
 snippets <absolute folder path>
 <file name> | args: <args> | does: <does>
 <file name> | no header
+<file name> | unreadable: <error>
 ```
 
 `acu/snippets.py` owns listing and formatting so automatic discovery can reuse them. The following spec decisions are implemented by later tickets, not by the CLI listing ticket:

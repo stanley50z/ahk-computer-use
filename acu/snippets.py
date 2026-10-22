@@ -22,6 +22,7 @@ class Snippet:
 
     path: Path
     header: dict[str, str]
+    error: str = ""
 
 
 # Read only the leading semicolon-comment block, accepting UTF-8 with a BOM.
@@ -46,7 +47,10 @@ def list_snippets(folder: Path, keywords: tuple[str, ...] | list[str] = ()) -> l
     for path in folder.iterdir():
         if not path.is_file() or path.suffix.casefold() != ".ahk":
             continue
-        snippet = read_snippet(path)
+        try:
+            snippet = read_snippet(path)
+        except (OSError, UnicodeDecodeError) as error:  # One bad file must not hide the others or a completed run.
+            snippet = Snippet(path, {}, str(error))
         text = "\n".join([path.name, *snippet.header.values()]).casefold()
         hits = sum(term in text for term in terms)
         if not terms or hits:
@@ -57,6 +61,8 @@ def list_snippets(folder: Path, keywords: tuple[str, ...] | list[str] = ()) -> l
 
 # Keep one canonical line format for explicit and automatic discovery.
 def format_snippet(snippet: Snippet) -> str:
+    if snippet.error:
+        return f"{snippet.path.name} | unreadable: {snippet.error}"
     if not snippet.header:
         return f"{snippet.path.name} | no header"
     return f"{snippet.path.name} | args: {snippet.header.get('args', '')} | does: {snippet.header.get('does', '')}"
