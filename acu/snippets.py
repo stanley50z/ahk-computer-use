@@ -6,6 +6,8 @@ from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
 
+from .settings import snippets_enabled
+
 HEADER_KEYS = frozenset({"does", "args", "needs", "effect", "check", "tested"})
 
 
@@ -159,6 +161,8 @@ def exe_description(exe_name: str) -> str:
 
 # CLI discovery stays separate from script execution and its desktop lease.
 def list_for_app(app: str, keywords: list[str]) -> str:
+    if not snippets_enabled():
+        return "Snippets are off."
     root = snippets_root()
     if not root.is_dir():
         return f"Snippets folder not found: {root}"
