@@ -96,7 +96,8 @@ AcuTree(target, options := "") {
 
     walk(root, "", 1)
     truncated := state.hitMax && state.hitDepth ? "max+depth" : state.hitMax ? "max" : state.hitDepth ? "depth" : "no"
-    return "window=" hwnd " `"" AcuTreeLiteral(WinGetTitle(hwnd)) "`" " WinGetProcessName(hwnd) "`n" state.lines "elements=" state.count "`ntruncated=" truncated "`n"
+    discovery := findText = "" && wantedType = "" ? AcuSnippetMarker(hwnd) : ""
+    return "window=" hwnd " `"" AcuTreeLiteral(WinGetTitle(hwnd)) "`" " WinGetProcessName(hwnd) "`n" state.lines "elements=" state.count "`ntruncated=" truncated "`n" discovery
 }
 
 ; Fetches the cached subtree, waiting while the window's accessibility provider is still waking up. A Chromium or

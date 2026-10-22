@@ -127,6 +127,7 @@ AcuLaunch(command, winTitle, timeoutMs := 10000) {
             current := candidates()
             if (current.Length = 1 && current[1] = found[1]) {
                 target := "ahk_id " found[1]
+                FileAppend AcuSnippetMarker(found[1]), "*"
                 return {hwnd: found[1], pid: WinGetPID(target), title: WinGetTitle(target), class: WinGetClass(target), process: WinGetProcessName(target), elements: elements}
             }
         }
@@ -139,6 +140,25 @@ AcuLaunch(command, winTitle, timeoutMs := 10000) {
         }
         Sleep Min(50, Max(1, deadline - A_TickCount))
     }
+}
+
+; Identifies the content owner for discovery. Store-app frames host a child window in the app's process.
+; Keep the returned launch metadata about the top-level window unchanged.
+AcuSnippetMarker(hwnd) {
+    exe := WinGetProcessName(hwnd)
+    if (exe = "ApplicationFrameHost.exe") {
+        owners := Map()
+        for child in WinGetControlsHwnd(hwnd) {
+            childExe := WinGetProcessName(child)
+            if (childExe != "ApplicationFrameHost.exe")
+                owners[childExe] := true
+        }
+        if (owners.Count != 1)
+            throw Error("cannot identify one content-owning process for window " hwnd)
+        for name in owners
+            exe := name
+    }
+    return "[acu:snippets] " exe "`n"
 }
 
 ; Formats the observed candidates in a failed launch so the next look can select by identity.
