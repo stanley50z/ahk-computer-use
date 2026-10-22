@@ -63,6 +63,10 @@ old.ahk | no header
 
 Missing stores are reported without creating them. Listing never starts AutoHotkey or takes the desktop lease, so it can run while a script owns that lease. `ACU_SNIPPETS_ROOT` overrides only the snippets directory; `ACU_HOME` still controls diagnostic artifacts. Unexpected listing failures use the existing tool crash reports described below. Snippet storage and lifecycle decisions are in [ADR-0010](docs/adr/0010-reusable-snippets.md).
 
+`acu run` also shows the full list when a script calls `AcuLaunch` or prints an unfiltered `AcuTree` dump, including through bundled `tree.ahk`. Tree depth and element limits do not limit snippets. `--find` and `--type` suppress automatic listing. Missing stores or app folders add nothing; an empty app folder adds only its folder line. Discovery uses the content-owning executable, including the hosted app process for `ApplicationFrameHost.exe` windows, without changing launch metadata or the tree's window heading.
+
+The AHK helpers emit an internal `[acu:snippets] <exe>` line. `acu/tool.py` replaces it with the shared Python listing before returning output or recording crash output. Settings are resolved from the `acu run` working folder, not the script's directory; disabled discovery removes the marker. The low-level `acu/run.py` development entry point leaves these markers unexpanded.
+
 ### Snippet settings
 
 Snippets are enabled by default. Set a global default in `~/.ahk-computer-use/settings.json`, or override it in `<project>/.ahk-computer-use/settings.json`:
