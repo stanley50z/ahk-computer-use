@@ -1,0 +1,5 @@
+{"type":"session","timestamp":"2026-10-20T10:00:00Z","cwd":"C:/history-test"}
+{"type":"message","timestamp":"2026-10-20T10:00:01Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"a","name":"bash","arguments":{"command":"cat > action.ahk <<'AHK'\nWinActivate(\"ahk_exe Editor.exe\")\nSend(\"^o\")\nAHK\nacu run action.ahk"}}]}}
+{"type":"message","timestamp":"2026-10-20T10:00:03Z","message":{"role":"toolResult","toolCallId":"a","toolName":"bash","content":[{"type":"text","text":"{\"outcome\":\"error\"}"}],"isError":false}}
+{"type":"message","timestamp":"2026-10-20T10:00:04Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"b","name":"bash","arguments":{"command":"acu run action.ahk"}}]}}
+{"type":"message","timestamp":"2026-10-20T10:00:06Z","message":{"role":"toolResult","toolCallId":"b","content":[{"type":"text","text":"{\"outcome\":\"ok\"}"}],"isError":false}}

@@ -37,7 +37,7 @@ acu run screenshot.ahk -- app "ahk_id 12345"
 
 Use absolute paths for your own scripts from an agent session. Arguments after `--` are literal strings passed to `A_Args`. `tree.ahk` and `screenshot.ahk` are ordinary scripts passed to the same command, not separate operations; named without a directory, they resolve to the bundled copies unless a file of that name exists in the current directory. A screenshot script prints its saved PNG path and coordinate mapping in `output`; read the PNG separately. Authoring and inspection guidance is in `acu/SKILL.md`, which is the complete agent-facing manual.
 
-There is no server or MCP integration, inline-code input, engine selector, maintained-script-ID registry, or general discovery/description operation. Snippet listing is the read-only discovery exception. Other operations require a separate design decision before implementation.
+There is no server or MCP integration, inline-code input, engine selector, maintained-script-ID registry, or general discovery/description operation. Snippet listing and session history are the read-only exceptions. Other operations require a separate design decision before implementation.
 
 `acu run` stdout is one JSON result containing `engine` (always `ahk`), `outcome`, `exit_code`, `output`, `trailer`, `duration_ms`, and `artifacts` paths. Exit codes preserve the script's exit code (124 for timeout); invalid requests exit 2 and tool infrastructure failures exit 1. This uses the same prelude and launcher as before. Successful execution alone does not verify the task's effect.
 
@@ -62,6 +62,24 @@ old.ahk | no header
 ```
 
 Missing stores are reported without creating them. Listing never starts AutoHotkey or takes the desktop lease, so it can run while a script owns that lease. `ACU_SNIPPETS_ROOT` overrides only the snippets directory; `ACU_HOME` still controls diagnostic artifacts. Unexpected listing failures use the existing tool crash reports described below. Snippet storage and lifecycle decisions are in [ADR-0010](docs/adr/0010-reusable-snippets.md).
+
+## Summarize a session
+
+```
+acu history <session-file.jsonl>
+```
+
+History reads one native Pi, Codex, or Claude Code session plus `acu_home()/logs/runs.jsonl` (normally `%LOCALAPPDATA%\ACU\logs\runs.jsonl`). It prints compact app totals, candidate chains, each snippet run and outcome, changed snippets, and existing snippets with frequent failures. It does not launch AutoHotkey, take the desktop lease, modify the store, execute captured shell commands, or print script text or raw tool output. Unexpected failures use the tool crash-report location in **Debugging artifacts** below.
+
+Fixed rules (also in `acu history --help`):
+
+- A candidate is a per-app sequence since the previous successful action or unknown outcome, ending at an `ok` action run, with at least **one error/timeout or two looks**. A look is a separate `tree.ahk` or `screenshot.ahk` run. The report gives the final script path and physical line count, including comments and blank lines. An `ok` exit is not proof that the user's task succeeded.
+- A frequently failing snippet has **at least 3 error/timeout runs and a failure rate of at least 50%** across all retained log entries for that path, including runs outside this session. The file must still exist under `snippets_root()`; deleted files are not proposed.
+- Outcomes join by case-insensitive full script path and the tool request-to-result timestamp interval. Repeated runs in one call join in timestamp order only when counts agree. Missing results, absent logs, and ambiguous matches remain `unknown`; they never imply success. Bare bundled tree/screenshot names also match their bundled paths. Concurrent ambiguous intervals are not guessed.
+- App identity comes from the snippet's folder, a literal `ahk_exe` selector in captured source/arguments, or a tree's `window=` output. Conflicting or absent evidence goes under `unknown app`, which produces no candidates. There is no inference from document titles or adjacent apps.
+- Source length comes from captured write/edit arguments, shell heredocs, literal Python `-c` writes, or captured patch hunks. A current on-disk script is used only when its SHA-256 matches the run log. When the recorded hash disagrees with captured text, that text is discarded. Missing source is reported as `length unknown`.
+
+Parsing mirrors the bench's native tool-call envelopes, ID correlation, heredoc separation and shell command-position rules. Quoted mentions such as `echo 'acu run ...'` are not runs. Parallel tool wrappers are expanded. Direct write/edit tools and literal shell writes/patches identify changed snippets; paths must belong to the configured snippets root, not merely contain a `snippets` folder. This is static analysis of literal calls, not a shell interpreter: dynamically constructed commands, scripts launched inside other programs, and generated paths may remain unresolved. Shell requests that cannot be parsed fail explicitly rather than claiming a complete summary. Keep the session and retained run log for investigating unknown entries. No new history log is written.
 
 ## Install the skill
 

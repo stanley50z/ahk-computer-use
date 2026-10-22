@@ -4,7 +4,7 @@ import argparse
 import json
 import sys
 
-from . import snippets, tool
+from . import history, snippets, tool
 from .diagnostics import failure
 
 
@@ -29,6 +29,10 @@ def main(argv=None) -> int:
     listing.add_argument("app")
     listing.add_argument("keywords", nargs="*")
 
+    history_command = commands.add_parser("history", help="Summarize ACU activity in a session",
+                                          description=history.RULES)
+    history_command.add_argument("session_file", help="Pi, Codex or Claude Code JSONL session file")
+
     try:
         arguments = list(sys.argv[1:] if argv is None else argv)
         forwarded = []
@@ -37,6 +41,9 @@ def main(argv=None) -> int:
             forwarded = arguments[boundary + 1:]
             arguments = arguments[:boundary]
         options = parser.parse_args(arguments)
+        if options.command == "history":
+            print(history.summarize(options.session_file))
+            return 0
         if options.command == "snippets":
             print(snippets.list_for_app(options.app, options.keywords))
             return 0
