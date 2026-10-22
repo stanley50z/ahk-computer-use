@@ -63,6 +63,23 @@ def test_skill_is_self_contained_and_spends_turns_on_looking_not_ceremony():
     assert '!fe{Right}{Down}{Enter}' not in text, 'benchmark-specific menu recipes do not belong in ACU'
 
 
+def test_skill_teaches_snippet_discovery_execution_and_lifecycle():
+    """Keep #28's snippet contract in the first-look instructions, without app recipes."""
+    text = SKILL_FILE.read_text(encoding="utf-8")
+    snippets = text.split("## Reuse snippets", 1)[1].split("\n## ", 1)[0]
+
+    assert text.index("## Reuse snippets") < text.index("### 1. Look")
+    for required in ("acu snippets list <app> [keyword...]",
+                     "acu run <snippet path> -- <args>",
+                     "~/.ahk-computer-use/snippets/<exe name>/",
+                     "AcuLaunch", "--find", "--type", "A_Args",
+                     "needs", "effect", "check", "tested",
+                     "last message", "one line per snippet", "retro-acu"):
+        assert required in snippets, f"snippet instructions must cover {required}"
+    assert re.search(r"never delete", snippets, re.IGNORECASE)
+    assert not re.search(r"Calculator|Notepad|Illustrator|Adobe|benchmark", snippets, re.IGNORECASE)
+
+
 def test_skill_names_only_files_that_exist_beside_it():
     for script in ("run.py", "prelude.ahk", "tree.ahk", "screenshot.ahk"):
         assert script in SKILL_FILE.read_text(encoding="utf-8")

@@ -29,6 +29,14 @@ acu run "C:/work/launch.ahk"
 
 - Chain every step whose intermediate state you can predict into one script; look again only when you cannot. Looking is also available inside a script: `AcuTree(target, {find: "Save"})` returns the dump as text, and `AcuScreenshot({app: target}, outPath)` saves the picture and returns its mapping, so an action script can end with the evidence it needs instead of spending another turn on `tree.ahk` or `screenshot.ahk`.
 
+## Reuse snippets
+
+Read the snippet list in your first look, before exploring controls. `AcuLaunch` and unfiltered tree dumps print the app's full list; filtered dumps (`--find`, `--type`) do not. If you skip the tree or use a filtered dump and have not seen the list, run `acu snippets list <app> [keyword...]` before exploring. Omit keywords for the full list. `<app>` matches the content-owning executable name or its description, ignoring case and an optional `.exe` suffix. If discovery is disabled, continue with the ordinary loop.
+
+Snippets live in `~/.ahk-computer-use/snippets/<exe name>/`. Read a matching snippet's code and leading comment header (`does`, `args`, `needs`, `effect`, `check`, `tested`), confirm its needs and effects fit the authorized task, then reuse it instead of rediscovering the action: `acu run <snippet path> -- <args>` (quote paths and arguments as needed). Arguments reach `A_Args`. The snippet must check its needs first, naming any missing need in an error, and check its result last, failing if the action had no effect. Verify the observed result, not just exit zero.
+
+If a snippet fails, inspect the failure and current state, repair the snippet in place, rerun it, and update its `tested` line after verifying success. Continue the user's task rather than stopping at the repair. Never delete a snippet. Do not save new snippets on your own; `retro-acu` proposes additions or deletions for user approval. In your last message, name each snippet you changed, one line per snippet.
+
 ## The loop
 
 Look, act, check. Repeat until the user's postcondition is observed. The task is done when a window state, printed text, or screenshot shows the result, never because an execution exited zero. Use only the desktop actions the user authorized.
