@@ -11,11 +11,15 @@
 ; --find keeps elements whose name or id contains the text; --type keeps one control type. The element
 ; budget counts printed lines. Ends with elements=N and truncated=no|max|depth|max+depth, naming the limit
 ; that cut the dump. Defaults: depth 25, 300 elements.
-; The dump itself is the prelude's AcuTree, which any script can call directly; this file only parses arguments.
+; The dump itself is the prelude's AcuTree, which any script can call directly without snippet discovery.
+; This wrapper adds the full snippet list to unfiltered dumps, regardless of depth or element limits.
 #Requires AutoHotkey v2.0
 
 request := ParseArgs(A_Args)
-FileAppend AcuTree(request.target, request), "*"
+hwnd := WinGetID(request.target)
+FileAppend AcuTree(hwnd, request), "*"
+if (request.find = "" && request.type = "")
+    FileAppend AcuSnippetMarker(hwnd), "*"
 
 ; Splits the command line into the WinTitle and the options, and rejects values that would print nothing.
 ParseArgs(args) {

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from . import run as launcher
 from .settings import snippets_enabled
-from .snippets import format_snippets, list_snippets, snippets_root
+from .snippets import find_app_folder, format_snippets, list_snippets, snippets_root
 
 HERE = Path(__file__).resolve().parent
 BUNDLED_SCRIPTS = ("tree.ahk", "screenshot.ahk")
@@ -55,16 +55,16 @@ def _expand_snippet_markers(output: str, working_folder: Path) -> str:
     marker = re.compile(r"^\[acu:snippets\] ([^\\/\r\n:]+\.exe)\r?$(?:\n)?", re.MULTILINE | re.IGNORECASE)
     if not marker.search(output):
         return output
-    enabled = snippets_enabled(working_folder)
+    try:
+        enabled = snippets_enabled(working_folder)
+    except ValueError as error:
+        message = " ".join(str(error).splitlines())
+        return marker.sub(lambda match: f"[acu] {message}\n", output)
 
     def expand(match: re.Match[str]) -> str:
         if not enabled:
             return ""
-        root = snippets_root()
-        if not root.is_dir():
-            return ""
-        folder = next((path for path in root.iterdir()
-                       if path.is_dir() and path.name.casefold() == match[1].casefold()), None)
+        folder = find_app_folder(snippets_root(), match[1])
         if folder is None:
             return ""
         return format_snippets(folder, list_snippets(folder)) + "\n"

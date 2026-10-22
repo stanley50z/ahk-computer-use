@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 # Read the optional value; absence leaves the preceding default unchanged.
-def _enabled_value(path: Path) -> bool | None:
+def _read_snippets_enabled(path: Path) -> bool | None:
     try:
         text = path.read_text(encoding="utf-8-sig")
     except FileNotFoundError:
@@ -31,14 +31,14 @@ def _enabled_value(path: Path) -> bool | None:
 def snippets_enabled(working_folder: str | Path | None = None) -> bool:
     home_file = (Path.home() / ".ahk-computer-use/settings.json").resolve()
     global_file = Path(os.environ.get("ACU_SETTINGS_FILE", home_file)).resolve()
-    enabled = _enabled_value(global_file)
+    enabled = _read_snippets_enabled(global_file)
     folder = Path.cwd() if working_folder is None else Path(working_folder).resolve()
     for directory in (folder, *folder.parents):
         project_file = directory / ".ahk-computer-use/settings.json"
         # The home settings are global, even when tests relocate that global file.
         if project_file in (home_file, global_file) or not project_file.exists():
             continue
-        project_enabled = _enabled_value(project_file)
+        project_enabled = _read_snippets_enabled(project_file)
         if project_enabled is not None:
             enabled = project_enabled
         break

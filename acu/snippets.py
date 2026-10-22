@@ -47,7 +47,7 @@ def list_snippets(folder: Path, keywords: tuple[str, ...] | list[str] = ()) -> l
         if not path.is_file() or path.suffix.casefold() != ".ahk":
             continue
         snippet = read_snippet(path)
-        text = "\n".join([path.name, *(f"{key}: {value}" for key, value in snippet.header.items())]).casefold()
+        text = "\n".join([path.name, *snippet.header.values()]).casefold()
         hits = sum(term in text for term in terms)
         if not terms or hits:
             ranked.append((hits, snippet))
@@ -159,6 +159,15 @@ def exe_description(exe_name: str) -> str:
     return file_description(path) if path else ""
 
 
+# Share exact folder lookup between explicit listing and automatic discovery.
+def find_app_folder(root: Path, app: str) -> Path | None:
+    if not root.is_dir():
+        return None
+    query = app.casefold().removesuffix(".exe")
+    return next((path for path in root.iterdir()
+                 if path.is_dir() and path.name.casefold().removesuffix(".exe") == query), None)
+
+
 # CLI discovery stays separate from script execution and its desktop lease.
 def list_for_app(app: str, keywords: list[str]) -> str:
     if not snippets_enabled():
@@ -166,6 +175,9 @@ def list_for_app(app: str, keywords: list[str]) -> str:
     root = snippets_root()
     if not root.is_dir():
         return f"Snippets folder not found: {root}"
+    exact = find_app_folder(root, app)
+    if exact is not None:
+        return format_snippets(exact, list_snippets(exact, keywords))
     folders = sorted((path for path in root.iterdir() if path.is_dir()), key=lambda path: (path.name.casefold(), path.name))
     query = app.casefold().removesuffix(".exe")
     matches = [folder for folder in folders

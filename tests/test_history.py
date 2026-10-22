@@ -34,6 +34,28 @@ def test_pi_error_then_success_is_candidate_without_script_text(tmp_path):
     assert 'Send(' not in result.stdout
 
 
+@pytest.mark.parametrize("missing", ["both", "request", "result"])
+def test_pi_stream_without_timestamps_stays_unknown(tmp_path, missing):
+    session = tmp_path / "stream.jsonl"
+    rows = [
+        {"type": "message_end", "message": {"role": "assistant", "content": [
+            {"type": "toolCall", "id": "r", "name": "bash", "arguments": {
+                "command": "acu run C:/history-test/action.ahk -- ahk_exe Editor.exe"}}]}},
+        {"type": "message", "message": {"role": "toolResult", "toolCallId": "r", "content": []}},
+    ]
+    if missing == "request":
+        rows[1]["timestamp"] = "2026-10-20T10:00:03Z"
+    elif missing == "result":
+        rows[0]["timestamp"] = "2026-10-20T10:00:01Z"
+    session.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    result = history(tmp_path, session, logs=[
+        {"ts": "2026-10-20T10:00:02Z", "script": "C:/history-test/action.ahk", "outcome": "ok"},
+    ])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 unknown" in result.stdout
+    assert "candidate:" not in result.stdout
+
+
 def test_codex_extra_looks_resolve_bundled_scripts(tmp_path):
     result = history(tmp_path, 'codex.jsonl', logs=[
         {'ts': '2026-10-20T10:00:02Z', 'script': str(Path('acu/tree.ahk').resolve()), 'outcome': 'ok'},

@@ -1,8 +1,8 @@
 ; The accessibility-tree dump for every ACU script, included by the prelude. AcuTree returns the listing as text;
-; tree.ahk is the command-line wrapper around it.
+; tree.ahk is the command-line wrapper and adds snippet discovery to unfiltered dumps.
 #Requires AutoHotkey v2.0
 
-; Lists a window's control-view tree, depth first, one line per element, exactly as tree.ahk prints it:
+; Lists a window's control-view tree, depth first, one line per element, without snippet discovery:
 ;   2,2,2,5,3 Button "Six" id="num6Button" @2073,1917 157x71 invoke
 ; Path, type, name when present, id= when present, value= when present and in full, screen bounds, then the
 ; actions the element supports (invoke toggle value select expand scroll; value means writable) and its state
@@ -96,8 +96,7 @@ AcuTree(target, options := "") {
 
     walk(root, "", 1)
     truncated := state.hitMax && state.hitDepth ? "max+depth" : state.hitMax ? "max" : state.hitDepth ? "depth" : "no"
-    discovery := findText = "" && wantedType = "" ? AcuSnippetMarker(hwnd) : ""
-    return "window=" hwnd " `"" AcuTreeLiteral(WinGetTitle(hwnd)) "`" " WinGetProcessName(hwnd) "`n" state.lines "elements=" state.count "`ntruncated=" truncated "`n" discovery
+    return "window=" hwnd " `"" AcuTreeLiteral(WinGetTitle(hwnd)) "`" " WinGetProcessName(hwnd) "`n" state.lines "elements=" state.count "`ntruncated=" truncated "`n"
 }
 
 ; Fetches the cached subtree, waiting while the window's accessibility provider is still waking up. A Chromium or

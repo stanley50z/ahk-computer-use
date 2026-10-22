@@ -39,6 +39,25 @@ def test_run_expands_full_list_and_preserves_other_output(store, tmp_path, monke
     assert output.endswith("action-304.ahk | args: value | does: Temporary action 304\nafter\n")
 
 
+@pytest.mark.parametrize("settings_text", ["{", '{"snippets":{"enabled":"yes"}}'])
+def test_invalid_settings_preserve_completed_run(store, tmp_path, monkeypatch, settings_text):
+    settings = tmp_path / "global.json"
+    settings.write_text(settings_text, encoding="utf-8")
+    script = tmp_path / "action.ahk"
+    script.touch()
+    monkeypatch.setattr(tool, "_desktop_lease", nullcontext)
+    monkeypatch.setattr(tool.launcher, "run_script", lambda *args: Run(
+        "before\n[acu:snippets] CalculatorApp.exe\nafter\n", "ok", 0, 1, "[acu] ok 1ms"))
+    result = tool.run(str(script))
+    assert result["outcome"] == "ok" and result["exit_code"] == 0
+    assert result["trailer"] == "[acu] ok 1ms"
+    lines = result["output"].splitlines()
+    assert len(lines) == 3 and lines[0] == "before" and lines[2] == "after"
+    assert "Invalid settings file" in lines[1] and str(settings) in lines[1]
+    log = Path(result["artifacts"]["run_log"])
+    assert json.loads(log.read_text(encoding="utf-8").splitlines()[-1])["outcome"] == "ok"
+
+
 @pytest.mark.parametrize("case", ["missing-store", "unknown-app", "empty-folder", "disabled"])
 def test_discovery_without_snippets_is_quiet(case, store, tmp_path, monkeypatch):
     script = tmp_path / "action.ahk"
@@ -89,17 +108,19 @@ def test_calculator_launch_direct_tree_and_bundled_filters(store, tmp_path):
         target = "ahk_id " + handle.read_text(encoding="utf-8")
         direct = tmp_path / "direct.ahk"
         direct.write_text('FileAppend AcuTree(A_Args[1], {max: 1}), "*"', encoding="utf-8")
-        for script, args in [(str(direct), []), ("tree.ahk", ["--max", "1"])]:
-            output = call(tmp_path, "run", script, "--", target, *args)
-            assert output.endswith("action-304.ahk | args: value | does: Temporary action 304\n")
-            assert "ApplicationFrameHost.exe\n" not in output.split("snippets ")[-1]
+        output = call(tmp_path, "run", str(direct), "--", target)
+        assert "snippets" not in output and "action-" not in output
+        assert "elements=" in output and "truncated=max" in output
+        output = call(tmp_path, "run", "tree.ahk", "--", target, "--max", "1")
+        assert output.endswith("action-304.ahk | args: value | does: Temporary action 304\n")
+        assert "ApplicationFrameHost.exe\n" not in output.split("snippets ")[-1]
         for args in [("--find", "num"), ("--type", "Button")]:
             output = call(tmp_path, "run", "tree.ahk", "--", target, *args)
             assert "snippets" not in output and "action-" not in output
         settings = tmp_path / ".ahk-computer-use" / "settings.json"
         settings.parent.mkdir()
         settings.write_text('{"snippets":{"enabled":false}}', encoding="utf-8")
-        output = call(tmp_path, "run", str(direct), "--", target)
+        output = call(tmp_path, "run", "tree.ahk", "--", target)
         assert "snippets" not in output and "action-" not in output
     finally:
         if handle.exists():

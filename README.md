@@ -23,7 +23,7 @@ This installs the `acu` command in uv's user-level tools bin directory, with its
 
 Normal use is `acu run ...`, not a Python/package-manager wrapper. Python is the implementation language; the installed console launcher starts its interpreter internally. **uv is an installer/development tool, not part of the runtime command.** ACU has no Python runtime package dependencies; it uses the standard library and the existing AutoHotkey installation.
 
-For development, `uv sync` installs the quiet-test dependencies, `uv run pytest ...` runs focused checks, and `uv build` creates an installable wheel containing the launcher, scripts, vendored UIA library, and both skills. These are setup/build commands, not the agent-facing interface. Uninstall the CLI with `uv tool uninstall acu-desktop`.
+For development, `uv sync` installs the quiet-test dependencies, `uv run pytest ...` runs focused checks, and `uv build` creates an installable wheel containing the launcher, scripts, vendored UIA library, and ACU skill. These are setup/build commands, not the agent-facing interface. Uninstall the CLI with `uv tool uninstall acu-desktop`.
 
 ## Agent interface
 
@@ -49,9 +49,9 @@ Timeouts must be finite and greater than zero, at most 300 seconds. A Windows se
 acu snippets list <app> [keyword...]
 ```
 
-Snippets are ordinary `.ahk` files in `~/.ahk-computer-use/snippets/<exe name>/`. App matching ignores case and an optional `.exe` suffix, and searches executable names and their FileDescription. ACU looks for the executable in running processes first, then registry App Paths. Unresolvable folders remain searchable by exe name. Unknown apps show existing folders; ambiguous matches ask you to choose one.
+Snippets are ordinary `.ahk` files in `~/.ahk-computer-use/snippets/<exe name>/`. App matching ignores case and an optional `.exe` suffix. An exact executable-name match wins; otherwise ACU searches partial executable names and their FileDescription. ACU looks for the executable in running processes first, then registry App Paths. Unresolvable folders remain searchable by exe name. Unknown apps show existing folders; ambiguous matches ask you to choose one.
 
-The header is the leading block of `;` comments before code, with fields `does`, `args`, `needs`, `effect`, `check`, and `tested` written as `; key: value` (key case ignored). Other comment lines are ignored. With no keywords, listing shows every snippet. Keywords search filenames and header fields using case-insensitive substring matches; more distinct hits come first, with ties by filename.
+The header is the leading block of `;` comments before code, with fields `does`, `args`, `needs`, `effect`, `check`, and `tested` written as `; key: value` (key case ignored). Other comment lines are ignored. With no keywords, listing shows every snippet. Keywords search filenames and header values using case-insensitive substring matches; more distinct hits come first, with ties by filename.
 
 Listing prints plain text, not the run-result JSON:
 
@@ -63,7 +63,7 @@ old.ahk | no header
 
 Missing stores are reported without creating them. Listing never starts AutoHotkey or takes the desktop lease, so it can run while a script owns that lease. `ACU_SNIPPETS_ROOT` overrides only the snippets directory; `ACU_HOME` still controls diagnostic artifacts. Unexpected listing failures use the existing tool crash reports described below. Snippet storage and lifecycle decisions are in [ADR-0010](docs/adr/0010-reusable-snippets.md).
 
-`acu run` also shows the full list when a script calls `AcuLaunch` or prints an unfiltered `AcuTree` dump, including through bundled `tree.ahk`. Tree depth and element limits do not limit snippets. `--find` and `--type` suppress automatic listing. Missing stores or app folders add nothing; an empty app folder adds only its folder line. Discovery uses the content-owning executable, including the hosted app process for `ApplicationFrameHost.exe` windows, without changing launch metadata or the tree's window heading.
+`acu run` also shows the full list when a script calls `AcuLaunch` or runs an unfiltered bundled `tree.ahk` dump. In-script `AcuTree` calls do not print snippets. Tree depth and element limits do not limit snippets. `--find` and `--type` suppress automatic listing. Missing stores or app folders add nothing; an empty app folder adds only its folder line. Discovery uses the content-owning executable, including the hosted app process for `ApplicationFrameHost.exe` windows, without changing launch metadata or the tree's window heading.
 
 The AHK helpers emit an internal `[acu:snippets] <exe>` line. `acu/tool.py` replaces it with the shared Python listing before returning output or recording crash output. Settings are resolved from the `acu run` working folder, not the script's directory; disabled discovery removes the marker. The low-level `acu/run.py` development entry point leaves these markers unexpanded.
 
@@ -75,7 +75,7 @@ Snippets are enabled by default. Set a global default in `~/.ahk-computer-use/se
 { "snippets": { "enabled": false } }
 ```
 
-ACU searches upward from the call's working folder and uses the nearest project settings file. Its `snippets.enabled` value wins over the global value; an omitted value leaves the global default unchanged. Set it to `true` to enable snippets again. Invalid JSON or a non-boolean enabled value produces an error naming the file. When disabled, `acu snippets list` prints `Snippets are off.` without reading the snippet store. This controls discovery, not permission to run a script by path.
+ACU searches upward from the call's working folder and uses the nearest project settings file. Its `snippets.enabled` value wins over the global value; an omitted value leaves the global default unchanged. Set it to `true` to enable snippets again. Invalid JSON or a non-boolean enabled value produces an error naming the file. Explicit listing fails; automatic discovery replaces its marker with one error line and preserves the completed run result. When disabled, `acu snippets list` prints `Snippets are off.` without reading the snippet store. This controls discovery, not permission to run a script by path.
 
 `ACU_SETTINGS_FILE` overrides the global settings file location for tests or isolated environments. The home settings file is not treated as a project file during upward search, including when this override is set. `ACU_HOME` still controls only diagnostic artifacts, and `ACU_SNIPPETS_ROOT` still controls only snippet storage. Benchmark preparation writes the disabled setting into every trial workspace before starting the actor, without changing global settings.
 
@@ -113,7 +113,7 @@ That creates four directory junctions (symlinks outside Windows): `acu` and `ret
 
 To make both skills available from every directory on the machine, `python install_skill.py --global` links each into `~/.agents/skills`, `~/.claude/skills`, and `~/.config/opencode/skills` instead (six links). `--global --remove` removes those links only. Not used while ACU is being tested. The repository's Pi, Claude Code, and OpenCode settings hide only `cua-driver`; they leave `retro-acu` available for explicit invocation.
 
-Both the wheel and source distribution include `retro-acu/` beside `acu/`; the source distribution also includes `install_skill.py`.
+Only the source distribution includes `retro-acu/` beside `acu/`, together with `install_skill.py`. The wheel installs the `acu` package only.
 
 ## Low-level launcher usage
 

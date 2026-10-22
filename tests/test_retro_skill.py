@@ -34,8 +34,10 @@ def test_retro_requires_history_and_approval_before_store_changes():
     assert not re.search(r"\b[\w-]+\.exe\b|Illustrator|Calculator|Notepad|Adobe", text, re.IGNORECASE)
 
 
-def test_distributions_include_the_sibling_skill():
+def test_only_source_distribution_includes_sibling_skill_for_installer():
     config = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
     targets = config["tool"]["hatch"]["build"]["targets"]
     assert "retro-acu" in targets["sdist"]["only-include"]
-    assert targets["wheel"]["force-include"]["retro-acu"] == "retro-acu"
+    assert "install_skill.py" in targets["sdist"]["only-include"]
+    assert targets["wheel"]["packages"] == ["acu"]
+    assert "retro-acu" not in targets["wheel"].get("force-include", {})

@@ -86,15 +86,27 @@ def test_keywords_rank_distinct_hits_search_header_and_name_only(tmp_path, monke
         "c.ahk | args:  | does: ",
         "mask-bare.ahk | no header",
     ]
-    assert cli("snippets", "list", "editor", "absent").stdout.splitlines() == [f"snippets {folder}"]
+    for keyword in ("absent", "args", "does", "needs", "check", "tested"):
+        assert cli("snippets", "list", "editor", keyword).stdout.splitlines() == [f"snippets {folder}"]
+
+
+@pytest.mark.parametrize("query", ["calc", "CALC.EXE"])
+def test_exact_executable_match_wins_over_partial_and_description(tmp_path, monkeypatch, query):
+    monkeypatch.setenv("ACU_SNIPPETS_ROOT", str(tmp_path))
+    for name in ("calc.exe", "CalculatorApp.exe", "Other.exe"):
+        (tmp_path / name).mkdir()
+    monkeypatch.setattr(snippets, "exe_description", lambda name: "Calculator")
+    assert snippets.list_for_app(query, []) == f"snippets {tmp_path / 'calc.exe'}"
 
 
 def test_app_description_matching_and_ambiguous_or_unknown_apps(tmp_path, monkeypatch):
     monkeypatch.setenv("ACU_SNIPPETS_ROOT", str(tmp_path))
-    for name in ("Writer.exe", "Draw.exe", "Unresolved.exe"):
+    for name in ("Writer.exe", "Draw.exe", "Unresolved.exe", "Illustrator.exe"):
         (tmp_path / name).mkdir()
-    descriptions = {"Writer.exe": "Acme Document Editor", "Draw.exe": "Acme Drawing Editor", "Unresolved.exe": ""}
+    descriptions = {"Writer.exe": "Acme Document Editor", "Draw.exe": "Acme Drawing Editor", "Unresolved.exe": "", "Illustrator.exe": "Adobe Illustrator 2026"}
     monkeypatch.setattr(snippets, "exe_description", descriptions.__getitem__)
+    assert snippets.list_for_app("Adobe Illustrator", []) == f"snippets {tmp_path / 'Illustrator.exe'}"
+    assert snippets.list_for_app("2026", []) == f"snippets {tmp_path / 'Illustrator.exe'}"
     assert snippets.list_for_app("DOCUMENT", []) == f"snippets {tmp_path / 'Writer.exe'}"
     assert snippets.list_for_app("writer.EXE", []) == f"snippets {tmp_path / 'Writer.exe'}"
     ambiguous = snippets.list_for_app("editor", [])
