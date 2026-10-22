@@ -1,0 +1,7 @@
+{"type": "session_meta", "timestamp": "2026-10-20T10:00:00Z", "payload": {"cwd": "C:/history-test"}}
+{"type": "response_item", "timestamp": "2026-10-20T10:00:01Z", "payload": {"type": "function_call", "name": "shell_command", "call_id": "a", "arguments": "{\"command\": \"python -c 'from pathlib import Path; Path(\\\"SNIPPETS/Editor.exe/open.ahk\\\").write_text(\\\"WinActivate(\\\\\\\"ahk_exe Editor.exe\\\\\\\")\\\\n\\\")'; acu run 'SNIPPETS/Editor.exe/open.ahk' \"}"}}
+{"type": "response_item", "timestamp": "2026-10-20T10:00:03Z", "payload": {"type": "function_call_output", "call_id": "a", "output": "Process exited with code 0"}}
+{"type": "response_item", "timestamp": "2026-10-20T10:00:04Z", "payload": {"type": "custom_tool_call", "name": "apply_patch", "call_id": "p", "input": "*** Begin Patch\n*** Update File: SNIPPETS/Editor.exe/open.ahk\n@@\n-WinActivate(\"ahk_exe Editor.exe\")\n+WinActivate(\"ahk_exe Editor.exe\")\n+Send(\"^o\")\n*** End Patch"}}
+{"type": "response_item", "timestamp": "2026-10-20T10:00:05Z", "payload": {"type": "custom_tool_call_output", "call_id": "p", "output": "Success. Updated files."}}
+{"type": "response_item", "timestamp": "2026-10-20T10:00:06Z", "payload": {"type": "function_call", "name": "shell_command", "call_id": "b", "arguments": "{\"command\":\"acu run 'SNIPPETS/Editor.exe/open.ahk'\"}"}}
+{"type": "response_item", "timestamp": "2026-10-20T10:00:08Z", "payload": {"type": "function_call_output", "call_id": "b", "output": "Process exited with code 0"}}

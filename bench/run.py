@@ -626,6 +626,8 @@ def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=No
     run_dir.mkdir(parents=True, exist_ok=False)
     workspace, home = run_dir / 'workspace', run_dir / 'agent-home'
     workspace.mkdir()
+    (workspace / '.ahk-computer-use').mkdir()
+    save_json(workspace / '.ahk-computer-use/settings.json', {'snippets': {'enabled': False}})
     home.mkdir()
     scenario = (ROOT / f'bench/scenarios/{scenario_name}.md').read_text(encoding='utf-8')
     (run_dir / 'scenario.md').write_text(scenario, encoding='utf-8')

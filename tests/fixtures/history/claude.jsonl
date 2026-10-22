@@ -1,0 +1,4 @@
+{"type":"assistant","timestamp":"2026-10-20T10:00:01Z","cwd":"C:/history-test","message":{"role":"assistant","content":[{"type":"tool_use","id":"w","name":"Write","input":{"file_path":"SNIPPETS/Editor.exe/open.ahk","content":"; does: Open dialog\nWinActivate(\"ahk_exe Editor.exe\")\n"}}]}}
+{"type":"user","timestamp":"2026-10-20T10:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"w","content":"File written"}]}}
+{"type":"assistant","timestamp":"2026-10-20T10:00:03Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"r","name":"Bash","input":{"command":"acu run 'SNIPPETS/Editor.exe/open.ahk'; acu run 'SNIPPETS/Editor.exe/open.ahk'"}}]}}
+{"type":"user","timestamp":"2026-10-20T10:00:06Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"r","content":"{\"outcome\":\"error\"}\n{\"outcome\":\"ok\"}"}]}}

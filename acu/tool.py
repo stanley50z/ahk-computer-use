@@ -2,21 +2,25 @@
 
 import ctypes
 import math
+import re
 from contextlib import contextmanager
 from pathlib import Path
 
 from . import run as launcher
+from .settings import snippets_enabled
+from .snippets import find_app_folder, format_snippets, list_snippets, snippets_root
 
 HERE = Path(__file__).resolve().parent
 BUNDLED_SCRIPTS = ("tree.ahk", "screenshot.ahk")
 
 
-def resolve_script(script: str) -> Path:
-    """The script to run: the caller's path, or a bundled script named without a directory, so an agent need not know where ACU lives."""
+def resolve_script(script: str, cwd: str | None = None) -> Path:
+    """Resolve a caller's path or bare bundled name; history supplies the captured cwd."""
     path = Path(script).expanduser()
-    if path.name in BUNDLED_SCRIPTS and str(path.parent) == "." and not path.is_file():
+    candidate = Path(cwd) / path if cwd else path
+    if path.name in BUNDLED_SCRIPTS and str(path.parent) == "." and not candidate.is_file():
         return HERE / path.name
-    return path.resolve()
+    return candidate.resolve()
 
 
 @contextmanager
@@ -46,6 +50,31 @@ def _desktop_lease():
         kernel32.CloseHandle(handle)
 
 
+def _expand_snippet_markers(output: str, working_folder: Path) -> str:
+    """Replace AHK discovery lines using the same store and format as explicit listing."""
+    marker = re.compile(r"^\[acu:snippets\] ([^\\/\r\n:]+\.exe)\r?$(?:\n)?", re.MULTILINE | re.IGNORECASE)
+    if not marker.search(output):
+        return output
+    try:
+        enabled = snippets_enabled(working_folder)
+    except ValueError as error:
+        message = " ".join(str(error).splitlines())
+        return marker.sub(lambda match: f"[acu] {message}\n", output)
+
+    def expand(match: re.Match[str]) -> str:
+        if not enabled:
+            return ""
+        try:
+            folder = find_app_folder(snippets_root(), match[1])
+            if folder is None:
+                return ""
+            return format_snippets(folder, list_snippets(folder)) + "\n"
+        except OSError as error:  # The script already acted; report the store problem beside its result.
+            return f"[acu] cannot list snippets: {error}\n"
+
+    return marker.sub(expand, output)
+
+
 def run(script: str, timeout: float = 30, args: list[str] | None = None) -> dict:
     """Run an existing AHK script under the launcher; preserve the caller's file and expose execution facts."""
     if not script.strip():
@@ -63,6 +92,7 @@ def run(script: str, timeout: float = 30, args: list[str] | None = None) -> dict
             result = launcher.run_script(path, timeout, arguments)
         except SystemExit as error:  # The low-level launcher reports a missing installation this way.
             raise ValueError(str(error)) from error
+        result.output = _expand_snippet_markers(result.output, Path.cwd())
         response = {
             "engine": "ahk", "outcome": result.outcome, "exit_code": result.exit_code,
             "output": result.output, "trailer": result.trailer, "duration_ms": result.duration_ms,

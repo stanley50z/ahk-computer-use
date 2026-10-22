@@ -23,11 +23,11 @@ This installs the `acu` command in uv's user-level tools bin directory, with its
 
 Normal use is `acu run ...`, not a Python/package-manager wrapper. Python is the implementation language; the installed console launcher starts its interpreter internally. **uv is an installer/development tool, not part of the runtime command.** ACU has no Python runtime package dependencies; it uses the standard library and the existing AutoHotkey installation.
 
-For development, `uv sync` installs the quiet-test dependencies, `uv run pytest ...` runs focused checks, and `uv build` creates an installable wheel containing the launcher, scripts, vendored UIA library, and skill. These are setup/build commands, not the agent-facing interface. Uninstall the CLI with `uv tool uninstall acu-desktop`.
+For development, `uv sync` installs the quiet-test dependencies, `uv run pytest ...` runs focused checks, and `uv build` creates an installable wheel containing the launcher, scripts, vendored UIA library, and ACU skill. These are setup/build commands, not the agent-facing interface. Uninstall the CLI with `uv tool uninstall acu-desktop`.
 
 ## Agent interface
 
-ACU is CLI-only and exposes one operation: run an existing AutoHotkey v2 script file. The agent writes one predictable action chain, calls the CLI through its shell tool, and reads observed facts back. The file stays under the caller's ownership; ACU neither creates nor deletes action scripts.
+ACU is CLI-only. It runs existing AutoHotkey v2 script files and lists saved snippets without using the desktop. The agent writes one predictable action chain, calls the CLI through its shell tool, and reads observed facts back. The file stays under the caller's ownership; ACU neither creates nor deletes action scripts.
 
 ```
 acu run action.ahk [--timeout 30] [-- arguments for the script]
@@ -37,23 +37,84 @@ acu run screenshot.ahk -- app "ahk_id 12345"
 
 Use absolute paths for your own scripts from an agent session. Arguments after `--` are literal strings passed to `A_Args`. `tree.ahk` and `screenshot.ahk` are ordinary scripts passed to the same command, not separate operations; named without a directory, they resolve to the bundled copies unless a file of that name exists in the current directory. A screenshot script prints its saved PNG path and coordinate mapping in `output`; read the PNG separately. Authoring and inspection guidance is in `acu/SKILL.md`, which is the complete agent-facing manual.
 
-There is no server or MCP integration, inline-code input, engine selector, maintained-script-ID registry, discovery, or description operation. Other operations require a separate design decision before implementation.
+There is no server or MCP integration, inline-code input, engine selector, maintained-script-ID registry, or general discovery/description operation. Snippet listing and session history are the read-only exceptions. Other operations require a separate design decision before implementation.
 
-CLI stdout is one JSON result containing `engine` (always `ahk`), `outcome`, `exit_code`, `output`, `trailer`, `duration_ms`, and `artifacts` paths. Exit codes preserve the script's exit code (124 for timeout); invalid requests exit 2 and tool infrastructure failures exit 1. This uses the same prelude and launcher as before. Successful execution alone does not verify the task's effect.
+`acu run` stdout is one JSON result containing `engine` (always `ahk`), `outcome`, `exit_code`, `output`, `trailer`, `duration_ms`, and `artifacts` paths. Exit codes preserve the script's exit code (124 for timeout); invalid requests exit 2 and tool infrastructure failures exit 1. This uses the same prelude and launcher as before. Successful execution alone does not verify the task's effect.
 
 Timeouts must be finite and greater than zero, at most 300 seconds. A Windows session-local mutex rejects overlapping CLI runs with a `busy` error; actions are not queued against stale state. The low-level launcher remains available and does not take this tool-level lease. ACU is not a sandbox or an access-control boundary. There is no persistent desktop-control session, background server, or localhost listener.
 
-## Install the skill
+## List saved snippets
 
-`acu/` is also the agent skill: `acu/SKILL.md` sits beside the launcher and scripts and teaches an agent the loop. Link it where the coding harnesses look inside this repository:
+```
+acu snippets list <app> [keyword...]
+```
+
+Snippets are ordinary `.ahk` files in `~/.ahk-computer-use/snippets/<exe name>/`. App matching ignores case and an optional `.exe` suffix. An exact executable-name match wins; otherwise ACU searches partial executable names and their FileDescription. ACU looks for the executable in running processes first, then registry App Paths. Unresolvable folders remain searchable by exe name. Unknown apps show existing folders; ambiguous matches ask you to choose one.
+
+The header is the leading block of `;` comments before code, with fields `does`, `args`, `needs`, `effect`, `check`, and `tested` written as `; key: value` (key case ignored). Other comment lines are ignored. With no keywords, listing shows every snippet. Keywords search filenames and header values using case-insensitive substring matches; more distinct hits come first, with ties by filename.
+
+Listing prints plain text, not the run-result JSON:
+
+```text
+snippets C:\Users\you\.ahk-computer-use\snippets\Editor.exe
+open.ahk | args: path | does: Open a document
+old.ahk | no header
+wide.ahk | unreadable: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte
+```
+
+A snippet ACU cannot read as UTF-8 text is listed as `unreadable` and searched by filename only; the other snippets still list. Missing stores are reported without creating them. Listing never starts AutoHotkey or takes the desktop lease, so it can run while a script owns that lease. `ACU_SNIPPETS_ROOT` overrides only the snippets directory; `ACU_HOME` still controls diagnostic artifacts. Unexpected listing failures use the existing tool crash reports described below. Snippet storage and lifecycle decisions are in [ADR-0010](docs/adr/0010-reusable-snippets.md).
+
+`acu run` also shows the full list when a script calls `AcuLaunch` or runs an unfiltered bundled `tree.ahk` dump. In-script `AcuTree` calls do not print snippets. Tree depth and element limits do not limit snippets. `--find` and `--type` suppress automatic listing. Missing stores or app folders add nothing; an empty app folder adds only its folder line. A settings or store error becomes one `[acu] ...` line in place of the list, and the run result is kept. Discovery uses the content-owning executable, including the hosted app process for `ApplicationFrameHost.exe` windows, without changing launch metadata or the tree's window heading.
+
+The AHK helpers emit an internal `[acu:snippets] <exe>` line. `acu/tool.py` replaces it with the shared Python listing before returning output or recording crash output. Settings are resolved from the `acu run` working folder, not the script's directory; disabled discovery removes the marker. The low-level `acu/run.py` development entry point leaves these markers unexpanded.
+
+### Snippet settings
+
+Snippets are enabled by default. Set a global default in `~/.ahk-computer-use/settings.json`, or override it in `<project>/.ahk-computer-use/settings.json`:
+
+```json
+{ "snippets": { "enabled": false } }
+```
+
+ACU searches upward from the call's working folder and uses the nearest project settings file. Its `snippets.enabled` value wins over the global value; an omitted value leaves the global default unchanged. Set it to `true` to enable snippets again. Invalid JSON or a non-boolean enabled value produces an error naming the file. Explicit listing fails; automatic discovery replaces its marker with one error line and preserves the completed run result. When disabled, `acu snippets list` prints `Snippets are off.` without reading the snippet store. This controls discovery, not permission to run a script by path.
+
+`ACU_SETTINGS_FILE` overrides the global settings file location for tests or isolated environments. The home settings file is not treated as a project file during upward search, including when this override is set. `ACU_HOME` still controls only diagnostic artifacts, and `ACU_SNIPPETS_ROOT` still controls only snippet storage. Benchmark preparation writes the disabled setting into every trial workspace before starting the actor, without changing global settings.
+
+For automatic discovery, reuse `acu.settings.snippets_enabled(working_folder)`; omitting the folder uses the current working directory. It returns a boolean or raises `ValueError` naming an invalid settings file.
+
+## Summarize a session
+
+```
+acu history <session-file.jsonl>
+```
+
+History reads one native Pi, Codex, or Claude Code session plus `acu_home()/logs/runs.jsonl` (normally `%LOCALAPPDATA%\ACU\logs\runs.jsonl`). It prints compact app totals, candidate chains, each snippet run and outcome, changed snippets, and existing snippets with frequent failures. It does not launch AutoHotkey, take the desktop lease, modify the store, execute captured shell commands, or print script text or raw tool output. Unexpected failures use the tool crash-report location in **Debugging artifacts** below.
+
+Fixed rules (also in `acu history --help`):
+
+- A candidate is a per-app sequence since the previous successful action or unknown outcome, ending at an `ok` action run, with at least **one error/timeout or two looks**. A look is a separate `tree.ahk` or `screenshot.ahk` run. The report gives the final script path and physical line count, including comments and blank lines. An `ok` exit is not proof that the user's task succeeded.
+- A frequently failing snippet has **at least 3 error/timeout runs and a failure rate of at least 50%** across all retained log entries for that path, including runs outside this session. The file must still exist under `snippets_root()`; deleted files are not proposed.
+- Outcomes join by case-insensitive full script path and the tool request-to-result timestamp interval. Repeated runs in one call join in timestamp order only when counts agree. Missing results, absent logs, and ambiguous matches remain `unknown`; they never imply success. Bare bundled tree/screenshot names use the CLI resolver with the captured working folder, including local-file precedence. Shell paths expand `$PWD`, `${PWD}` and `~`; other variables stay literal. Bundled paths from another installation can remain unknown. Concurrent ambiguous intervals are not guessed.
+- App identity comes from the snippet's folder, a literal `ahk_exe` selector in captured source/arguments, a tree's `window=` output, or the folder named by a printed snippet list. Output evidence comes only from the run's own CLI result line: a shell call's results pair with its runs in order, and none are used when their counts differ. `ApplicationFrameHost.exe` names no app, so a store app's looks group under its own process when other evidence names it. Conflicting or absent evidence goes under `unknown app`, which produces no candidates. There is no inference from document titles or adjacent apps.
+- Source length comes from captured write/edit arguments, shell heredocs, literal Python `-c` writes, or captured patch hunks. A current on-disk script is used only when its SHA-256 matches the run log, and only when it decodes as UTF-8 or as UTF-16 with a byte-order mark. Captured Python that does not parse leaves its writes unknown. When the recorded hash disagrees with captured text, that text is discarded. Missing source is reported as `length unknown`.
+
+Parsing mirrors the bench's native tool-call envelopes, ID correlation, heredoc separation and shell command-position rules. Quoted mentions such as `echo 'acu run ...'` are not runs. Parallel tool wrappers are expanded. Direct write/edit tools and literal shell writes/patches identify changed snippets only when their result shows success. Codex results have no error flag, so history reads the `Exit code: N` line, patch `exit_code` metadata or a known failure message; any other output leaves the write unconfirmed. An `Add File` patch supplies the new file's source; paths must belong to the configured snippets root, not merely contain a `snippets` folder. This is static analysis of literal calls, not a shell interpreter: dynamically constructed commands, scripts launched inside other programs, and generated paths may remain unresolved. Shell requests that cannot be parsed fail explicitly rather than claiming a complete summary. Keep the session and retained run log for investigating unknown entries. No new history log is written.
+
+## Install the skills
+
+`acu/` is also the agent skill: `acu/SKILL.md` sits beside the launcher and scripts and teaches an agent the loop. The sibling `retro-acu/SKILL.md` is user-invoked only. After a session, invoke `retro-acu` with its session-file path to review `acu history` findings and propose new snippets, repairs, and deletions. It changes the snippet store only after approval; it does not read raw session files or logs itself.
+
+Link both skills where the coding harnesses look inside this repository:
 
 ```
 python install_skill.py
 ```
 
-That creates two directory junctions (symlinks outside Windows), `.agents/skills/acu` for Pi, Codex, and OpenCode and `.claude/skills/acu` for Claude Code. Both are gitignored, so run the command once per checkout. Only sessions started inside this repository see the skill; other agent sessions on the machine are untouched. `python install_skill.py --remove` deletes the links. Restart a running harness, or `/reload` in Pi, to pick up a change.
+That creates four directory junctions (symlinks outside Windows): `acu` and `retro-acu` under both `.agents/skills/` for Pi, Codex, and OpenCode and `.claude/skills/` for Claude Code. All are gitignored, so run the command once per checkout. Only sessions started inside this repository see the skills; other agent sessions on the machine are untouched. `python install_skill.py --remove` deletes the links. Restart a running harness, or `/reload` in Pi, to pick up a change.
 
-To make the skill available from every directory on the machine, `python install_skill.py --global` links into `~/.agents/skills`, `~/.claude/skills`, and `~/.config/opencode/skills` instead. Not used while ACU is being tested.
+To make both skills available from every directory on the machine, `python install_skill.py --global` links each into `~/.agents/skills`, `~/.claude/skills`, and `~/.config/opencode/skills` instead (six links). `--global --remove` removes those links only. Not used while ACU is being tested. The repository's Pi, Claude Code, and OpenCode settings hide only `cua-driver`; they leave `retro-acu` available for explicit invocation.
+
+Only the source distribution includes `retro-acu/` beside `acu/`, together with `install_skill.py`. The wheel installs the `acu` package only.
 
 ## Low-level launcher usage
 

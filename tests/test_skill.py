@@ -63,6 +63,23 @@ def test_skill_is_self_contained_and_spends_turns_on_looking_not_ceremony():
     assert '!fe{Right}{Down}{Enter}' not in text, 'benchmark-specific menu recipes do not belong in ACU'
 
 
+def test_skill_teaches_snippet_discovery_execution_and_lifecycle():
+    """Keep #28's snippet contract in the first-look instructions, without app recipes."""
+    text = SKILL_FILE.read_text(encoding="utf-8")
+    snippets = text.split("## Reuse snippets", 1)[1].split("\n## ", 1)[0]
+
+    assert text.index("## Reuse snippets") < text.index("### 1. Look")
+    for required in ("acu snippets list <app> [keyword...]",
+                     "acu run <snippet path> -- <args>",
+                     "~/.ahk-computer-use/snippets/<exe name>/",
+                     "AcuLaunch", "--find", "--type", "A_Args",
+                     "needs", "effect", "check", "tested",
+                     "last message", "one line per snippet", "retro-acu"):
+        assert required in snippets, f"snippet instructions must cover {required}"
+    assert re.search(r"never delete", snippets, re.IGNORECASE)
+    assert not re.search(r"Calculator|Notepad|Illustrator|Adobe|benchmark", snippets, re.IGNORECASE)
+
+
 def test_skill_names_only_files_that_exist_beside_it():
     for script in ("run.py", "prelude.ahk", "tree.ahk", "screenshot.ahk"):
         assert script in SKILL_FILE.read_text(encoding="utf-8")
@@ -70,23 +87,27 @@ def test_skill_names_only_files_that_exist_beside_it():
 
 
 @pytest.mark.parametrize("roots", [PROJECT_ROOTS, USER_ROOTS], ids=["project", "global"])
-def test_installer_links_the_skill_into_every_harness_root_and_removes_cleanly(tmp_path, roots):
+def test_installer_links_both_skills_into_every_harness_root_and_removes_cleanly(tmp_path, roots):
     first = install(tmp_path, roots)
     second = install(tmp_path, roots)
 
-    assert len(first) == len(roots) and all(line.startswith("installed") for line in first)
+    assert len(first) == 2 * len(roots) and all(line.startswith("installed") for line in first)
     assert all(line.startswith("already installed") for line in second)
     for root in roots:
-        link = tmp_path / root / "acu"
-        assert is_link(link)
-        assert (link / "SKILL.md").read_text(encoding="utf-8") == SKILL_FILE.read_text(encoding="utf-8")
-        assert (link / "run.py").is_file()
+        for name in ("acu", "retro-acu"):
+            link = tmp_path / root / name
+            assert is_link(link)
+            assert link.resolve() == REPO / name
+            assert (link / "SKILL.md").is_file()
+        assert (tmp_path / root / "acu" / "run.py").is_file()
 
     removed = install(tmp_path, roots, remove=True)
 
     assert all(line.startswith("removed") for line in removed)
-    assert not any((tmp_path / root / "acu").exists() for root in roots)
-    assert SKILL_FILE.is_file(), "removing links must leave the checkout alone"
+    assert len(removed) == 2 * len(roots)
+    assert not any((tmp_path / root / name).exists() for root in roots for name in ("acu", "retro-acu"))
+    for name in ("acu", "retro-acu"):
+        assert (REPO / name / "SKILL.md").is_file(), "removing links must leave the checkout alone"
 
 
 def test_project_roots_cover_the_four_harnesses_in_repo():

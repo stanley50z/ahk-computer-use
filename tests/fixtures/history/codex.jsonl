@@ -1,0 +1,5 @@
+{"type":"session_meta","timestamp":"2026-10-20T10:00:00Z","payload":{"cwd":"C:/history-test"}}
+{"type":"response_item","timestamp":"2026-10-20T10:00:01Z","payload":{"type":"function_call","name":"shell_command","call_id":"a","arguments":"{\"command\":\"acu run tree.ahk -- \\\"ahk_exe Editor.exe\\\"; acu run screenshot.ahk -- app \\\"ahk_exe Editor.exe\\\"\"}"}}
+{"type":"response_item","timestamp":"2026-10-20T10:00:04Z","payload":{"type":"function_call_output","call_id":"a","output":"Process exited with code 0"}}
+{"type":"response_item","timestamp":"2026-10-20T10:00:05Z","payload":{"type":"function_call","name":"shell_command","call_id":"b","arguments":"{\"command\":\"cat > action.ahk <<'AHK'\\nWinActivate(\\\"ahk_exe Editor.exe\\\")\\nSend(\\\"^o\\\")\\nAHK\\nacu run action.ahk\"}"}}
+{"type":"response_item","timestamp":"2026-10-20T10:00:07Z","payload":{"type":"function_call_output","call_id":"b","output":"Process exited with code 0"}}

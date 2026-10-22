@@ -47,7 +47,7 @@ def test_illustrator_pen_export_prepare_freezes_png_and_resolves_task_paths(tmp_
     assert plan['trial_policy'] == {'attempts_per_configuration': 3, 'aggregation': 'all-successes',
                                     'replace_failed_attempts': False}
     assert sorted(p.name for p in (directory / 'workspace').iterdir()) == [
-        'Cloud9-Pen-Starter.ai', 'Cloud9-Reference.png', 'scratch']
+        '.ahk-computer-use', 'Cloud9-Pen-Starter.ai', 'Cloud9-Reference.png', 'scratch']
     assert (directory / 'workspace/scratch').is_dir()
     for name in ('Cloud9-Pen-Starter.ai', 'Cloud9-Reference.png'):
         data = (ROOT / 'bench/assets/illustrator-pen-export' / name).read_bytes()
