@@ -225,6 +225,7 @@ def test_each_run_in_a_shell_call_gets_only_its_own_result(tmp_path):
 @pytest.mark.parametrize('data, decoded', [
     ('WinActivate("ahk_exe Editor.exe")\n'.encode('utf-16'), True),
     (b'\xffWinActivate("ahk_exe Editor.exe")\n', False),  # Neither UTF-8 nor UTF-16 with a BOM: source stays unknown.
+    ('WinActivate("ahk_exe Editor.exe")\n'.encode('utf-16')[:-1], False),  # A truncated UTF-16 file.
 ])
 def test_on_disk_script_in_another_encoding_does_not_abort_the_report(tmp_path, data, decoded):
     script = tmp_path / 'action.ahk'

@@ -276,10 +276,9 @@ def cli_outputs(text):
 
 # Decode a script as AutoHotkey reads it: UTF-8, or UTF-16 with a byte-order mark. Anything else stays unknown.
 def decoded_source(data):
-    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
-        return data.decode("utf-16")
+    encoding = "utf-16" if data.startswith((b"\xff\xfe", b"\xfe\xff")) else "utf-8-sig"
     try:
-        return data.decode("utf-8-sig")
+        return data.decode(encoding)
     except UnicodeDecodeError:
         return None
 
