@@ -10,6 +10,7 @@ import posixpath
 from pathlib import Path
 import re
 import shlex
+import warnings
 
 from .run import acu_home
 from .snippets import snippets_root
@@ -255,7 +256,32 @@ class Run:
 
 # Extract literal app selectors only; never guess an app from a document title.
 def app_names(text):
-    return set(re.findall(r"\bahk_exe\s+([\w .-]+?\.exe)\b", text, re.I))
+    return set(re.findall(r"\bahk_exe\s+([\w .+-]+?\.exe)\b", text, re.I))
+
+
+# The `output` of each acu CLI result line, in order; acu prints one JSON line per run, error or not.
+def cli_outputs(text):
+    outputs = []
+    for line in text.splitlines():
+        if not line.lstrip().startswith("{"):
+            continue
+        try:
+            result = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # Not every output line beginning with { is a JSON result.
+        if isinstance(result, dict) and ("output" in result or "error" in result):
+            outputs.append(result["output"] if isinstance(result.get("output"), str) else "")
+    return outputs
+
+
+# Decode a script as AutoHotkey reads it: UTF-8, or UTF-16 with a byte-order mark. Anything else stays unknown.
+def decoded_source(data):
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return data.decode("utf-16")
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return None
 
 
 # The snippet store, not a directory merely named snippets, defines snippet identity.
@@ -268,7 +294,12 @@ def snippet_app(path, root):
 
 # Replay literal Python writes like bench/efficiency.py, without executing captured code.
 def python_writes(text, sources, cwd):
-    tree = ast.parse(text)
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SyntaxWarning)  # Captured code is data; its escape warnings are noise.
+            tree = ast.parse(text)
+    except SyntaxError:  # Shell quoting can leave code Python never ran; its writes stay unknown.
+        return
     values = {}
 
     def value(node):
@@ -434,25 +465,24 @@ def join_runs(runs, logs, root):
                 if run.source is None and Path(run.path).is_file():
                     data = Path(run.path).read_bytes()
                     if hashlib.sha256(data).hexdigest() == row.get("sha256"):
-                        run.source = data.decode("utf-8-sig")
+                        run.source = decoded_source(data)
+    # Pair each call's CLI results with its runs in order; when the counts differ no result is attributed.
+    by_call, outputs = defaultdict(list), {}
+    for run in runs:
+        by_call[run.call.id].append(run)
+    for call_runs in by_call.values():
+        results = cli_outputs(call_runs[0].call.output)
+        if len(results) == len(call_runs):
+            outputs.update(zip(map(id, call_runs), results))
     for run in runs:
         app = snippet_app(run.path, root)
         run.snippet = app is not None
         run.look = posixpath.basename(run.path).lower() in ("tree.ahk", "screenshot.ahk")
         names = app_names((run.source or "") + "\n" + run.arguments)
-        output = run.call.output
-        # CLI JSON is often wrapped by the shell tool's process-status text.
-        for line in run.call.output.splitlines():
-            if line.lstrip().startswith("{"):
-                try:
-                    result = json.loads(line)
-                except json.JSONDecodeError:
-                    continue  # Not every output line beginning with { is a JSON result.
-                if isinstance(result, dict) and isinstance(result.get("output"), str):
-                    output += "\n" + result["output"]
-        names.update(re.findall(r"^window=\d+ .*? ([\w.-]+\.exe)\s*$", output, re.M))
+        output = outputs.get(id(run), "")
+        names.update(re.findall(r"^window=\d+ .*? ([\w.+-]+\.exe)\s*$", output, re.M))
         # The snippet list names a store app's own process; its frame host names no app.
-        names.update(re.findall(r"^snippets .*[\\/]([\w.-]+\.exe)\s*$", output, re.M))
+        names.update(re.findall(r"^snippets .*[\\/]([\w.+-]+\.exe)\s*$", output, re.M))
         names = {name for name in names if name.casefold() != "applicationframehost.exe"}
         if app:
             run.app = app
