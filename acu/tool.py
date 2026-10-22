@@ -11,12 +11,13 @@ HERE = Path(__file__).resolve().parent
 BUNDLED_SCRIPTS = ("tree.ahk", "screenshot.ahk")
 
 
-def resolve_script(script: str) -> Path:
-    """The script to run: the caller's path, or a bundled script named without a directory, so an agent need not know where ACU lives."""
+def resolve_script(script: str, cwd: str | None = None) -> Path:
+    """Resolve a caller's path or bare bundled name; history supplies the captured cwd."""
     path = Path(script).expanduser()
-    if path.name in BUNDLED_SCRIPTS and str(path.parent) == "." and not path.is_file():
+    candidate = Path(cwd) / path if cwd else path
+    if path.name in BUNDLED_SCRIPTS and str(path.parent) == "." and not candidate.is_file():
         return HERE / path.name
-    return path.resolve()
+    return candidate.resolve()
 
 
 @contextmanager

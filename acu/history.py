@@ -13,6 +13,7 @@ import shlex
 
 from .run import acu_home
 from .snippets import snippets_root
+from .tool import BUNDLED_SCRIPTS, resolve_script
 
 RULES = ('Candidates end at an ok action run after at least one error/timeout or two looks '
          '(tree.ahk/screenshot.ahk). Success means launcher ok, not verified task success. '
@@ -122,14 +123,18 @@ def expand_call(call):
         yield call
 
 
-# Match Windows paths case-insensitively, including Git Bash drive spelling.
+# Normalize Windows/Git Bash paths and known shell locations; leave other variables literal.
 def normalized(path, cwd=''):
+    cwd = str(cwd).replace('\\', '/')
+    cwd = re.sub(r'^/([a-zA-Z])/', r'\1:/', cwd)
     path = str(path).strip('\"\'').replace('\\', '/')
     conversion = re.fullmatch(r'\$\(cygpath -w [\"\']?\$PWD/([^$`]+?)[\"\']?\)', path)
     if conversion and cwd:
         path = cwd.rstrip('/\\') + '/' + conversion.group(1).rstrip('\"\'')
+    if cwd:
+        path = re.sub(r'\$\{PWD\}|\$PWD(?![A-Za-z0-9_])', lambda _: cwd, path)
     path = re.sub(r'^/([a-zA-Z])/', r'\1:/', path)
-    if path.startswith('~/'):
+    if path == '~' or path.startswith('~/'):
         path = Path.home().as_posix() + path[1:]
     if not re.match(r'^(?:[A-Za-z]:/|/)', path) and cwd:
         path = cwd.rstrip('/\\') + '/' + path
@@ -213,7 +218,6 @@ class Run:
     lines: int | None = None
     snippet: bool = False
     look: bool = False
-    bundled_path: str | None = None
 
 
 # Extract literal app selectors only; never guess an app from a document title.
@@ -356,10 +360,11 @@ def collect(calls, root):
                         changed.add(path)
             if name not in ('acu', 'acu.exe') or len(words) < 3 or words[1] != 'run':
                 continue
-            path = normalized(words[2], cwd)
+            if words[2] in BUNDLED_SCRIPTS:
+                path = normalized(resolve_script(words[2], normalized(cwd)))
+            else:
+                path = normalized(words[2], cwd)
             run = Run(path, call, sources.get(path.casefold()), ' '.join(words[3:]))
-            if words[2].lower() in ('tree.ahk', 'screenshot.ahk'):
-                run.bundled_path = (Path(__file__).parent / words[2].lower()).as_posix()
             runs.append(run)
     return runs, changed
 
@@ -374,8 +379,7 @@ def join_runs(runs, logs, root):
         owners = []
         for key, group in grouped.items():
             run = group[0]
-            paths = {run.path.casefold(), (run.bundled_path or '').casefold()}
-            if (normalized(row['script']).casefold() in paths and run.call.end is not None
+            if (normalized(row['script']).casefold() == run.path.casefold() and run.call.end is not None
                     and run.call.start <= timestamp(row['ts']) <= run.call.end):
                 owners.append(key)
         if len(owners) == 1:

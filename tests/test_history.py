@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 import subprocess
 
+import pytest
+
 FIXTURES = Path(__file__).parent / 'fixtures' / 'history'
 
 
@@ -148,6 +150,57 @@ def test_current_script_is_used_only_with_matching_recorded_hash(tmp_path):
     result = history(tmp_path, session, logs)
     assert 'unknown app: 2 runs' in result.stdout
     assert 'private changed contents' not in result.stdout
+
+
+# Persist a minimal native Pi shell call for CLI path-resolution regressions.
+def shell_session(tmp_path, command, cwd):
+    session = tmp_path / 'shell.jsonl'
+    rows = [
+        {'type': 'session', 'timestamp': '2026-10-20T10:00:00Z', 'cwd': str(cwd)},
+        {'type': 'message', 'timestamp': '2026-10-20T10:00:01Z', 'message': {'role': 'assistant', 'content': [
+            {'type': 'toolCall', 'id': 'r', 'name': 'bash', 'arguments': {'command': command}}]}},
+        {'type': 'message', 'timestamp': '2026-10-20T10:00:04Z', 'message': {'role': 'toolResult', 'toolCallId': 'r', 'content': []}},
+    ]
+    session.write_text(''.join(json.dumps(row) + '\n' for row in rows), encoding='utf-8')
+    return session
+
+
+def test_bare_bundled_name_uses_cli_resolution_not_both_paths(tmp_path):
+    local = tmp_path / 'tree.ahk'
+    bundled = Path('acu/tree.ahk').resolve()
+    session = shell_session(tmp_path, 'acu run tree.ahk', tmp_path)
+    logs = [
+        {'ts': '2026-10-20T10:00:02Z', 'script': str(bundled), 'outcome': 'ok'},
+        {'ts': '2026-10-20T10:00:03Z', 'script': str(local), 'outcome': 'error'},
+    ]
+    result = history(tmp_path, session, logs)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert '1 runs (1 ok, 0 error, 0 timeout, 0 unknown)' in result.stdout
+    # An existing file in the captured working directory wins over the bundle.
+    local.write_text('; local tree\n', encoding='utf-8')
+    result = history(tmp_path, session, logs)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert '1 runs (0 ok, 1 error, 0 timeout, 0 unknown)' in result.stdout
+
+
+@pytest.mark.parametrize('script', [
+    '$PWD/.pi/artifacts/x/start.ahk',
+    '"$PWD/.pi/artifacts/x/start.ahk"',
+    '${PWD}/.pi/artifacts/x/start.ahk',
+    '"${PWD}/.pi/artifacts/x/start.ahk"',
+    '~/.pi/artifacts/x/start.ahk',
+])
+def test_shell_paths_expand_pwd_and_home_only(tmp_path, script):
+    cwd = tmp_path / 'working folder'
+    # cd updates PWD without changing the harness process's working folder.
+    session = shell_session(tmp_path, f'cd "{cwd.as_posix()}"; acu run {script}; acu run "$PWD_OTHER/start.ahk"', tmp_path)
+    base = Path.home() if script.startswith('~') else cwd
+    result = history(tmp_path, session, logs=[
+        {'ts': '2026-10-20T10:00:02Z', 'script': str(base / '.pi/artifacts/x/start.ahk'), 'outcome': 'ok'},
+    ])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert '2 runs (1 ok, 0 error, 0 timeout, 1 unknown)' in result.stdout
+    assert f'unmatched: {cwd.as_posix()}/$PWD_OTHER/start.ahk' in result.stdout
 
 
 def test_help_states_fixed_rules():
