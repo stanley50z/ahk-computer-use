@@ -1,8 +1,17 @@
-# ACU
+<h1 align="center">ACU</h1>
 
-A Script-first Computer Use Agent tool for Windows, built on top of AutoHotkey
+<h3 align="center">A Script-first Computer Use Agent tool for Windows, built on top of AutoHotkey</h3>
 
-An agent can find controls through Windows UI Automation, use the mouse and keyboard, and take screenshots to check the result. ACU runs each script with a timeout and captures its output and errors. It works through the `acu` CLI; there is no server or MCP setup.
+<p align="center">
+  Find controls through Windows UI Automation, use the mouse and keyboard, and take screenshots to check the result.
+</p>
+
+<p align="center">
+  <a href="#getting-started">Getting started</a> ·
+  <a href="#usage">Usage</a> ·
+  <a href="#debugging-artifacts">Debugging</a> ·
+  <a href="bench/README.md">Benchmarks</a>
+</p>
 
 ## Built on top of
 
@@ -49,6 +58,8 @@ The [ACU skill](acu/SKILL.md) is the complete agent-facing manual. [retro-acu](r
 The skill installer and `retro-acu/` are included in the source distribution, not the wheel. The wheel contains the `acu` package and its skill.
 
 ## Usage
+
+ACU runs each script with a timeout and captures its output and errors. It works through the `acu` CLI; there is no server or MCP setup.
 
 Run an AutoHotkey v2 script:
 
