@@ -46,6 +46,24 @@ def test_all_illustrator_configurations_receive_the_same_simple_drawing_and_appe
     assert len(set(templates)) == 1
 
 
+@pytest.mark.parametrize('arm', ARMS)
+def test_preparation_disables_snippets_before_actor_start(tmp_path, monkeypatch, arm):
+    from pathlib import Path
+    from acu.settings import snippets_enabled
+
+    global_file = tmp_path / 'global-settings.json'
+    global_file.write_text('{"snippets": {"enabled": true}}', encoding='utf-8')
+    monkeypatch.setenv('ACU_SETTINGS_FILE', str(global_file))
+    native = {'mcp_servers': {'node_repl': {'command': 'native-fixture', 'args': []}}}
+    plan = prepare(arm, tmp_path / 'trial', skill=skill_fixture(tmp_path, 'skill'), native_config=native)
+    workspace = Path(plan['workspace'])
+    setting = workspace / '.ahk-computer-use/settings.json'
+    assert json.loads(setting.read_text(encoding='utf-8')) == {'snippets': {'enabled': False}}
+    assert snippets_enabled(workspace) is False
+    assert not (tmp_path / 'trial/state.json').exists()
+    assert json.loads(global_file.read_text(encoding='utf-8')) == {'snippets': {'enabled': True}}
+
+
 def test_stale_provider_profile_is_rejected_before_actor_or_desktop_startup(tmp_path):
     from bench.run import run_trial
     plan = prepare('pi-acu', tmp_path/'trial', skill=skill_fixture(tmp_path, 'acu'))

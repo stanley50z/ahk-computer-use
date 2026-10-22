@@ -1,5 +1,7 @@
 """Snippet discovery through the CLI, without AutoHotkey or desktop input."""
 
+import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -7,6 +9,40 @@ import pytest
 
 from acu import snippets
 from test_tool import cli
+
+
+@pytest.fixture(autouse=True)
+def isolated_settings(tmp_path, monkeypatch):
+    monkeypatch.setenv("ACU_SETTINGS_FILE", str(tmp_path / "global-settings.json"))
+
+
+@pytest.mark.parametrize("scope", ["global", "project"])
+def test_cli_respects_settings_from_working_folder(tmp_path, monkeypatch, scope):
+    store = tmp_path / "snippets" / "Editor.exe"
+    store.mkdir(parents=True)
+    (store / "open.ahk").write_text("; does: Open\nExitApp\n", encoding="utf-8")
+    monkeypatch.setenv("ACU_SNIPPETS_ROOT", str(store.parent))
+    working = tmp_path / "project" / "nested"
+    working.mkdir(parents=True)
+    settings_file = (tmp_path / "global-settings.json" if scope == "global"
+                     else working.parent / ".ahk-computer-use/settings.json")
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    executable = Path(sys.executable).with_name("acu.exe")
+
+    def listing():
+        return subprocess.run([str(executable), "snippets", "list", "editor"], cwd=working,
+                              capture_output=True, text=True, encoding="utf-8", timeout=20)
+
+    settings_file.write_text('{"snippets": {"enabled": false}}', encoding="utf-8")
+    result = listing()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == "Snippets are off."
+    settings_file.write_text('{"snippets": {"enabled": true}}', encoding="utf-8")
+    assert "open.ahk" in listing().stdout
+    settings_file.write_text('{', encoding="utf-8")
+    result = listing()
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert str(settings_file) in json.loads(result.stdout)["error"]
 
 
 def test_cli_lists_snippets_and_marks_missing_headers(tmp_path, monkeypatch):

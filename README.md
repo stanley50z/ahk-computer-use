@@ -63,6 +63,20 @@ old.ahk | no header
 
 Missing stores are reported without creating them. Listing never starts AutoHotkey or takes the desktop lease, so it can run while a script owns that lease. `ACU_SNIPPETS_ROOT` overrides only the snippets directory; `ACU_HOME` still controls diagnostic artifacts. Unexpected listing failures use the existing tool crash reports described below. Snippet storage and lifecycle decisions are in [ADR-0010](docs/adr/0010-reusable-snippets.md).
 
+### Snippet settings
+
+Snippets are enabled by default. Set a global default in `~/.ahk-computer-use/settings.json`, or override it in `<project>/.ahk-computer-use/settings.json`:
+
+```json
+{ "snippets": { "enabled": false } }
+```
+
+ACU searches upward from the call's working folder and uses the nearest project settings file. Its `snippets.enabled` value wins over the global value; an omitted value leaves the global default unchanged. Set it to `true` to enable snippets again. Invalid JSON or a non-boolean enabled value produces an error naming the file. When disabled, `acu snippets list` prints `Snippets are off.` without reading the snippet store. This controls discovery, not permission to run a script by path.
+
+`ACU_SETTINGS_FILE` overrides the global settings file location for tests or isolated environments. The home settings file is not treated as a project file during upward search, including when this override is set. `ACU_HOME` still controls only diagnostic artifacts, and `ACU_SNIPPETS_ROOT` still controls only snippet storage. Benchmark preparation writes the disabled setting into every trial workspace before starting the actor, without changing global settings.
+
+For automatic discovery, reuse `acu.settings.snippets_enabled(working_folder)`; omitting the folder uses the current working directory. It returns a boolean or raises `ValueError` naming an invalid settings file.
+
 ## Install the skill
 
 `acu/` is also the agent skill: `acu/SKILL.md` sits beside the launcher and scripts and teaches an agent the loop. Link it where the coding harnesses look inside this repository:
