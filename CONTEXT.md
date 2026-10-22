@@ -40,6 +40,10 @@ _Avoid_: elevation, admin mode, run as administrator
 One AutoHotkey v2 file, supplied by the agent or maintained by ACU, for one action chain run through the launcher. Script variables and its AHK process do not persist between executions; effects on applications can.
 _Avoid_: tool call, command, action, macro
 
+**Snippet**:
+A saved AutoHotkey v2 script for one reusable action in one app, taking its arguments from `A_Args`. The action can be one click or a sequence; its header describes its needs and expected result.
+_Avoid_: macro, recipe, maintained-script ID
+
 **Action chain**:
 The sequence of desktop steps one script performs when the agent can predict the states in between: press a button, wait for its dialog, act inside it.
 _Avoid_: task, workflow, step

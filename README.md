@@ -27,7 +27,7 @@ For development, `uv sync` installs the quiet-test dependencies, `uv run pytest 
 
 ## Agent interface
 
-ACU is CLI-only and exposes one operation: run an existing AutoHotkey v2 script file. The agent writes one predictable action chain, calls the CLI through its shell tool, and reads observed facts back. The file stays under the caller's ownership; ACU neither creates nor deletes action scripts.
+ACU is CLI-only. It runs existing AutoHotkey v2 script files and lists saved snippets without using the desktop. The agent writes one predictable action chain, calls the CLI through its shell tool, and reads observed facts back. The file stays under the caller's ownership; ACU neither creates nor deletes action scripts.
 
 ```
 acu run action.ahk [--timeout 30] [-- arguments for the script]
@@ -37,11 +37,31 @@ acu run screenshot.ahk -- app "ahk_id 12345"
 
 Use absolute paths for your own scripts from an agent session. Arguments after `--` are literal strings passed to `A_Args`. `tree.ahk` and `screenshot.ahk` are ordinary scripts passed to the same command, not separate operations; named without a directory, they resolve to the bundled copies unless a file of that name exists in the current directory. A screenshot script prints its saved PNG path and coordinate mapping in `output`; read the PNG separately. Authoring and inspection guidance is in `acu/SKILL.md`, which is the complete agent-facing manual.
 
-There is no server or MCP integration, inline-code input, engine selector, maintained-script-ID registry, discovery, or description operation. Other operations require a separate design decision before implementation.
+There is no server or MCP integration, inline-code input, engine selector, maintained-script-ID registry, or general discovery/description operation. Snippet listing is the read-only discovery exception. Other operations require a separate design decision before implementation.
 
-CLI stdout is one JSON result containing `engine` (always `ahk`), `outcome`, `exit_code`, `output`, `trailer`, `duration_ms`, and `artifacts` paths. Exit codes preserve the script's exit code (124 for timeout); invalid requests exit 2 and tool infrastructure failures exit 1. This uses the same prelude and launcher as before. Successful execution alone does not verify the task's effect.
+`acu run` stdout is one JSON result containing `engine` (always `ahk`), `outcome`, `exit_code`, `output`, `trailer`, `duration_ms`, and `artifacts` paths. Exit codes preserve the script's exit code (124 for timeout); invalid requests exit 2 and tool infrastructure failures exit 1. This uses the same prelude and launcher as before. Successful execution alone does not verify the task's effect.
 
 Timeouts must be finite and greater than zero, at most 300 seconds. A Windows session-local mutex rejects overlapping CLI runs with a `busy` error; actions are not queued against stale state. The low-level launcher remains available and does not take this tool-level lease. ACU is not a sandbox or an access-control boundary. There is no persistent desktop-control session, background server, or localhost listener.
+
+## List saved snippets
+
+```
+acu snippets list <app> [keyword...]
+```
+
+Snippets are ordinary `.ahk` files in `~/.ahk-computer-use/snippets/<exe name>/`. App matching ignores case and an optional `.exe` suffix, and searches executable names and their FileDescription. ACU looks for the executable in running processes first, then registry App Paths. Unresolvable folders remain searchable by exe name. Unknown apps show existing folders; ambiguous matches ask you to choose one.
+
+The header is the leading block of `;` comments before code, with fields `does`, `args`, `needs`, `effect`, `check`, and `tested` written as `; key: value` (key case ignored). Other comment lines are ignored. With no keywords, listing shows every snippet. Keywords search filenames and header fields using case-insensitive substring matches; more distinct hits come first, with ties by filename.
+
+Listing prints plain text, not the run-result JSON:
+
+```text
+snippets C:\Users\you\.ahk-computer-use\snippets\Editor.exe
+open.ahk | args: path | does: Open a document
+old.ahk | no header
+```
+
+Missing stores are reported without creating them. Listing never starts AutoHotkey or takes the desktop lease, so it can run while a script owns that lease. `ACU_SNIPPETS_ROOT` overrides only the snippets directory; `ACU_HOME` still controls diagnostic artifacts. Unexpected listing failures use the existing tool crash reports described below. Snippet storage and lifecycle decisions are in [ADR-0010](docs/adr/0010-reusable-snippets.md).
 
 ## Install the skill
 
