@@ -23,7 +23,7 @@ This installs the `acu` command in uv's user-level tools bin directory, with its
 
 Normal use is `acu run ...`, not a Python/package-manager wrapper. Python is the implementation language; the installed console launcher starts its interpreter internally. **uv is an installer/development tool, not part of the runtime command.** ACU has no Python runtime package dependencies; it uses the standard library and the existing AutoHotkey installation.
 
-For development, `uv sync` installs the quiet-test dependencies, `uv run pytest ...` runs focused checks, and `uv build` creates an installable wheel containing the launcher, scripts, vendored UIA library, and skill. These are setup/build commands, not the agent-facing interface. Uninstall the CLI with `uv tool uninstall acu-desktop`.
+For development, `uv sync` installs the quiet-test dependencies, `uv run pytest ...` runs focused checks, and `uv build` creates an installable wheel containing the launcher, scripts, vendored UIA library, and both skills. These are setup/build commands, not the agent-facing interface. Uninstall the CLI with `uv tool uninstall acu-desktop`.
 
 ## Agent interface
 
@@ -99,17 +99,21 @@ Fixed rules (also in `acu history --help`):
 
 Parsing mirrors the bench's native tool-call envelopes, ID correlation, heredoc separation and shell command-position rules. Quoted mentions such as `echo 'acu run ...'` are not runs. Parallel tool wrappers are expanded. Direct write/edit tools and literal shell writes/patches identify changed snippets; paths must belong to the configured snippets root, not merely contain a `snippets` folder. This is static analysis of literal calls, not a shell interpreter: dynamically constructed commands, scripts launched inside other programs, and generated paths may remain unresolved. Shell requests that cannot be parsed fail explicitly rather than claiming a complete summary. Keep the session and retained run log for investigating unknown entries. No new history log is written.
 
-## Install the skill
+## Install the skills
 
-`acu/` is also the agent skill: `acu/SKILL.md` sits beside the launcher and scripts and teaches an agent the loop. Link it where the coding harnesses look inside this repository:
+`acu/` is also the agent skill: `acu/SKILL.md` sits beside the launcher and scripts and teaches an agent the loop. The sibling `retro-acu/SKILL.md` is user-invoked only. After a session, invoke `retro-acu` with its session-file path to review `acu history` findings and propose new snippets, repairs, and deletions. It changes the snippet store only after approval; it does not read raw session files or logs itself.
+
+Link both skills where the coding harnesses look inside this repository:
 
 ```
 python install_skill.py
 ```
 
-That creates two directory junctions (symlinks outside Windows), `.agents/skills/acu` for Pi, Codex, and OpenCode and `.claude/skills/acu` for Claude Code. Both are gitignored, so run the command once per checkout. Only sessions started inside this repository see the skill; other agent sessions on the machine are untouched. `python install_skill.py --remove` deletes the links. Restart a running harness, or `/reload` in Pi, to pick up a change.
+That creates four directory junctions (symlinks outside Windows): `acu` and `retro-acu` under both `.agents/skills/` for Pi, Codex, and OpenCode and `.claude/skills/` for Claude Code. All are gitignored, so run the command once per checkout. Only sessions started inside this repository see the skills; other agent sessions on the machine are untouched. `python install_skill.py --remove` deletes the links. Restart a running harness, or `/reload` in Pi, to pick up a change.
 
-To make the skill available from every directory on the machine, `python install_skill.py --global` links into `~/.agents/skills`, `~/.claude/skills`, and `~/.config/opencode/skills` instead. Not used while ACU is being tested.
+To make both skills available from every directory on the machine, `python install_skill.py --global` links each into `~/.agents/skills`, `~/.claude/skills`, and `~/.config/opencode/skills` instead (six links). `--global --remove` removes those links only. Not used while ACU is being tested. The repository's Pi, Claude Code, and OpenCode settings hide only `cua-driver`; they leave `retro-acu` available for explicit invocation.
+
+Both the wheel and source distribution include `retro-acu/` beside `acu/`; the source distribution also includes `install_skill.py`.
 
 ## Low-level launcher usage
 

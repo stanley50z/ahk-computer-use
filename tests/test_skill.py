@@ -70,23 +70,27 @@ def test_skill_names_only_files_that_exist_beside_it():
 
 
 @pytest.mark.parametrize("roots", [PROJECT_ROOTS, USER_ROOTS], ids=["project", "global"])
-def test_installer_links_the_skill_into_every_harness_root_and_removes_cleanly(tmp_path, roots):
+def test_installer_links_both_skills_into_every_harness_root_and_removes_cleanly(tmp_path, roots):
     first = install(tmp_path, roots)
     second = install(tmp_path, roots)
 
-    assert len(first) == len(roots) and all(line.startswith("installed") for line in first)
+    assert len(first) == 2 * len(roots) and all(line.startswith("installed") for line in first)
     assert all(line.startswith("already installed") for line in second)
     for root in roots:
-        link = tmp_path / root / "acu"
-        assert is_link(link)
-        assert (link / "SKILL.md").read_text(encoding="utf-8") == SKILL_FILE.read_text(encoding="utf-8")
-        assert (link / "run.py").is_file()
+        for name in ("acu", "retro-acu"):
+            link = tmp_path / root / name
+            assert is_link(link)
+            assert link.resolve() == REPO / name
+            assert (link / "SKILL.md").is_file()
+        assert (tmp_path / root / "acu" / "run.py").is_file()
 
     removed = install(tmp_path, roots, remove=True)
 
     assert all(line.startswith("removed") for line in removed)
-    assert not any((tmp_path / root / "acu").exists() for root in roots)
-    assert SKILL_FILE.is_file(), "removing links must leave the checkout alone"
+    assert len(removed) == 2 * len(roots)
+    assert not any((tmp_path / root / name).exists() for root in roots for name in ("acu", "retro-acu"))
+    for name in ("acu", "retro-acu"):
+        assert (REPO / name / "SKILL.md").is_file(), "removing links must leave the checkout alone"
 
 
 def test_project_roots_cover_the_four_harnesses_in_repo():

@@ -23,8 +23,11 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["acu"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"retro-acu" = "retro-acu"
+
 [tool.hatch.build.targets.sdist]
-only-include = ["acu", "README.md", "pyproject.toml", "uv.lock", "install_skill.py", "CONTEXT.md", "docs/adr"]
+only-include = ["acu", "retro-acu", "README.md", "pyproject.toml", "uv.lock", "install_skill.py", "CONTEXT.md", "docs/adr"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
