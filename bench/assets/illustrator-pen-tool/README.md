@@ -3,13 +3,13 @@
 Current v0.11 actors receive the same two separate inputs introduced in v0.7:
 
 - `Cloud9-Pen-Starter.ai`: unchanged blank document, one 800 × 800-point RGB artboard named `Drawing`, one empty visible/unlocked layer named `Drawing`. No artwork, embedded reference, reference layer or hidden solution. SHA-256: `d2197b639dd7c9d4528962f8252bdbb0e6d250551f16675324ea95e2e0d99445`.
-- `Cloud9-Reference.png`: 800 × 800 RGB, opaque white background, solid blue #00AEEF. SHA-256: `03dd860809cbfa143c35b50bd78fbdb8e43346e47d76e9aba5afc94a4e00a32c`.
+- `Cloud9-Reference.png`: 800 × 800 RGB, opaque white background, solid blue #00AEEF. SHA-256: `03dd860809cbfa143c35b50bd78fbdb8e43346e47d76e9aba5afc94a4e00a32c`. Not in the repository; build it once per checkout with `uv run python bench/build_reference.py "<package>/PNG/Icon/C9_Icon_Blue_AllMode.png"` after downloading Cloud9's [brand assets](https://cloud9.gg/brand-assets/). The file is gitignored.
 
 ## Third-party rights
 
-The `Cloud9-Reference.jpg` and derived `Cloud9-Reference.png` are third-party logo artwork, not covered by ACU's MIT license. Original source: [Cloud9's official brand-assets page](https://cloud9.gg/brand-assets/) and its [logo download](http://c9.gg/logos). The source package's brand guidelines and [Cloud9's terms](https://cloud9.gg/terms-of-service/) apply; no open-source license or explicit redistribution grant was found for these files.
+The reference is derived from third-party logo artwork, not covered by ACU's MIT license. Original source: [Cloud9's official brand-assets page](https://cloud9.gg/brand-assets/) and its [logo download](http://c9.gg/logos). The source package's brand guidelines and [Cloud9's terms](https://cloud9.gg/terms-of-service/) apply; no open-source license or explicit redistribution grant was found, so the repository ships only the build script, not the artwork. Earlier commits contained the reference PNG and an older JPEG.
 
-These files are included as visual references for benchmark evaluation. This purpose, attribution and disclaimer do not grant permission to reproduce, modify or redistribute the artwork or use Cloud9's marks. Establish the applicable rights before reuse or redistribution. No affiliation with or endorsement by Cloud9 is claimed. The blank, bench-created `Cloud9-Pen-Starter.ai` contains no logo artwork and is separate from these third-party references.
+No affiliation with or endorsement by Cloud9 is claimed. The blank, bench-created `Cloud9-Pen-Starter.ai` contains no logo artwork and is separate from the third-party reference.
 
 ## Reference provenance and framing
 
@@ -17,7 +17,7 @@ The reference PNG is downsampled from the official lossless `PNG/Icon/C9_Icon_Bl
 
 The official PNG has different framing. The fixed maintainer transform area-averages the source's alpha coverage to **550 × 551** with Pillow BOX, retains the official solid #00AEEF, composites it at **(143,120)** onto an 800 × 800 opaque white canvas, and saves RGB PNG with 72-ppi metadata. Coverage sampling avoids invented interior colors from RGBA resampling and ringing; edge pixels are the official blue blended with white. The small per-axis scale difference preserves the old reference's 550 × 379 blue footprint rather than introducing a one-pixel height change. Under the benchmark's foreground classification the resulting bounds are **(143,206,693,585)**, with exclusive right/bottom edges, matching the previous reference's placement and size. This transform applies to the prepared reference only; actor outputs are never aligned or rescaled during grading.
 
-After verifying the official source hash above, this Pillow transformation reproduces the preparation (run from the repository root with `source_path` pointing to that official PNG):
+`bench/build_reference.py` verifies the official source hash above, then applies this Pillow transformation and checks the output hash:
 
 ```python
 from PIL import Image
@@ -31,7 +31,7 @@ canvas.alpha_composite(logo, (143, 120))
 canvas.convert('RGB').save('bench/assets/illustrator-pen-tool/Cloud9-Reference.png', dpi=(72, 72))
 ```
 
-Construction script, source/output fingerprints and logs: `.pi/benchmark-v06/build-reference.py`, `reference-build.json`, `reference-build.log`; failures persist `reference-build-crash.txt`. The original official source and historical reference are unchanged. `Cloud9-Reference.jpg` is retained here for provenance/history only and is not copied to new actor workspaces. Earlier inspection evidence: [source inspection](../../../docs/reports/testbench-2-source-inspection-2026-10-11.md). Official vectors, source URLs, brand documents and these notes remain maintainer-only context.
+The original construction evidence is local: `.pi/benchmark-v06/build-reference.py`, `reference-build.json`, `reference-build.log`. The old `Cloud9-Reference.jpg` was never copied to v0.7+ actor workspaces. Earlier inspection evidence: [source inspection](../../../docs/reports/testbench-2-source-inspection-2026-10-11.md). Official vectors, source URLs, brand documents and these notes remain maintainer-only context.
 
 ## Task and preparation
 

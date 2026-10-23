@@ -18,7 +18,7 @@ Use a single-context layout with root `CONTEXT.md` and `docs/adr/`. Read `docs/a
 
 Live tasks that need a text editor use Notepad++ or Markpad, not Windows Notepad, which restores the owner's previous documents. Locate an existing installation before testing; ask before installing an editor. Tree dumps print every value in full, document text included, by the owner's decision.
 
-Run only the focused checks relevant to the change. `python -m pytest` excludes desktop integration tests by default. Any test that runs AutoHotkey or interacts with the desktop must carry the `desktop` marker. The user has given standing approval for desktop tasks, benchmark trials, and reruns as needed within the user's requested task, including Adobe Illustrator Pen Tool and ACU improvements; do not ask for per-run approval or user takeover again. This supersedes the previous per-run approval rule. Preserve pre-existing documents and unrelated applications. Keep the explicit `--desktop`/`--desktop-approved` command gates and do not use the full desktop suite as a routine completion gate. Consolidate repeated setup checks and remove redundant coverage rather than growing the suite with every task. The screenshot tests need Pillow. Launcher usage, prelude behavior, and debugging artifact paths are in `README.md`.
+Run only the focused checks relevant to the change. `python -m pytest` excludes desktop integration tests by default. Any test that runs AutoHotkey or interacts with the desktop must carry the `desktop` marker. Desktop approval depends on who is running the session. Before the first desktop task or benchmark trial, compare `gh api user --jq .login` with `gh api repos/stanley50z/ahk-computer-use/contributors --jq '.[].login'`. If the login is a contributor of this project, the user has given standing approval for desktop tasks, benchmark trials, and reruns as needed within the user's requested task, including Adobe Illustrator Pen Tool and ACU improvements; do not ask for per-run approval or user takeover. Otherwise, or if either command fails, ask before every desktop task or benchmark trial. Preserve pre-existing documents and unrelated applications. Keep the explicit `--desktop`/`--desktop-approved` command gates and do not use the full desktop suite as a routine completion gate. Consolidate repeated setup checks and remove redundant coverage rather than growing the suite with every task. The screenshot tests need Pillow. Launcher usage, prelude behavior, and debugging artifact paths are in `README.md`.
 
 `acu/lib/UIA.ahk` is vendored third-party code (see README, Third-party code). Do not edit it beyond the one line marked `; ACU patch:`; update it by copying the upstream file and re-applying that line.
 
@@ -31,20 +31,3 @@ Inside this repository `acu` is the computer-use skill and the user-level `cua-d
 ## Benchmark reports
 
 Write benchmark reports as self-contained HTML, with findings and summaries in the HTML rather than a separate Markdown deliverable. When final-image evidence exists, embed a labeled side-by-side comparison of all scheduled trials, including failed or incomplete outputs; mark missing images explicitly. Use consistent scale and label each arm, trial and outcome. Keep raw evidence unchanged; external links to it may supplement the embedded comparison. A link alone is not the comparison. By the user's 2026-10-20 decision, apply this to the current and future reports; leave historical reports unchanged unless asked.
-
-## Wiki maintenance
-
-Read `docs/openwiki-sync.md` when installing the post-commit hook, investigating Wiki sync failures, or retrying publication. Project commit and push operations finish without waiting for or repairing the background Wiki job.
-
-<!-- OPENWIKI:START -->
-
-## OpenWiki
-
-This repository has a generated `openwiki/` evidence index. It is optional just-in-time context, not required startup reading.
-
-- Treat source code and tests as authoritative. A brief's unknowns and review items are verification gaps, not automatic requirements.
-- Prefer the narrowest quiet validation that proves the changed behavior. Preserve complete failure output.
-
-Generate locally with `OPENWIKI_PROVIDER=openai-chatgpt` and `OPENWIKI_MODEL_ID=gpt-6.1-sol`, using the saved ChatGPT subscription login. The local post-commit hook publishes to the separate `openwiki/` GitHub Wiki clone; this project has no scheduled OpenWiki GitHub Actions workflow. For generation or publication, read the `openwiki` skill and `docs/openwiki-sync.md`. Regenerate page content through OpenWiki unless manual edits are explicitly requested.
-
-<!-- OPENWIKI:END -->

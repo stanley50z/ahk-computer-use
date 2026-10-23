@@ -613,6 +613,10 @@ def native_server(home, config=None, transport='sdk-helper'):
             'exposure': 'direct', 'timeout': 120}
 
 
+# Third-party artwork built locally from Cloud9's official icon; see bench/build_reference.py.
+ILLUSTRATOR_REFERENCE = ROOT / 'bench/assets/illustrator-pen-tool/Cloud9-Reference.png'
+
+
 # Prepare reproducible, offline profiles without credentials or a live desktop session.
 def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=None, native_transport='sdk-helper'):
     if scenario not in SCENARIOS:
@@ -622,6 +626,8 @@ def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=No
         raise ValueError(f'unknown arm: {arm}')
     if native_transport not in ('sdk-helper', 'app-pipe'):
         raise ValueError(f'unknown native transport: {native_transport}')
+    if scenario_name == 'illustrator-pen-tool' and not ILLUSTRATOR_REFERENCE.is_file():
+        raise SystemExit(f'{ILLUSTRATOR_REFERENCE} is not redistributed; build it once with bench/build_reference.py')
     run_dir = Path(run_dir).resolve()
     run_dir.mkdir(parents=True, exist_ok=False)
     workspace, home = run_dir / 'workspace', run_dir / 'agent-home'
@@ -705,11 +711,12 @@ def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=No
     if scenario_name == 'illustrator-pen-tool':
         assets = ROOT / 'bench/assets/illustrator-pen-tool'
         plan['assets'] = {}
-        for name in ('Cloud9-Pen-Starter.ai', 'Cloud9-Reference.png'):
-            shutil.copyfile(assets / name, workspace / name)
+        for name, source in (('Cloud9-Pen-Starter.ai', assets / 'Cloud9-Pen-Starter.ai'),
+                             ('Cloud9-Reference.png', ILLUSTRATOR_REFERENCE)):
+            shutil.copyfile(source, workspace / name)
             plan['assets'][name] = hashlib.sha256((workspace / name).read_bytes()).hexdigest()
         (run_dir / 'grading').mkdir()
-        shutil.copyfile(assets / 'Cloud9-Reference.png', run_dir / 'grading/reference.png')
+        shutil.copyfile(ILLUSTRATOR_REFERENCE, run_dir / 'grading/reference.png')
         plan['grading'] = {'reference_sha256': plan['assets']['Cloud9-Reference.png'],
                            'registration': 'none', 'shape_pass_threshold': None, 'mode': 'live-drawing'}
         plan['actor_deliverables'] = []

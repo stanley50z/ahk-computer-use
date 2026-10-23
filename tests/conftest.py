@@ -43,6 +43,28 @@ def pytest_collection_modifyitems(config, items):
     config.hook.pytest_deselected(items=excluded)
 
 
+CLOUD9_REFERENCE = REPO / "bench/assets/illustrator-pen-tool/Cloud9-Reference.png"
+# For tests about the real Cloud9 reference's pixels or hash, which checkouts build with bench/build_reference.py.
+needs_cloud9_reference = pytest.mark.skipif(
+    not CLOUD9_REFERENCE.is_file(), reason="Cloud9-Reference.png not built; see bench/build_reference.py")
+
+
+@pytest.fixture(autouse=True)
+def illustrator_reference(tmp_path, monkeypatch):
+    """Without the locally built Cloud9 reference, bench preparation uses a blue block with the same bounds."""
+    if CLOUD9_REFERENCE.is_file():
+        return
+    from PIL import Image, ImageDraw
+
+    import bench.run
+
+    stand_in = tmp_path / "Cloud9-Reference.png"
+    image = Image.new("RGB", (800, 800), "white")
+    ImageDraw.Draw(image).rectangle((143, 206, 692, 584), fill=(0, 174, 239))
+    image.save(stand_in, dpi=(72, 72))
+    monkeypatch.setattr(bench.run, "ILLUSTRATOR_REFERENCE", stand_in)
+
+
 @pytest.fixture(autouse=True)
 def acu_home(tmp_path, monkeypatch):
     """Point the launcher's logs at a temp dir so tests never write to %LOCALAPPDATA%\\ACU."""

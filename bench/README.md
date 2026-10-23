@@ -45,7 +45,7 @@ bench/
 │   ├── illustrator-pen-tool.md
 │   └── tb3.1.md … tb3.4.md
 └── assets/
-    ├── illustrator-pen-tool/    Blank AI, reference images and provenance notes
+    ├── illustrator-pen-tool/    Blank AI and provenance notes; the reference PNG is built locally
     ├── gui360/                    Upstream TB3.1/TB3.2 templates and provenance
     └── tb3/                       Bench-owned TB3.3/TB3.4 workbook
 ```
@@ -192,7 +192,7 @@ Reported compaction usage is included once from `compaction_end.result.usage`; i
 
 ## Commands
 
-Install the benchmark dependencies once with `uv sync` in the checkout. CUA trials also need the bench copy of cua-driver's autostart task, registered once with `python bench/cua_bench_task.py install` (UAC prompt). The `start.py` and `run.py` CLIs select this checkout's `.venv` Python, even when invoked with system `python`. They verify `tiktoken` and Pillow before preparing a trial or launching its worker. Help and desktop-approval checks still run before environment selection. A missing environment or dependency stops with an explicit `uv sync --project` instruction; the bench does not install packages automatically or fall back to system Python. `stop.py` remains dependency-light so cancellation does not need the benchmark environment.
+Install the benchmark dependencies once with `uv sync` in the checkout. CUA trials also need the bench copy of cua-driver's autostart task, registered once with `python bench/cua_bench_task.py install` (UAC prompt). Illustrator trials need the Cloud9 reference, which the repository does not redistribute: download Cloud9's [brand assets](https://cloud9.gg/brand-assets/) and run `uv run python bench/build_reference.py "<package>/PNG/Icon/C9_Icon_Blue_AllMode.png"` once. It verifies the source and output SHA-256 digests; `prepare` refuses Illustrator trials until the file exists. The `start.py` and `run.py` CLIs select this checkout's `.venv` Python, even when invoked with system `python`. They verify `tiktoken` and Pillow before preparing a trial or launching its worker. Help and desktop-approval checks still run before environment selection. A missing environment or dependency stops with an explicit `uv sync --project` instruction; the bench does not install packages automatically or fall back to system Python. `stop.py` remains dependency-light so cancellation does not need the benchmark environment.
 
 Offline preparation only; no credentials copied and no desktop operation:
 

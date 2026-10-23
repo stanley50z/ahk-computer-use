@@ -1,4 +1,0 @@
-#!/bin/sh
-# BEGIN sz-openwiki-sync
-sh "$(git rev-parse --show-toplevel)/.githooks/openwiki-sync"
-# END sz-openwiki-sync

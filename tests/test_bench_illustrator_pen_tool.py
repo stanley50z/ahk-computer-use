@@ -9,9 +9,12 @@ from uuid import uuid4
 import pytest
 from PIL import Image
 
+import bench.run
 from bench.run import ROOT, prepare
+from conftest import needs_cloud9_reference
 
 
+@needs_cloud9_reference
 def test_lossless_reference_png_preserves_the_previous_reference_framing(tmp_path):
     from bench.illustrator_pen_tool import shape_metrics, verify_outputs
 
@@ -49,8 +52,9 @@ def test_illustrator_pen_tool_prepare_freezes_png_and_resolves_task_paths(tmp_pa
     assert sorted(p.name for p in (directory / 'workspace').iterdir()) == [
         '.ahk-computer-use', 'Cloud9-Pen-Starter.ai', 'Cloud9-Reference.png', 'scratch']
     assert (directory / 'workspace/scratch').is_dir()
-    for name in ('Cloud9-Pen-Starter.ai', 'Cloud9-Reference.png'):
-        data = (ROOT / 'bench/assets/illustrator-pen-tool' / name).read_bytes()
+    for name, source in (('Cloud9-Pen-Starter.ai', ROOT / 'bench/assets/illustrator-pen-tool/Cloud9-Pen-Starter.ai'),
+                         ('Cloud9-Reference.png', bench.run.ILLUSTRATOR_REFERENCE)):
+        data = source.read_bytes()
         assert (directory / 'workspace' / name).read_bytes() == data
         assert plan['assets'][name] == hashlib.sha256(data).hexdigest()
     reference = directory / 'grading/reference.png'
@@ -84,6 +88,7 @@ def test_illustrator_pen_tool_prepare_freezes_png_and_resolves_task_paths(tmp_pa
     assert json.loads((directory / 'plan.json').read_text(encoding='utf-8')) == plan
 
 
+@needs_cloud9_reference
 def test_cli_prepares_illustrator_pen_tool_without_desktop_approval(tmp_path):
     directory = tmp_path / 'cli-trial'
     completed = subprocess.run(
