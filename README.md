@@ -10,7 +10,8 @@
   <a href="#getting-started">Getting started</a> ·
   <a href="#usage">Usage</a> ·
   <a href="#debugging-artifacts">Debugging</a> ·
-  <a href="bench/README.md">Benchmarks</a>
+  <a href="bench/README.md">Benchmarks</a> ·
+  <a href="https://stanley50z.github.io/ahk-computer-use/reports/latest/">Latest report</a>
 </p>
 
 ## Built on top of
@@ -177,6 +178,8 @@ Attribution and this disclaimer are not permission to redistribute third-party a
 ## Benchmarks and project notes
 
 The [computer-use test bench](bench/README.md) compares ACU, CUA, and Codex computer use on Calculator, Adobe Illustrator Pen drawing, and TB3.1–TB3.4 Office tasks. Its guide covers scenarios, commands, measurement limits, and cleanup. Results and investigations are indexed in [docs/reports/](docs/reports/README.md); experiments include [click delivery while the cursor is moving](experiments/jiggle/).
+
+**[Latest report: Illustrator and TB3.1–TB3.4](https://stanley50z.github.io/ahk-computer-use/reports/latest/)** — the 20–21 October 2026 rounds, with metrics, output comparisons and silent web-optimized video clips.
 
 Publishing every trial's output is not required. Raw native session archives remain local. Historical reports may retain curated turn-by-turn command/output evidence and cite local-only artifacts.
 
