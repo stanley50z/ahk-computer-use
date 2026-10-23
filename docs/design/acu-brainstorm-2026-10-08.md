@@ -1,6 +1,15 @@
 # ACU design session, 2026-10-08
 
-Record of the opening brainstorm for ACU, a minimal computer-use tool for AI agents built on AutoHotkey v2. It captures what was researched, what was decided and why, and what is still open. Decisions here are provisional until an ADR supersedes them.
+Historical record of ACU's opening brainstorm, not current setup instructions or a work queue. Environment facts, vendor interfaces, source revisions and repository state below describe 2026-10-08. The original proposals and open questions are preserved.
+
+For current behavior, use the root `README.md`, `CONTEXT.md` and `docs/adr/`. In particular:
+
+- [ADR-0001](../adr/0001-scripts-not-a-server.md) records the CLI-only interface, with read-only snippet and history commands added by [ADR-0010](../adr/0010-reusable-snippets.md).
+- [ADR-0002](../adr/0002-short-scripts-over-injection-atomicity.md) records the jiggle-test result; the experiment is no longer an unperformed prerequisite.
+- [ADR-0008](../adr/0008-ui-access-build-started-through-shellexecute.md) makes UI Access the execution route and replaces the proposed output-pipe route. The direct `cmd` launch workaround below is historical, not the supported ACU invocation.
+- [ADR-0009](../adr/0009-persistent-desktop-state-and-english-input.md) supersedes cursor/foreground restoration, takeover comparison and restore opt-outs. Desktop state stays in place.
+
+The UIA binding, tree dump, ADRs and root glossary discussed as future work below now exist. Remaining items in the original open-questions list are historical questions, not claims that today's checkout lacks those capabilities.
 
 Participants: the repository owner and one agent session. No code was written during this session. The only files added were research notes and this record.
 
@@ -211,7 +220,7 @@ Per the owner's standing requirement for persistent debugging artifacts: a JSON-
 | 14 | Watchdog default 30 s, recommended `WinWait` default 2 s | Round numbers, deliberately revisable once real scripts exist | Agent decision, weakly held |
 | 15 | Persistent logs and crash reports under `%LOCALAPPDATA%\ACU\` | Owner's standing requirement for debugging artifacts | Settled by standing policy |
 
-## 9. What is still open
+## 9. What was still open at the session's end
 
 Ordered roughly by what blocks what.
 

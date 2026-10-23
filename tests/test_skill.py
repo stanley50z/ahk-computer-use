@@ -1,6 +1,9 @@
 """The agent skill: valid Agent Skills frontmatter, and an installer that links it where the harnesses look."""
 
+import os
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -87,7 +90,10 @@ def test_skill_names_only_files_that_exist_beside_it():
 
 
 @pytest.mark.parametrize("roots", [PROJECT_ROOTS, USER_ROOTS], ids=["project", "global"])
-def test_installer_links_both_skills_into_every_harness_root_and_removes_cleanly(tmp_path, roots):
+@pytest.mark.parametrize("base_name", ["plain", "ACU&demo", "ACU (%ACU_TEST_LINK%) 你好"])
+def test_installer_links_both_skills_into_every_harness_root_and_removes_cleanly(tmp_path, roots, base_name, monkeypatch):
+    monkeypatch.setenv("ACU_TEST_LINK", "must-not-expand")
+    tmp_path = tmp_path / base_name
     first = install(tmp_path, roots)
     second = install(tmp_path, roots)
 
@@ -108,6 +114,36 @@ def test_installer_links_both_skills_into_every_harness_root_and_removes_cleanly
     assert not any((tmp_path / root / name).exists() for root in roots for name in ("acu", "retro-acu"))
     for name in ("acu", "retro-acu"):
         assert (REPO / name / "SKILL.md").is_file(), "removing links must leave the checkout alone"
+
+
+def test_installer_cli_handles_literal_checkout_paths_and_utf8_output(tmp_path):
+    checkout = tmp_path / "checkout & (%ACU_TEST_LINK%) 📁"
+    checkout.mkdir()
+    installer = checkout / "install_skill.py"
+    shutil.copyfile(REPO / "install_skill.py", installer)
+    for name in ("acu", "retro-acu"):
+        (checkout / name).mkdir()
+        (checkout / name / "SKILL.md").write_text("test skill\n", encoding="utf-8")
+    env = {**os.environ, "ACU_TEST_LINK": "must-not-expand", "PYTHONIOENCODING": "ascii"}
+    try:
+        result = subprocess.run([sys.executable, str(installer)], cwd=tmp_path, env=env,
+                                capture_output=True, text=True, encoding="utf-8", timeout=10)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert str(checkout) in result.stdout
+        for root in PROJECT_ROOTS:
+            for name in ("acu", "retro-acu"):
+                assert (checkout / root / name).resolve() == checkout / name
+        removed = subprocess.run([sys.executable, str(installer), "--remove"], cwd=tmp_path, env=env,
+                                 capture_output=True, text=True, encoding="utf-8", timeout=10)
+        assert removed.returncode == 0, removed.stdout + removed.stderr
+        assert all(not (checkout / root / name).exists() for root in PROJECT_ROOTS for name in ("acu", "retro-acu"))
+        assert all((checkout / name / "SKILL.md").is_file() for name in ("acu", "retro-acu"))
+    finally:
+        for root in PROJECT_ROOTS:
+            for name in ("acu", "retro-acu"):
+                link = checkout / root / name
+                if is_link(link):
+                    os.rmdir(link) if os.path.isjunction(link) else link.unlink()
 
 
 def test_project_roots_cover_the_four_harnesses_in_repo():

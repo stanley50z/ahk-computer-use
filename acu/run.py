@@ -1,11 +1,12 @@
-"""ACU launcher: run one AutoHotkey v2 script under the ACU prelude with captured output and a hard timeout.
+"""ACU launcher: run one AutoHotkey v2 script with captured output, a deadline and verified shutdown.
 
 Usage: python acu/run.py SCRIPT.ahk [--timeout SECONDS] [-- ARG ...]
 
 Arguments after -- are passed to the script and arrive in its A_Args. Prints the script's stdout and stderr followed by one "[acu] ..." trailer line, then exits with the
-script's exit code, or 124 when the watchdog fired. At the timeout the script is first asked to close
-(WM_CLOSE to its main window, which runs the prelude's exit handler) and killed if it is still running
-one second later.
+script's exit code, 124 when the shared validation/execution budget expires, or 130 on Ctrl+C.
+On timeout or interruption the script is first asked to close (WM_CLOSE to its main window, which
+runs its exit handlers) and killed if it is still running one second later. Shutdown is verified
+before returning or raising. Force-killing the launcher bypasses this cleanup.
 
 Scripts run under AutoHotkey's signed UI Access build, so they can see and drive elevated windows
 without being elevated themselves. Windows only starts a UI Access program through ShellExecute, which
@@ -26,6 +27,7 @@ import os
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,6 +54,14 @@ class Run:
     exit_code: int
     duration_ms: int
     trailer: str
+
+
+def install_console_handlers() -> None:
+    """Give both CLI entry points the same Ctrl+Break cancellation behavior as Ctrl+C."""
+    if sys.platform == "win32":
+        import signal
+
+        signal.signal(signal.SIGBREAK, signal.default_int_handler)
 
 
 def ahk_exe() -> Path:
@@ -107,6 +117,37 @@ class ShellExecuteInfo(ctypes.Structure):
     ]
 
 
+@contextmanager
+def defer_console_interrupts():
+    """Delay console cancellation until the caller has registered ownership of a new process."""
+    import signal
+    import threading
+
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    interrupted = False
+
+    def defer(_number, _frame):
+        nonlocal interrupted
+        interrupted = True
+
+    signals = [signal.SIGINT]
+    if sys.platform == "win32":
+        signals.append(signal.SIGBREAK)
+    previous = {number: signal.getsignal(number) for number in signals}
+    try:
+        for number, handler in previous.items():
+            if handler != signal.SIG_IGN:
+                signal.signal(number, defer)
+        yield
+    finally:
+        for number, handler in previous.items():
+            signal.signal(number, handler)
+        if interrupted:
+            raise KeyboardInterrupt
+
+
 def shell_execute(exe: Path, params: str) -> wintypes.HANDLE:
     """Start exe through ShellExecuteEx, the one way Windows starts a UI Access program, and return its process handle."""
     SEE_MASK_NOCLOSEPROCESS, SEE_MASK_NOASYNC, SEE_MASK_FLAG_NO_UI, SW_SHOWNORMAL = 0x40, 0x100, 0x400, 1
@@ -118,53 +159,175 @@ def shell_execute(exe: Path, params: str) -> wintypes.HANDLE:
     return info.hProcess
 
 
-def validate(script: Path, args: Sequence[str]) -> subprocess.CompletedProcess[bytes]:
-    """Load the script without running it, under the plain build with a pipe, so syntax errors and load-time warnings are captured."""
+def report_shutdown_failure(script: Path, output: str, timeout: float, started: float) -> None:
+    """Persist and announce a failed shutdown before waiting with ownership retained."""
+    import traceback
+
+    message = "[acu] shutdown failed; retaining ownership until the process exits"
+    print(message, file=sys.stderr, flush=True)
+    output += "\n" + message + "\n" + traceback.format_exc()
+    duration_ms = round((time.monotonic() - started) * 1000)
+    try:
+        report = record(script, Run(output, "error", 1, duration_ms, message), timeout)
+    except OSError as diagnostic_error:
+        print(f"[acu] could not persist shutdown failure: {diagnostic_error}", file=sys.stderr, flush=True)
+    else:
+        print(f"[acu] shutdown failure report: {report}", file=sys.stderr, flush=True)
+
+
+def validate(script: Path, args: Sequence[str], timeout: float) -> subprocess.CompletedProcess[bytes]:
+    """Own the validator from creation through bounded communication and verified cleanup."""
     command = [str(plain_ahk_exe()), "/ErrorStdOut=UTF-8", "/validate", "/include", str(PRELUDE), str(script), *args]
-    return subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    started = time.monotonic()
+    process = None
+    output = b""
+    try:
+        try:
+            try:
+                with defer_console_interrupts():
+                    process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                output, _ = process.communicate(timeout=max(0, started + timeout - time.monotonic()))
+            finally:
+                if process is not None:
+                    with defer_console_interrupts():
+                        try:
+                            if process.poll() is None:
+                                process.kill()
+                            process.wait()
+                        except Exception:
+                            try:
+                                report_shutdown_failure(script, output.decode("utf-8", errors="replace"), timeout, started)
+                            finally:
+                                while True:
+                                    try:
+                                        process.wait()
+                                        break
+                                    except OSError:
+                                        # Already reported; retry only to verify exit, never to resume work.
+                                        time.sleep(0.05)
+                            raise
+        except subprocess.TimeoutExpired as failure:
+            # The validator has exited; drain its pipe so the timeout report keeps all diagnostics.
+            failure.stdout, _ = process.communicate()
+            raise
+        return subprocess.CompletedProcess(command, process.returncode, output)
+    finally:
+        if process is not None and process.stdout is not None:
+            process.stdout.close()
+
+
+def wait_for_exit(process: wintypes.HANDLE, timeout: float) -> bool:
+    """Poll the owned process in short waits so Python can handle keyboard interrupts."""
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    deadline = time.monotonic() + max(0, timeout)
+    while True:
+        milliseconds = min(50, max(0, int((deadline - time.monotonic()) * 1000)))
+        status = kernel32.WaitForSingleObject(process, milliseconds)
+        if status == 0:  # WAIT_OBJECT_0
+            return True
+        if status != 258:  # WAIT_TIMEOUT
+            raise ctypes.WinError(ctypes.get_last_error())
+        if time.monotonic() >= deadline:
+            return False
+
+
+def stop_script(process: wintypes.HANDLE) -> str:
+    """Close the owned script, escalating to a verified kill even if graceful cleanup raises."""
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetProcessId.argtypes = [wintypes.HANDLE]
+    kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    try:
+        if wait_for_exit(process, 0):
+            return "exited"
+        request_close(kernel32.GetProcessId(process))
+        if wait_for_exit(process, CLOSE_GRACE_SECONDS):
+            return "closed on request"
+    finally:
+        if not wait_for_exit(process, 0):
+            if not kernel32.TerminateProcess(process, TIMEOUT_EXIT_CODE):
+                raise ctypes.WinError(ctypes.get_last_error())
+            if not wait_for_exit(process, 5):
+                raise RuntimeError("AutoHotkey did not exit after termination")
+    return "killed"
 
 
 def run_script(script: Path, timeout: float, args: Sequence[str] = ()) -> Run:
-    """Run the script under the prelude with the watchdog and return what happened."""
-    kernel32 = ctypes.windll.kernel32
-    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    """Run within one validation/execution budget; reap the script before returning or raising."""
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
-    kernel32.GetProcessId.argtypes = [wintypes.HANDLE]
-    kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-    WAIT_OBJECT_0 = 0
 
     started = time.monotonic()
-    loaded = validate(script, args)
+    deadline = started + timeout
+    try:
+        loaded = validate(script, args, max(0, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired as failure:
+        output = (failure.stdout or b"").decode("utf-8", errors="replace")
+        duration_ms = round((time.monotonic() - started) * 1000)
+        return Run(output, "timeout", TIMEOUT_EXIT_CODE, duration_ms, f"[acu] timeout {timeout:g}s: validation")
+    except KeyboardInterrupt:
+        duration_ms = round((time.monotonic() - started) * 1000)
+        return Run("", "error", 130, duration_ms, f"[acu] interrupted during validation {duration_ms}ms")
     output = loaded.stdout.decode("utf-8", errors="replace")
     if loaded.returncode != 0:
         duration_ms = round((time.monotonic() - started) * 1000)
         return Run(output, "error", loaded.returncode, duration_ms, f"[acu] exit {loaded.returncode} {duration_ms}ms")
 
+    if time.monotonic() >= deadline:
+        duration_ms = round((time.monotonic() - started) * 1000)
+        return Run(output, "timeout", TIMEOUT_EXIT_CODE, duration_ms, f"[acu] timeout {timeout:g}s: validation")
+
     import tempfile
 
     fd, out_path = tempfile.mkstemp(prefix="acu-", suffix=".out")
     os.close(fd)
-    params = subprocess.list2cmdline(["/ErrorStdOut=UTF-8", "/include", str(PRELUDE), str(script), OUTPUT_ARG + out_path, HOME_ARG + str(acu_home()), *args])
-    process = shell_execute(ahk_exe(), params)
+    timed_out = interrupted = False
     try:
-        timed_out = kernel32.WaitForSingleObject(process, int(timeout * 1000)) != WAIT_OBJECT_0
-        if timed_out:
-            request_close(kernel32.GetProcessId(process))
-            if kernel32.WaitForSingleObject(process, int(CLOSE_GRACE_SECONDS * 1000)) == WAIT_OBJECT_0:
-                ending = "closed on request"
-            else:
-                kernel32.TerminateProcess(process, TIMEOUT_EXIT_CODE)
-                kernel32.WaitForSingleObject(process, 5000)
-                ending = "killed"
-        exit_code = wintypes.DWORD()
-        kernel32.GetExitCodeProcess(process, ctypes.byref(exit_code))
+        params = subprocess.list2cmdline(["/ErrorStdOut=UTF-8", "/include", str(PRELUDE), str(script), OUTPUT_ARG + out_path, HOME_ARG + str(acu_home()), *args])
+        process = None
+        try:
+            try:
+                with defer_console_interrupts():
+                    process = shell_execute(ahk_exe(), params)
+                timed_out = not wait_for_exit(process, deadline - time.monotonic())
+            except KeyboardInterrupt:
+                interrupted = True
+            finally:
+                if process is not None:
+                    # A second interrupt must not abandon a script during shutdown.
+                    while True:
+                        try:
+                            ending = stop_script(process)
+                            break
+                        except KeyboardInterrupt:
+                            interrupted = True
+                        except Exception:
+                            # A failed stop is not permission to hand the desktop to another script.
+                            try:
+                                snapshot = output + Path(out_path).read_text(encoding="utf-8", errors="replace")
+                                report_shutdown_failure(script, snapshot, timeout, started)
+                            finally:
+                                # Even an unsuccessful wait cannot prove exit. Keep the handle and lease;
+                                # defer further console interrupts until the OS confirms the process ended.
+                                with defer_console_interrupts():
+                                    while kernel32.WaitForSingleObject(process, 1000) != 0:
+                                        time.sleep(0.05)
+                            raise
+            exit_code = wintypes.DWORD()
+            if process is not None and not kernel32.GetExitCodeProcess(process, ctypes.byref(exit_code)):
+                raise ctypes.WinError(ctypes.get_last_error())
+        finally:
+            if process is not None:
+                kernel32.CloseHandle(process)
+        output += Path(out_path).read_text(encoding="utf-8", errors="replace")
     finally:
-        kernel32.CloseHandle(process)
-    output += Path(out_path).read_text(encoding="utf-8", errors="replace")
-    os.unlink(out_path)
+        os.unlink(out_path)
 
     duration_ms = round((time.monotonic() - started) * 1000)
+    if interrupted:
+        return Run(output, "error", 130, duration_ms, f"[acu] interrupted {duration_ms}ms")
     if timed_out:
         return Run(output, "timeout", TIMEOUT_EXIT_CODE, duration_ms, f"[acu] timeout {timeout:g}s: {ending}")
     if exit_code.value == 0:
@@ -225,6 +388,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not script.is_file():
         parser.error(f"script not found: {script}")
 
+    install_console_handlers()
     run = run_script(script, args.timeout, script_args)
 
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")

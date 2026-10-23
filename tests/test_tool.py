@@ -18,6 +18,7 @@ def cli(*args):
 
 
 def test_distributed_package_contains_the_launcher_and_ordinary_inspection_scripts(tmp_path):
+    import tarfile
     import zipfile
 
     result = subprocess.run(["uv", "build", "--out-dir", str(tmp_path)], cwd=REPO,
@@ -33,6 +34,13 @@ def test_distributed_package_contains_the_launcher_and_ordinary_inspection_scrip
         assert "acu/mcp_server.py" not in names
         metadata = package.read(next(name for name in names if name.endswith(".dist-info/METADATA"))).decode("utf-8")
         assert "Requires-Dist:" not in metadata, "the CLI must have no runtime package dependencies"
+        assert "License-Expression: MIT\n" in metadata
+        assert "License-File: LICENSE\n" in metadata
+        license_path = next(name for name in names if name.endswith(".dist-info/licenses/LICENSE"))
+        assert "Copyright (c) 2026 Sida Cheng" in package.read(license_path).decode("utf-8")
+        assert "Copyright (c) 2023 Descolada" in package.read("acu/lib/UIA-LICENSE.txt").decode("utf-8")
+    with tarfile.open(next(tmp_path.glob("*.tar.gz"))) as package:
+        assert any(name.endswith("/LICENSE") for name in package.getnames())
 
 
 @pytest.mark.parametrize("command", ["discover", "describe", "execute", "tree", "screenshot", "mcp"])
@@ -79,14 +87,23 @@ def test_run_help_exposes_only_the_script_timeout_and_argument_separator():
 
 
 @pytest.mark.desktop
-def test_cli_runs_an_existing_script_with_literal_arguments_and_preserves_the_file(tmp_path):
+def test_cli_runs_an_existing_script_with_literal_arguments_and_preserves_the_file(tmp_path, acu_home):
     script = tmp_path / "action.ahk"
-    script.write_text('FileAppend "hello 你好|" A_Args[1] "|" A_Args[2] "`n", "*"', encoding="utf-8")
+    script.write_text(
+        'FileAppend "home=" EnvGet("ACU_HOME") "`n", "*"\n'
+        'joined := "hello 你好"\nfor value in A_Args\n    joined .= "|" value\n'
+        'FileAppend joined "`n", "*"', encoding="utf-8",
+    )
     original = script.read_bytes()
-    result = cli("run", str(script), "--timeout", "5", "--", "alpha beta", 'quote"; literal')
+    redirected = tmp_path / "must-not-be-created.out"
+    arguments = [f"--acu-home={tmp_path / 'wrong-home'}", f"--acu-out={redirected}",
+                 "--acu-unknown=keep", "alpha beta", 'quote"; literal']
+    result = cli("run", str(script), "--timeout", "5", "--", *arguments)
     assert result.returncode == 0, result.stdout + result.stderr
     facts = json.loads(result.stdout)
-    assert 'hello 你好|alpha beta|quote"; literal' in facts["output"]
+    assert "hello 你好|" + "|".join(arguments) in facts["output"]
+    assert f"home={acu_home}" in facts["output"]
+    assert not redirected.exists()
     assert facts["outcome"] == "ok"
     assert script.read_bytes() == original
     entries = [json.loads(line) for line in Path(facts["artifacts"]["run_log"]).read_text(encoding="utf-8").splitlines()]

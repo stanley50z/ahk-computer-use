@@ -4,7 +4,7 @@ An ordinary process cannot see an elevated window's tree or send it input; Windo
 
 ## Consequences
 
-- Windows refuses to start a UI Access program from a plain `CreateProcess`, so the launcher uses `ShellExecuteEx` and gets neither a stdout pipe nor environment inheritance. It passes an output file and `ACU_HOME` as leading arguments that the prelude consumes; the prelude redirects stdout and stderr into the file with `SetStdHandle`, which keeps `FileAppend "*"` and the error path unchanged. Anything else a script needs is an argument after `--`.
+- Windows refuses to start a UI Access program from a plain `CreateProcess`, so the launcher uses `ShellExecuteEx` and gets neither a stdout pipe nor environment inheritance. It passes exactly two internal arguments, an output file and `ACU_HOME`, that the prelude consumes in that order; caller arguments after them remain literal even when they start with `--acu-`. The prelude redirects stdout and stderr into the file with `SetStdHandle`, which keeps `FileAppend "*"` and the error path unchanged. Anything else a script needs is an argument after `--`.
 - Syntax errors and load-time warnings appear before the prelude runs and would be lost, so the launcher first loads the script without running it, under the plain build with a pipe. A script that does not parse ends there with exit code 2.
 - A UI Access program sits above the launcher's integrity level, so the prelude lets `WM_CLOSE` through its message filter; otherwise the timeout's close request would be dropped and every timeout would be a kill.
 - The plain build remains in use for the validate pass and for the tests' stand-in windows, and must sit beside the UI Access build.

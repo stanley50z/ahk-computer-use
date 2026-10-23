@@ -2,7 +2,7 @@
 
 All 15 scheduled trials finished: three per configuration, with no replacement trials, provider/model fallback, parent coaching or mid-trial repair. **2 reviewed successes and 13 unsuccessful trials.**
 
-The current task requires genuine Pen-tool Bézier curves and only the Pen tool in Illustrator, with chosen fill-colour methods as the sole tool/command exception. No actor export/save/result file is requested. The unchanged live drawings were exported by the maintainer after actors stopped.
+The v0.9 task in this round required genuine Pen-tool Bézier curves and only the Pen tool in Illustrator, with chosen fill-colour methods as the sole tool/command exception. No actor export/save/result file is requested. The unchanged live drawings were exported by the maintainer after actors stopped. The restrictions here describe v0.9, not today's prompt; see the [current benchmark guide](../../bench/README.md) and [report index](README.md).
 
 ## Successful-cohort statistics
 

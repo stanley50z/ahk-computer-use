@@ -1,4 +1,4 @@
-"""The acu command: run AHK scripts or list saved snippets without desktop access."""
+"""The acu command: run AHK scripts, or inspect snippets and history without desktop access."""
 
 import argparse
 import json
@@ -47,6 +47,7 @@ def main(argv=None) -> int:
         if options.command == "snippets":
             print(snippets.list_for_app(options.app, options.keywords))
             return 0
+        tool.launcher.install_console_handlers()
         result = tool.run(options.script, options.timeout, forwarded)
     except ValueError as error:
         print(json.dumps({"error": str(error)}, ensure_ascii=False))

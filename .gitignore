@@ -8,3 +8,12 @@ __pycache__/
 .venv/
 .pytest_cache/
 dist/
+
+# Local credentials; example configuration stays shareable.
+.env
+.env.*
+!.env.example
+!.env.sample
+credentials.json
+.credentials.json
+auth.json

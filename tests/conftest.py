@@ -1,4 +1,4 @@
-"""Shared helpers for ACU tests. Every test runs a real AutoHotkey script through the real launcher."""
+"""Shared ACU test helpers; desktop-marked checks run real AutoHotkey scripts."""
 
 import ctypes
 import json

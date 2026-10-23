@@ -1,7 +1,7 @@
 ; Opt-in target-bound input for applications that sample modifier/button state after queued events.
 #Requires AutoHotkey v2.0
 
-; Activate exactly one intended window before input; refuse an owned dialog even when its parent frame stays enabled.
+; Activate exactly one intended window; refuse same-process, owned #32770 dialogs even when the parent stays enabled.
 AcuActivate(winTitle, timeoutMs := 2000) {
     windows := WinGetList(winTitle)
     if windows.Length != 1

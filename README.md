@@ -87,13 +87,13 @@ The tree lists control names, IDs, bounds, available actions, and values. Values
 
 Screenshots support `app "<target>"`, `fullscreen [monitor]`, and `custom <x1> <y1> <x2> <y2>`. Add `--out <path.png>` to choose a destination or `--max <pixels>` to change the longest image side (default 1280, `0` for full resolution). Output includes the PNG path and the mapping between image and screen coordinates. App capture can omit separate menus and dialogs; use an on-screen capture for those.
 
-`acu run` returns one JSON result with the script output, outcome, exit code, duration, and artifact paths. A successful script exit does not prove that the application did what you wanted; check the tree or screenshot afterward. Timeouts must be greater than zero and no more than 300 seconds. Overlapping CLI runs are rejected with a `busy` error.
+`acu run` returns one JSON result with the script output, outcome, exit code, duration, and artifact paths. A successful script exit does not prove that the application did what you wanted; check the tree or screenshot afterward. Timeouts must be greater than zero and no more than 300 seconds, and cover validation plus script execution. Overlapping CLI runs are rejected with a `busy` error.
 
 ### What ACU prepares for each script
 
 The [prelude](acu/prelude.ahk) loads automatically, so scripts need no setup boilerplate. It provides the `UIA` class, screen-based mouse and pixel coordinates, per-monitor DPI awareness, and error reporting without modal dialogs. Helpers include `AcuLaunch` for opening a new application window, `AcuWaitUntil` for polling a condition, `AcuTree` for reading controls, and `AcuScreenshot` for capturing images. Optional paced input helpers live in `acu/lib/actions.ahk`.
 
-Scripts run through AutoHotkey's signed UI Access build. They can inspect and interact with elevated applications without running as administrator, but cannot reach the UAC consent prompt on its separate desktop. The launcher checks for load-time errors with the plain AutoHotkey build before execution. On timeout, it asks the script to close, then kills it one second later if needed.
+Scripts run through AutoHotkey's signed UI Access build. They can inspect and interact with elevated applications without running as administrator, but cannot reach the UAC consent prompt on its separate desktop. The launcher checks for load-time errors with the plain AutoHotkey build before execution. On timeout or Ctrl+C, it asks the script to close, then kills it one second later if needed and verifies that it exited before releasing the desktop lock. A timeout returns exit code 124; Ctrl+C or Ctrl+Break returns 130 and records the interrupted run. Captured output from an executing script is retained; interrupted validation may have no recoverable output. Validation is bounded too, including load-time warning dialogs. If Windows refuses shutdown, ACU reports and persists the failure, then retains the process handle and desktop lock until exit can be verified; further console interrupts do not abandon it. Force-killing the launcher bypasses its cleanup; ACU is not a process sandbox and does not automatically stop applications a script launched.
 
 ACU leaves the cursor and foreground window where the script leaves them, including after errors and timeouts. It prepares a loaded English keyboard layout before keyboard input and does not restore the previous layout. If it cannot verify English input, keyboard sends fail before sending keys; inspection and mouse actions remain available. ACU does not install keyboard layouts.
 
@@ -164,11 +164,23 @@ It returns merged stdout/stderr followed by an `[acu]` status trailer, rather th
 
 `acu/lib/UIA.ahk` is copied from Descolada's UIA-v2 at commit `2846a9b` (2026-04-23), under the MIT license in [UIA-LICENSE.txt](acu/lib/UIA-LICENSE.txt). One line, marked `; ACU patch:`, fixes single-segment numeric paths in `ElementFromPath`. To update the library, copy the upstream file and reapply that line. The other ACU helpers are first-party code.
 
+## License and third-party assets
+
+ACU's first-party code and materials are licensed under the [MIT license](LICENSE). Third-party files retain their original ownership and terms; ACU's license does not relicense them.
+
+- **UIA-v2:** MIT, copyright Descolada. Its [license notice](acu/lib/UIA-LICENSE.txt) is retained with the vendored library.
+- **GUI-360 Office templates:** copied from [vyokky/GUI-360](https://huggingface.co/datasets/vyokky/GUI-360). The [dataset card at the revision used here](https://huggingface.co/datasets/vyokky/GUI-360/blob/1c46362efaae836c601004e77b98a1aba89a530f/README.md) explicitly declares MIT, but the dataset supplies no separate `LICENSE` file at that revision. See the [template provenance](bench/assets/gui360/README.md) for exact sources and hashes. This upstream declaration does not independently establish rights in any third-party content within the templates or grant Windows/Microsoft Office licenses.
+- **Cloud9 logo references:** the JPEG and derived PNG in `bench/assets/illustrator-pen-export/` are third-party artwork used as benchmark visual references, not MIT-licensed ACU artwork. Original source: [Cloud9's official brand-assets page](https://cloud9.gg/brand-assets/) and its [logo download](http://c9.gg/logos). No open-source license or explicit redistribution grant was found for these files. Cloud9's artwork and marks remain subject to its [terms](https://cloud9.gg/terms-of-service/) and brand guidelines; this repository grants no rights to them and claims no affiliation or endorsement. See [reference provenance](bench/assets/illustrator-pen-export/README.md).
+
+Attribution and this disclaimer are not permission to redistribute third-party assets. Establish the applicable rights before reuse or redistribution.
+
 ## Benchmarks and project notes
 
-The [computer-use test bench](bench/README.md) compares ACU, CUA, and Codex computer use on Calculator and Adobe Illustrator tasks. Its guide covers scenarios, commands, measurement limits, and cleanup. Results and investigations live in [docs/reports/](docs/reports/); experiments include [click delivery while the cursor is moving](experiments/jiggle/).
+The [computer-use test bench](bench/README.md) compares ACU, CUA, and Codex computer use on Calculator, Adobe Illustrator Pen drawing, and TB3.1–TB3.4 Office tasks. Its guide covers scenarios, commands, measurement limits, and cleanup. Results and investigations are indexed in [docs/reports/](docs/reports/README.md); experiments include [click delivery while the cursor is moving](experiments/jiggle/).
 
-For project background, see the [domain context](CONTEXT.md), [architectural decisions](docs/adr/), [original design notes](docs/design/acu-brainstorm-2026-10-08.md), and [research](docs/research/).
+Publishing every trial's output is not required. Raw native session archives remain local. Historical reports may retain curated turn-by-turn command/output evidence and cite local-only artifacts.
+
+For project background, see the [domain context](CONTEXT.md), [architectural decisions](docs/adr/), [original design notes](docs/design/acu-brainstorm-2026-10-08.md), and [research](docs/research/README.md).
 
 ## Inspiration and reference
 

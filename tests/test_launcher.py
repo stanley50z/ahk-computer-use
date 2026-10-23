@@ -1,11 +1,17 @@
 """The launcher command line: python acu/run.py SCRIPT [--timeout SECONDS]."""
 
+import ctypes
 import json
+import os
+import signal
+import subprocess
+import sys
 import time
+from pathlib import Path
 
 import pytest
 
-from conftest import SCRIPTS, cursor, run_acu, set_cursor
+from conftest import REPO, SCRIPTS, cursor, run_acu, run_cli, set_cursor, wait_until
 
 pytestmark = pytest.mark.desktop
 
@@ -129,6 +135,72 @@ def test_failed_run_writes_a_crash_report_with_the_error(acu_home):
     assert "runtime_error.ahk:3" in report["output"]
     assert 'FileAppend "after' not in report["output"], "a line that never ran can only appear if the source was dumped"
     assert log_lines(acu_home)[0]["crash_report"] == str(reports[0])
+
+
+def test_validation_warning_dialog_times_out_without_running_script(tmp_path):
+    marker = tmp_path / "must-not-run.txt"
+    script = tmp_path / "blocked-validation.ahk"
+    script.write_text(
+        '#Warn All, MsgBox\nNoSuchFunctionACU()\n'
+        f'FileAppend "ran", "{marker}"\n', encoding="utf-8",
+    )
+    started = time.monotonic()
+    result = run_cli(script, timeout=0.5)
+
+    assert result["exit_code"] == 124, result
+    assert result["outcome"] == "timeout"
+    assert "validation" in result["trailer"]
+    assert not marker.exists()
+    assert time.monotonic() - started < 3
+
+
+@pytest.mark.parametrize("ignore_close", [False, True], ids=["graceful", "forced"])
+def test_interrupted_cli_stops_its_script_and_logs_before_releasing_the_lease(tmp_path, acu_home, ignore_close):
+    ready = tmp_path / "script.pid"
+    exited = tmp_path / "exited.txt"
+    script = tmp_path / "interrupted.ahk"
+    script.write_text(
+        ('OnMessage(0x10, (*) => 0)\n' if ignore_close else '')
+        + f'OnExit ((*) => FileAppend("exited", "{exited}"))\n'
+        + f'FileAppend DllCall("GetCurrentProcessId"), "{ready}"\nSleep 30000\n', encoding="utf-8",
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-m", "acu", "run", str(script), "--timeout", "30"], cwd=REPO,
+        env={**os.environ, "PYTHONPATH": str(REPO)}, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8", creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+    )
+    script_handle = None
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [ctypes.c_uint, ctypes.c_bool, ctypes.c_uint]
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+    kernel32.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    try:
+        wait_until(ready.exists, 5, "owned script did not start")
+        script_handle = kernel32.OpenProcess(0x100001, False, int(ready.read_text(encoding="utf-8")))
+        assert script_handle, ctypes.WinError(ctypes.get_last_error())
+        process.send_signal(signal.CTRL_BREAK_EVENT)
+        stdout, stderr = process.communicate(timeout=5)
+        assert kernel32.WaitForSingleObject(script_handle, 0) == 0, "script outlived its launcher"
+        assert process.returncode == 130, stdout + stderr
+        result = json.loads(stdout)
+        assert result["outcome"] == "error" and result["exit_code"] == 130
+        assert "interrupted" in result["trailer"]
+        assert exited.exists() == (not ignore_close)
+        report = json.loads(Path(result["artifacts"]["crash_report"]).read_text(encoding="utf-8"))
+        assert report["exit_code"] == 130
+        assert run_cli(SCRIPTS / "hello.ahk")["exit_code"] == 0, "the next run must acquire the released lease"
+    finally:
+        # Reap only the processes this test started, including on a regression failure.
+        if script_handle:
+            if kernel32.WaitForSingleObject(script_handle, 0) != 0:
+                kernel32.TerminateProcess(script_handle, 1)
+                assert kernel32.WaitForSingleObject(script_handle, 5000) == 0
+            kernel32.CloseHandle(script_handle)
+        if process.poll() is None:
+            process.kill()
+        process.communicate(timeout=5)
 
 
 def test_timeout_kills_script_that_ignores_close_request():

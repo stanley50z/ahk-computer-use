@@ -1,8 +1,17 @@
 # Historical handoff: Illustrator benchmark before the v0.5 rerun
 
-This handoff is archived context. The state and next steps below describe the period before the completed v0.5 rerun and the subsequent v0.6 prompt/reference revision, not the current checkout.
+This handoff is archived context. All state, pauses, "current" rules, unresolved items and next steps under "State at the original handoff" describe the period before the completed v0.5 rerun, not the current checkout. They are retained as historical decisions, not instructions to resume that plan.
 
-For current behavior, read `bench/README.md`, `bench/scenarios/illustrator-pen-export.md`, and [issue #21](https://github.com/stanley50z/ahk-computer-use/issues/21). The desktop maximization/Color Picker check passed before the [completed v0.5 round](docs/reports/illustrator-pen-export-v05-round-2026-10-12.md). v0.6 is implemented and validated offline; another benchmark round requires a fresh user request. Historical outcomes remain unchanged.
+For current behavior, read `bench/README.md`, `bench/scenarios/illustrator-pen-export.md` and `bench/aggregate.py`. The current actor prompt is v0.11: Pen drawing with fill #00AEEF and no stroke, left open for maintainer-owned as-is export. Actor export/naming obligations below are superseded. The current round policy remains three scheduled trials for each of five configurations, with every reviewed success retained in averages. The [completed v0.11 round](docs/reports/illustrator-pen-export-v011-round-2026-10-20.html) is later evidence, not the v0.5/v0.6 state described here. A fresh round requires a new user request.
+
+Superseding evidence and decisions:
+
+- The maximization/Color Picker check passed before the [completed v0.5 round](docs/reports/illustrator-pen-export-v05-round-2026-10-12.md); the live-validation item below is historical.
+- [The v0.7 resize investigation](docs/reports/illustrator-window-resize-v07-2026-10-13.md) attributed its observed resize to actor-authored `WinRestore`/`WinMove`, not failed initial maximization. It did not establish a cause for every earlier resizing incident.
+- [Issue #23](https://github.com/stanley50z/ahk-computer-use/issues/23) replaces actor export with maintainer-owned as-is collection. Filename/destination bookkeeping is no longer an unimplemented actor-export requirement. Cleanup may collect the unchanged drawing but must not repair it.
+- Standing desktop approval in project `AGENTS.md` supersedes the old PC-availability pause for requested work; it does not authorize starting another round without a request.
+
+Historical outcomes and raw evidence remain unchanged. Raw agent sessions stay local, and historical local-only evidence paths do not require publication of every trial output.
 
 ## State at the original handoff
 
@@ -16,14 +25,14 @@ For current behavior, read `bench/README.md`, `bench/scenarios/illustrator-pen-e
 
 The user wanted the benchmark to measure drawing/export rather than setup and bookkeeping. Their questions led to changes in initial window setup, calibration, drawing restrictions, provider-failure classification, trial count, and Color Picker cleanup. Implementation details are in commit `0878fa5` and the current benchmark guide, not repeated here.
 
-The latest scope and superseding decisions are tracked in:
+At the original handoff, scope and superseding decisions were tracked in:
 
 - [Issue #20: v0.5 scope](https://github.com/stanley50z/ahk-computer-use/issues/20), including the three-trial follow-up.
 - [Issue #14: ownerless Color Picker cleanup](https://github.com/stanley50z/ahk-computer-use/issues/14).
 - `.pi/benchmark-v05/spec.md` describes the earlier stage of the work; its five-trial wording is superseded by `.pi/three-trials-picker/spec.md` and the current issue #20 body.
 - [Issue #19](https://github.com/stanley50z/ahk-computer-use/issues/19) contains the older single-attempt specification and a superseding comment. Its original body is historical, not the current drawing policy.
 
-## Next work, in priority order
+## Next work at the original handoff (historical)
 
 ### 1. Validate the desktop changes when availability is announced
 
@@ -57,7 +66,7 @@ Do not claim this problem was solved, or quietly add a mid-trial helper. Agree o
 
 ## Validation and review evidence
 
-Latest offline validation and policy replay:
+Offline validation and policy replay available at the original handoff:
 
 - `.pi/three-trials-picker/commit-checks.log` — fresh checks immediately before committing; desktop test intentionally excluded.
 - `.pi/three-trials-picker/real-policy-check.log` — real assets/profile preparation and archived metrics used only as regression input, with original bytes preserved.
@@ -83,11 +92,11 @@ Useful entry points:
 
 That round used v0.4 and the old aggregation policy. The user's final-slot interruption is recorded explicitly, without invented launch/session/usage data. Its report contains all outcomes and qualifications; do not duplicate or reinterpret its counts using v0.5 rules. Frozen benchmark source is under its `source/` directory. Historical helper scripts that import today's aggregator are not a supported way to regenerate old five-trial results.
 
-The older root `handoff-testbench-2.md` is historical context, not this handoff's current plan.
+The original handoff also referred to an older root `handoff-testbench-2.md`. That file is no longer present in the current checkout; it is not a current navigation target or plan.
 
 ## Safety and debugging reminders
 
-Read project `AGENTS.md` and `bench/README.md` before further work. Preserve pre-existing documents/windows and original evidence. Maintainer cleanup may cancel an independently attributed task dialog, but must never advance or repair actor work. ACU skills must stay benchmark-neutral.
+Read project `AGENTS.md` and `bench/README.md` before further work. Preserve pre-existing documents/windows and original evidence. Maintainer cleanup may cancel an independently attributed task dialog and, under the later issue #23 policy, export the unchanged drawing as evidence. It must not repair actor work. ACU skills must stay benchmark-neutral.
 
 Persistent debugging locations are documented in `bench/README.md`: per-run `worker.log`, observer logs, `failure.json`, and crash reports; desktop fixture evidence under `.pi/illustrator-pen-export-validation/native-check-*/`; ACU runtime history under `%LOCALAPPDATA%/ACU/logs/` and crash reports under `%LOCALAPPDATA%/ACU/crashes/`.
 

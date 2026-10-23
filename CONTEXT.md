@@ -52,7 +52,7 @@ _Avoid_: task, workflow, step
 Look, act, check. The agent repeats it until the user's postcondition is observed, never until a script merely exits.
 
 **Trailer**:
-The launcher's last output line, its verdict on the run: ok, exit with a code, or timeout.
+The launcher's verdict on a run: ok, exit with a code, timeout, or interrupted. The low-level launcher prints it as its last output line; `acu run` returns it in the JSON `trailer` field.
 _Avoid_: summary, status line, footer
 
 ### Finding things on screen
@@ -109,7 +109,7 @@ The official names of the live Office tasks (scenario ids `tb3.1` … `tb3.4`), 
 _Avoid_: calling them Testbench 3; comparing TB3 results with GUI-360's LLM-judged success rates
 
 **Task tokens**:
-Cumulative API token usage for the actor's task attempt: input, cached input, and output. Reasoning is a subset of output, not an additional token charge.
+Cumulative API token usage for the actor's task attempt: input, cache reads/writes, and output. Reasoning is a subset of output, not an additional token charge.
 _Avoid_: final context length or monetary cost
 
 **Computer-use code share**:
@@ -124,4 +124,4 @@ _Avoid_: task end-to-end time or pure mouse-event latency
 The former measurement from session start through the last computer-use result. Kept in historical evidence, but no longer a benchmark ranking metric.
 
 **Jiggle test**:
-The experiment that measures how often a scripted click lands while something keeps moving the cursor. It settled the question of injection atomicity with a number.
+The experiment that measures how often a scripted click lands while something keeps moving the cursor. It informed the decision to favor short scripts over an injection-atomicity guarantee.

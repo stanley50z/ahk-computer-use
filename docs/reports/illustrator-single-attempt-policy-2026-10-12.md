@@ -1,5 +1,7 @@
 # Illustrator benchmark: neutral skill and one PNG attempt
 
+> Historical v0.4 policy, preserved for its original trials. The one-attempt/actor-export, five-trial and token-trimming rules below are superseded. Use the [current benchmark guide](../../bench/README.md) for v0.11 drawing-only actors, maintainer export, three scheduled trials per configuration and all-successes/no-trimming averages. See the [report index](README.md) for evidence availability.
+
 Specification: [issue #19](https://github.com/stanley50z/ahk-computer-use/issues/19).
 
 ## Decisions implemented offline

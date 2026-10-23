@@ -21,7 +21,6 @@ skills always match the checkout. --remove deletes the links for the chosen scop
 
 import argparse
 import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -43,8 +42,11 @@ def is_link(path: Path) -> bool:
 
 
 def make_link(target: Path, source: Path) -> None:
+    """Create a directory link without interpreting either path as a shell command."""
     if sys.platform == "win32":
-        subprocess.run(["cmd", "/c", "mklink", "/J", str(target), str(source)], check=True, capture_output=True)
+        import _winapi
+
+        _winapi.CreateJunction(str(source), str(target))
     else:
         os.symlink(source, target, target_is_directory=True)
 
@@ -76,6 +78,8 @@ def install(base: Path, roots: dict[Path, str], remove: bool = False) -> list[st
 
 
 def main() -> None:
+    """Install or remove the selected links and report Unicode paths as UTF-8."""
+    sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Link acu and retro-acu into the harness skill directories.")
     parser.add_argument("--global", dest="machine_wide", action="store_true", help="link into the user-level roots instead of this repository")
     parser.add_argument("--remove", action="store_true", help="delete the links instead of creating them")

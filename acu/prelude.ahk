@@ -25,13 +25,11 @@
 
 FileEncoding "UTF-8-RAW"
 
-while (A_Args.Length && SubStr(A_Args[1], 1, 6) = "--acu-") {
-    if (SubStr(A_Args[1], 1, 10) = "--acu-out=")
-        AcuRedirectOutput(SubStr(A_Args[1], 11))
-    else if (SubStr(A_Args[1], 1, 11) = "--acu-home=")
-        EnvSet "ACU_HOME", SubStr(A_Args[1], 12)
-    A_Args.RemoveAt(1)
-}
+; Consume only the two launcher-owned arguments; every later argument belongs to the script.
+if (A_Args.Length < 2 || SubStr(A_Args[1], 1, 10) != "--acu-out=" || SubStr(A_Args[2], 1, 11) != "--acu-home=")
+    ExitApp 3
+AcuRedirectOutput(SubStr(A_Args.RemoveAt(1), 11))
+EnvSet "ACU_HOME", SubStr(A_Args.RemoveAt(1), 12)
 ; The launcher's close request comes from a process with a lower integrity level than a UI Access program, which
 ; Windows would otherwise filter out. Let WM_CLOSE through so the timeout still runs the exit handler.
 DllCall("ChangeWindowMessageFilterEx", "ptr", A_ScriptHwnd, "uint", 0x10, "uint", 1, "ptr", 0)

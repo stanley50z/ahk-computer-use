@@ -2,6 +2,8 @@
 
 Research notes for ACU, 2026-10-08. Primary sources: the AutoHotkey source tree (commit 47eabd41, `~/github repo ref/AutoHotkey`), the AutoHotkey v2 docs, Microsoft's Win32 docs, and two read-only probe scripts run on this machine (AutoHotkey 2.0.22, Windows 11).
 
+> Historical investigation of the original click-atomicity goal. [ADR-0002](../adr/0002-short-scripts-over-injection-atomicity.md) records the later jiggle-test measurements and decision to favor short scripts rather than promise atomic input or add a takeover hook. The original problem statement below is not a current ACU guarantee.
+
 ## Question
 
 ACU's third principle says the agent's AHK script should land its click even if the human nudges the mouse while the script runs, so that no "take back control" feature is needed. Is that true, and under what conditions?

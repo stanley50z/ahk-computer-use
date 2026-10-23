@@ -6,6 +6,8 @@ build-backend = "hatchling.build"
 name = "acu-desktop"
 version = "0.1.0"
 description = "Run AutoHotkey v2 script files through the acu CLI"
+license = "MIT"
+license-files = ["LICENSE", "acu/lib/UIA-LICENSE.txt"]
 requires-python = ">=3.12"
 dependencies = []
 
@@ -24,7 +26,7 @@ dev = [
 packages = ["acu"]
 
 [tool.hatch.build.targets.sdist]
-only-include = ["acu", "retro-acu", "README.md", "pyproject.toml", "uv.lock", "install_skill.py", "CONTEXT.md", "docs/adr"]
+only-include = ["acu", "retro-acu", "LICENSE", "README.md", "pyproject.toml", "uv.lock", "install_skill.py", "CONTEXT.md", "docs/adr"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
