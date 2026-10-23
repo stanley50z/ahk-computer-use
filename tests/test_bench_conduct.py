@@ -70,7 +70,7 @@ def test_conduct_audit_passes_a_clean_trial_and_names_each_problem(tmp_path):
     assert dirty['windows'] == {'closed_preexisting': ['1'], 'new_non_calculator': ['7']}
 
 
-@pytest.mark.parametrize('scenario', ['calculator', 'illustrator-pen-export'])
+@pytest.mark.parametrize('scenario', ['calculator', 'illustrator-pen-tool'])
 def test_window_handle_changes_are_diagnostic_and_do_not_fail_the_trial(tmp_path, scenario):
     plan = {'workspace': str(tmp_path), 'run_dir': str(tmp_path),
             'skill_path': str(tmp_path / 'skill/SKILL.md'), 'scenario': scenario}

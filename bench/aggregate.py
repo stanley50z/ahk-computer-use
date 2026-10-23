@@ -13,6 +13,10 @@ from datetime import datetime
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
+SCENARIO = 'illustrator-pen-tool'
+SCENARIO_VERSION = 'Adobe Illustrator Pen Tool v0.11'
+# Rounds recorded before the Pen Tool rename keep their original names; the actor prompt and protocol are unchanged.
+LEGACY_NAMES = {'illustrator-pen-export': SCENARIO, 'Adobe Illustrator Pen and Export v0.11': SCENARIO_VERSION}
 TRIAL_POLICY = {'attempts_per_configuration': 3, 'aggregation': 'all-successes', 'replace_failed_attempts': False}
 
 
@@ -73,7 +77,7 @@ def comparison_statistics(benchmark, quality):
 # Load a maintainer-authored manifest after session review; no JSON is requested from the actor.
 def aggregate_round(manifest_path):
     from bench.run import ARMS, PI_PROVIDER, PI_RECOVERY_POLICY, CLAUDE_RECOVERY_POLICY, WINDOW_AUDIT_POLICY, actor_path, harness
-    from bench.illustrator_pen_export import EXPORT_POLICY
+    from bench.illustrator_pen_tool import EXPORT_POLICY
 
     manifest_path = Path(manifest_path).resolve()
     manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
@@ -91,9 +95,11 @@ def aggregate_round(manifest_path):
         finished = json.loads((run / 'finished.json').read_text(encoding='utf-8'))
         if finished.get('worker_finished') is not True:
             raise ValueError(f'attempt has not finished: {run}')
-        if plan['scenario'] != 'illustrator-pen-export' or plan['arm'] not in ARMS:
+        scenario = LEGACY_NAMES.get(plan['scenario'], plan['scenario'])
+        version = LEGACY_NAMES.get(plan.get('scenario_version'), plan.get('scenario_version'))
+        if scenario != SCENARIO or plan['arm'] not in ARMS:
             raise ValueError('this round must contain the five Illustrator configurations')
-        if plan.get('scenario_version') != 'Adobe Illustrator Pen and Export v0.11' or plan.get('skill_guidance_policy') != 'benchmark-neutral-v1':
+        if version != SCENARIO_VERSION or plan.get('skill_guidance_policy') != 'benchmark-neutral-v1':
             raise ValueError('round requires the neutral v0.11 simple drawing-and-appearance baseline; historical protocols are not eligible')
         if harness(plan['arm']) == 'pi' and plan.get('provider') != PI_PROVIDER:
             raise ValueError('round requires the explicit openai-codex Pi provider; historical providers cannot be mixed')
@@ -117,7 +123,7 @@ def aggregate_round(manifest_path):
                 or prompt != template.replace('<WORKSPACE>', actor_path(workspace))):
             raise ValueError('rendered prompt does not match its frozen template and workspace')
         identity = {key: plan[key] for key in ('model', 'reasoning', 'scenario', 'scenario_version', 'prompt_template_sha256', 'skill_sha256', 'assets', 'measurement_policy', 'skill_guidance_policy', 'trial_policy', 'recovery_policy', 'export_policy', 'window_audit_policy')}
-        identity['provider'] = plan.get('provider')
+        identity.update(scenario=scenario, scenario_version=version, provider=plan.get('provider'))
         attempt_record = json.loads((run / 'run-attempt.json').read_text(encoding='utf-8'))
         started_at = datetime.fromisoformat(attempt_record['started_at'])
         if started_at.tzinfo is None:

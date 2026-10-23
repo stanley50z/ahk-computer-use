@@ -2,7 +2,7 @@
 
 This handoff is archived context. All state, pauses, "current" rules, unresolved items and next steps under "State at the original handoff" describe the period before the completed v0.5 rerun, not the current checkout. They are retained as historical decisions, not instructions to resume that plan.
 
-For current behavior, read `bench/README.md`, `bench/scenarios/illustrator-pen-export.md` and `bench/aggregate.py`. The current actor prompt is v0.11: Pen drawing with fill #00AEEF and no stroke, left open for maintainer-owned as-is export. Actor export/naming obligations below are superseded. The current round policy remains three scheduled trials for each of five configurations, with every reviewed success retained in averages. The [completed v0.11 round](docs/reports/illustrator-pen-export-v011-round-2026-10-20.html) is later evidence, not the v0.5/v0.6 state described here. A fresh round requires a new user request.
+For current behavior, read `bench/README.md`, `bench/scenarios/illustrator-pen-tool.md` and `bench/aggregate.py`. The current actor prompt is v0.11: Pen drawing with fill #00AEEF and no stroke, left open for maintainer-owned as-is export. Actor export/naming obligations below are superseded. The current round policy remains three scheduled trials for each of five configurations, with every reviewed success retained in averages. The [completed v0.11 round](docs/reports/illustrator-pen-export-v011-round-2026-10-20.html) is later evidence, not the v0.5/v0.6 state described here. A fresh round requires a new user request.
 
 Superseding evidence and decisions:
 
@@ -17,7 +17,7 @@ Historical outcomes and raw evidence remain unchanged. Raw agent sessions stay l
 
 - Checkout: `main`, committed and pushed at `0878fa5dbb01b58e4735a3bb992b9b1fe8e96c17` — `feat: Simplify Illustrator trials and harden desktop cleanup`. Local/upstream revisions matched and the worktree was clean before this handoff was written.
 - **Desktop work is paused until the user announces PC availability.** Do not start Illustrator, desktop integration tests, or another benchmark round automatically. The user stopped the previous round for lack of time; subsequent changes were offline only.
-- The current protocol is **v0.5 with three trials per configuration and all-successes averaging**. Read `bench/README.md`, `bench/scenarios/illustrator-pen-export.md`, and `bench/aggregate.py::TRIAL_POLICY` for the authoritative rules and fixed model/runtime profiles. Do not revive the older five-trial or single-drawing-attempt rules.
+- The current protocol is **v0.5 with three trials per configuration and all-successes averaging**. Read `bench/README.md`, `bench/scenarios/illustrator-pen-tool.md`, and `bench/aggregate.py::TRIAL_POLICY` for the authoritative rules and fixed model/runtime profiles. Do not revive the older five-trial or single-drawing-attempt rules.
 - No benchmark actor or test server was left running. Final resource verification for the completed round is linked below. Shared services and unrelated applications were preserved.
 - No commit/push is requested for this new handoff file. The previous commit is complete; do not wait for or repair its background Wiki job.
 
@@ -38,7 +38,7 @@ At the original handoff, scope and superseding decisions were tracked in:
 
 The window normalization and ownerless Color Picker fix are implemented but **not live-validated**. The marked integration test is:
 
-`tests/test_bench_illustrator_pen_export.py::test_illustrator_pen_export_real_illustrator_preparation_and_owned_document_cleanup`
+`tests/test_bench_illustrator_pen_tool.py::test_illustrator_pen_tool_real_illustrator_preparation_and_owned_document_cleanup`
 
 It now checks initial maximization, explicit maintainer-only calibration, the actual ownerless picker, protected-handle refusal, and owned-resource teardown. Read the test and `tests/conftest.py` for the existing desktop gate before running it. Use a focused check, not the entire desktop suite. Keep #14/#20 open until the outstanding live behavior is verified.
 
@@ -46,7 +46,7 @@ Relevant implementation:
 
 - `bench/illustrator/window.ahk`
 - `bench/illustrator/dismiss-dialogs.ahk`
-- `bench/illustrator_pen_export.py`
+- `bench/illustrator_pen_tool.py`
 - `tests/scripts/illustrator_color_picker.jsx`
 
 **Do not overclaim the window fix:** it addresses missing initial maximization. The cause of later resizing into the upper-left quarter remains unconfirmed. No vendor/runtime patch or mid-attempt window repair was added.

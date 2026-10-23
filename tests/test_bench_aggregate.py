@@ -73,12 +73,15 @@ def test_cli_reads_three_attempts_per_arm_and_keeps_safeguard_failures_out(tmp_p
             prompt = template.replace('<WORKSPACE>', actor_path(workspace))
             (folder/'prompt-template.txt').write_text(template, encoding='utf-8')
             (folder/'prompt.txt').write_text(prompt, encoding='utf-8')
-            plan = {'arm':arm,'model':'gpt-6-astra' if arm.startswith('pi-') else 'claude-opus-5-5','reasoning':'low','scenario':'illustrator-pen-export',
+            # Each arm's first attempt carries the pre-rename recorded names; the round must still count as one protocol.
+            legacy = index == 0
+            plan = {'arm':arm,'model':'gpt-6-astra' if arm.startswith('pi-') else 'claude-opus-5-5','reasoning':'low',
+                    'scenario':'illustrator-pen-export' if legacy else 'illustrator-pen-tool',
                     'provider':'openai-codex' if arm.startswith('pi-') else None,
                     'workspace':str(workspace), 'prompt_sha256':hashlib.sha256(prompt.encode('utf-8')).hexdigest(),
                     'prompt_template_sha256':hashlib.sha256(template.encode('utf-8')).hexdigest(), 'skill_sha256':'skill-' + arm,
                     'assets':{'reference':'fixed'},'measurement_policy':'tokens-and-computer-use-v1',
-                    'scenario_version':'Adobe Illustrator Pen and Export v0.11', 'window_audit_policy':'diagnostic-only-v1',
+                    'scenario_version':'Adobe Illustrator Pen and Export v0.11' if legacy else 'Adobe Illustrator Pen Tool v0.11', 'window_audit_policy':'diagnostic-only-v1',
                     'actor_deliverables':[],
                     'export_policy':{'owner':'maintainer-cleanup','attempts':2,'output':'grading/Cloud9-Recreated.png',
                                      'dimensions':[800,800],'background':'opaque-white','dpi':72,'interlaced':False,

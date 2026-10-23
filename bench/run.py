@@ -42,7 +42,7 @@ CLAUDE_TOOLS = ['Read', 'Write', 'Edit', 'Bash']
 ARMS = ('pi-acu', 'pi-cua', 'pi-computer-use', 'claude-acu', 'claude-cua')
 NATIVE_TOOLS = ['mcp__node_repl__js', 'mcp__node_repl__js_reset',
                 'mcp__node_repl__js_add_node_module_dir', 'mcp__node_repl__turn_ended']
-SCENARIOS = ('calculator', 'illustrator-pen-export', 'tb3.1', 'tb3.2', 'tb3.3', 'tb3.4')
+SCENARIOS = ('calculator', 'illustrator-pen-tool', 'tb3.1', 'tb3.2', 'tb3.3', 'tb3.4')
 WINDOW_AUDIT_POLICY = 'diagnostic-only-v1'
 # Claude Code runs Opus; Pi comparisons hold GPT-6 Astra and low reasoning fixed.
 ARM_MODELS = {arm: ('claude-opus-5-5', 'low') for arm in ('claude-acu', 'claude-cua')}
@@ -637,7 +637,7 @@ def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=No
     prompt = template.replace('<WORKSPACE>', actor_path(workspace))
     (run_dir / 'prompt-template.txt').write_text(template, encoding='utf-8')
     (run_dir / 'prompt.txt').write_text(prompt, encoding='utf-8')
-    if scenario_name == 'illustrator-pen-export':
+    if scenario_name == 'illustrator-pen-tool':
         (workspace / 'scratch').mkdir()
     model, reasoning = arm_model(arm)
     session_id = None
@@ -658,7 +658,7 @@ def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=No
                 from bench.tb3 import APPS, OFFICE_DIR, TASKS
                 executable = APPS[TASKS[scenario_name]['app']]['exe']
                 approved_apps = [executable, str(OFFICE_DIR / executable), 'process:' + str(OFFICE_DIR / executable)]
-            if scenario_name == 'illustrator-pen-export':
+            if scenario_name == 'illustrator-pen-tool':
                 adobe = Path(os.environ.get('ProgramFiles', 'C:/Program Files')) / 'Adobe'
                 for executable in adobe.glob('Adobe Illustrator*/Support Files/Contents/Windows/Illustrator.exe'):
                     approved_apps.extend([str(executable), 'process:' + str(executable)])
@@ -702,8 +702,8 @@ def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=No
         plan['native_bridge_sha256'] = hashlib.sha256((home / 'native-bridge.json').read_bytes()).hexdigest()
         if native_transport == 'app-pipe':
             plan['native_pipe'] = server['env']['SKY_CUA_NATIVE_PIPE_DIRECTORY']
-    if scenario_name == 'illustrator-pen-export':
-        assets = ROOT / 'bench/assets/illustrator-pen-export'
+    if scenario_name == 'illustrator-pen-tool':
+        assets = ROOT / 'bench/assets/illustrator-pen-tool'
         plan['assets'] = {}
         for name in ('Cloud9-Pen-Starter.ai', 'Cloud9-Reference.png'):
             shutil.copyfile(assets / name, workspace / name)
@@ -713,7 +713,7 @@ def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=No
         plan['grading'] = {'reference_sha256': plan['assets']['Cloud9-Reference.png'],
                            'registration': 'none', 'shape_pass_threshold': None, 'mode': 'live-drawing'}
         plan['actor_deliverables'] = []
-        from bench.illustrator_pen_export import EXPORT_POLICY
+        from bench.illustrator_pen_tool import EXPORT_POLICY
         plan['export_policy'] = deepcopy(EXPORT_POLICY)
         plan['skill_guidance_policy'] = 'benchmark-neutral-v1'
         from bench.aggregate import TRIAL_POLICY
@@ -907,7 +907,7 @@ def guarded_roots(plan):
     roots = [ROOT, Path(plan['skill_path']).parent]
     if plan.get('arm') == 'pi-computer-use':
         roots += [Path(plan['run_dir']) / 'agent-home/mcp.json', Path(plan['run_dir']) / 'agent-home/native-bridge.json']
-    if plan.get('scenario') == 'illustrator-pen-export':
+    if plan.get('scenario') == 'illustrator-pen-tool':
         run_dir = Path(plan['run_dir'])
         roots += [run_dir / 'grading/reference.png', run_dir / 'illustrator-identity.json',
                   run_dir / 'illustrator-before.json', run_dir / 'illustrator-preferences-before.json',
@@ -1017,7 +1017,7 @@ def conduct_audit(plan, before_probe, after_probe, before_files, after_files, to
     files = fingerprint_diff(before_files, after_files)
     outside, suspicious = transcript_writes(tools, plan['workspace'])
     scenario = plan.get('scenario', 'calculator')
-    application = 'illustrator' if scenario == 'illustrator-pen-export' else ('office' if scenario.startswith('tb3.') else 'calculator')
+    application = 'illustrator' if scenario == 'illustrator-pen-tool' else ('office' if scenario.startswith('tb3.') else 'calculator')
     windows = window_diff(before_probe, after_probe, application)
     problems = []
     if files['changed'] or files['added'] or files['removed']:
@@ -1120,7 +1120,7 @@ def run_trial(plan, reference_tps=None):
         if os.name == 'nt' and pipe_name not in os.listdir('\\\\.\\pipe\\'):
             raise RuntimeError(f'the Codex Desktop app pipe {pipe_name} is not open; start the app before an app-pipe trial')
     before = acu_observer(run_dir, ROOT / 'bench/probe.ahk', suffix='-before')
-    is_illustrator = plan.get('scenario') == 'illustrator-pen-export'
+    is_illustrator = plan.get('scenario') == 'illustrator-pen-tool'
     is_office = str(plan.get('scenario', '')).startswith('tb3.')
     office_collected = False
     recorder = None
@@ -1129,7 +1129,7 @@ def run_trial(plan, reference_tps=None):
     actor_started = False
     try:
         if is_illustrator:
-            from bench.illustrator_pen_export import prepare_desktop
+            from bench.illustrator_pen_tool import prepare_desktop
             prepare_desktop(plan, acu_observer)
         if is_office:
             from bench.tb3 import prepare_desktop as prepare_office
@@ -1191,7 +1191,7 @@ def run_trial(plan, reference_tps=None):
         conduct = conduct_audit(plan, before_actor, after_probe, before_files, after_files, measurements.get('tools', []),
                                 raw_records=records, runtime_before=runtime_before, runtime_after=runtime_after)
         if is_illustrator:
-            from bench.illustrator_pen_export import native_observer
+            from bench.illustrator_pen_tool import native_observer
             documents = native_observer(run_dir, acu_observer, 'snapshot')['documents']
             protected = load_actor_json(run_dir / 'illustrator-before.json')
             changed = [doc for doc in protected if doc not in documents]
@@ -1210,7 +1210,7 @@ def run_trial(plan, reference_tps=None):
             save_json(run_dir / 'verification.json', verification)
         if is_illustrator:
             # Audit the actor first; maintainer export/close must not masquerade as actor window or file changes.
-            from bench.illustrator_pen_export import cleanup_desktop
+            from bench.illustrator_pen_tool import cleanup_desktop
             illustrator_cleanup_started = True
             illustrator_cleanup = cleanup_desktop(run_dir, acu_observer, export_drawing=True)
             verification = illustrator_cleanup['drawing_verification']
@@ -1227,7 +1227,7 @@ def run_trial(plan, reference_tps=None):
         if is_illustrator:
             rendering = illustrator_cleanup['export']
             infrastructure_failure = illustrator_cleanup['infrastructure_failure']
-            summary.update(scenario='illustrator-pen-export', output_image=rendering['output'],
+            summary.update(scenario='illustrator-pen-tool', output_image=rendering['output'],
                            quality=rendering['quality'], problems=verification['problems'],
                            drawing_passed=verification['passed'], infrastructure_failure=infrastructure_failure,
                            safeguard_violations=conduct['problems'] + isolation['problems'])
@@ -1255,7 +1255,7 @@ def run_trial(plan, reference_tps=None):
         ownership_file = run_dir / 'workspace/ownership.json'
         try:
             if is_illustrator:
-                from bench.illustrator_pen_export import cleanup_desktop
+                from bench.illustrator_pen_tool import cleanup_desktop
                 try:
                     if illustrator_cleanup is not None:
                         cleanup = illustrator_cleanup
@@ -1329,7 +1329,7 @@ def run(plan, reference_tps=None):
         value = run_trial(plan, reference_tps)
         cleanup = load_actor_json(run_dir / 'cleanup.json')
         cleanup_passed = cleanup.get('passed') is True and cleanup.get('cursor_scheme_restored') is True
-        if plan.get('scenario') == 'illustrator-pen-export':
+        if plan.get('scenario') == 'illustrator-pen-tool':
             if not cleanup_passed and not cleanup.get('infrastructure_failure'):
                 value['safeguard_violations'].append('cleanup failed or is unverified')
         else:
@@ -1344,7 +1344,7 @@ def run(plan, reference_tps=None):
         if summary_path.is_file():
             value = load_actor_json(summary_path)
             value['passed'] = False
-            if plan.get('scenario') == 'illustrator-pen-export':
+            if plan.get('scenario') == 'illustrator-pen-tool':
                 value.setdefault('safeguard_violations', []).append('worker or cleanup failed; inspect crash.txt')
             else:
                 value['cleanup_passed'] = False

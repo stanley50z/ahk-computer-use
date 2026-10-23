@@ -1,4 +1,4 @@
-# Adobe Illustrator Pen and Export assets
+# Adobe Illustrator Pen Tool assets
 
 Current v0.11 actors receive the same two separate inputs introduced in v0.7:
 
@@ -28,14 +28,14 @@ logo = Image.new('RGBA', (550, 551), (0, 174, 239, 255))
 logo.putalpha(coverage)
 canvas = Image.new('RGBA', (800, 800), 'white')
 canvas.alpha_composite(logo, (143, 120))
-canvas.convert('RGB').save('bench/assets/illustrator-pen-export/Cloud9-Reference.png', dpi=(72, 72))
+canvas.convert('RGB').save('bench/assets/illustrator-pen-tool/Cloud9-Reference.png', dpi=(72, 72))
 ```
 
 Construction script, source/output fingerprints and logs: `.pi/benchmark-v06/build-reference.py`, `reference-build.json`, `reference-build.log`; failures persist `reference-build-crash.txt`. The original official source and historical reference are unchanged. `Cloud9-Reference.jpg` is retained here for provenance/history only and is not copied to new actor workspaces. Earlier inspection evidence: [source inspection](../../../docs/reports/testbench-2-source-inspection-2026-10-11.md). Official vectors, source URLs, brand documents and these notes remain maintainer-only context.
 
 ## Task and preparation
 
-The starter retains white fill and a black 1-point stroke. The [v0.11 prompt](../../scenarios/illustrator-pen-export.md) asks the actor to use fill #00AEEF and no stroke, draw genuine Pen-tool Bézier curves rather than faceted approximations, and leave the finished drawing open. Every Illustrator interaction must use the assigned computer-use tool. No actor export, AI save or result manifest is requested. Off-app geometry analysis/code and ordinary GUI editing, recovery and navigation are not prohibited.
+The starter retains white fill and a black 1-point stroke. The [v0.11 prompt](../../scenarios/illustrator-pen-tool.md) asks the actor to use fill #00AEEF and no stroke, draw genuine Pen-tool Bézier curves rather than faceted approximations, and leave the finished drawing open. Every Illustrator interaction must use the assigned computer-use tool. No actor export, AI save or result manifest is requested. Off-app geometry analysis/code and ordinary GUI editing, recovery and navigation are not prohibited.
 
 Normal preparation maximizes the initial window, resets Illustrator's Getting Started workspace, centers the view at 100%, prepares English input, and enables and reads back Smart Guides and Snap to Point. Actors may change snapping during the trial. Preparation does not perform a blank export or prime PNG preferences.
 

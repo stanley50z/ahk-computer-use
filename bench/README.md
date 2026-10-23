@@ -1,8 +1,8 @@
 # Computer-use test bench
 
-The scenarios are **Calculator** (`calculator`, the default), **Adobe Illustrator Pen and Export** (`illustrator-pen-export`, drawing-only in v0.11), and the Office tasks **TB3.1–TB3.4** (`tb3.1` … `tb3.4`). Each scenario supports the five configurations below. An individual configuration is an arm; a request to run a benchmark means fresh sequential trials of all five arms unless the user explicitly selects a subset. Each CLI invocation prepares or runs one trial, not a whole comparison round.
+The scenarios are **Calculator** (`calculator`, the default), **Adobe Illustrator Pen Tool** (`illustrator-pen-tool`, drawing-only since v0.11), and the Office tasks **TB3.1–TB3.4** (`tb3.1` … `tb3.4`). Each scenario supports the five configurations below. An individual configuration is an arm; a request to run a benchmark means fresh sequential trials of all five arms unless the user explicitly selects a subset. Each CLI invocation prepares or runs one trial, not a whole comparison round.
 
-Historical reports call Calculator "Testbench 1" and Illustrator "Testbench 2" (or "TB2"). Those are historical aliases, not current CLI identifiers; `--scenario testbench-2` is no longer accepted. Report titles and prose use the descriptive names; report filenames, recorded trial IDs, evidence paths and measurements retain their historical values. Saved trial evidence is unchanged. The Illustrator rename changes its human-readable heading and scenario identifier, not the v0.3 actor prompt body or input-file bytes.
+Historical reports call Calculator "Testbench 1" and Illustrator "Testbench 2", "TB2" or "Adobe Illustrator Pen and Export" (`illustrator-pen-export`). Those are historical aliases, not current CLI identifiers; `--scenario testbench-2` and `--scenario illustrator-pen-export` are no longer accepted. Rounds recorded under the old Pen and Export names still aggregate: the rename (2026-10-23) changed only the identifier, file names and the prompt file's title line, which the actor never receives, so the v0.11 prompt body and fingerprints are unchanged. Report titles and prose use the descriptive names; report filenames, recorded trial IDs, evidence paths and measurements retain their historical values. Saved trial evidence is unchanged. The Illustrator rename changes its human-readable heading and scenario identifier, not the v0.3 actor prompt body or input-file bytes.
 
 ## File structure
 
@@ -26,7 +26,7 @@ bench/
 ├── calculator/
 │   ├── verify.ahk                 Calculator display verification
 │   └── cleanup.ahk                Owned Calculator window cleanup
-├── illustrator_pen_export.py      Illustrator preparation, grading and cleanup
+├── illustrator_pen_tool.py      Illustrator preparation, grading and cleanup
 ├── illustrator/                   Maintainer-only application automation
 │   ├── ensure.ahk
 │   ├── input-state.ahk
@@ -42,15 +42,15 @@ bench/
 │   └── window.ahk                 Owned Office activation/dialog handling
 ├── scenarios/                     Actor task prompts
 │   ├── calculator.md
-│   ├── illustrator-pen-export.md
+│   ├── illustrator-pen-tool.md
 │   └── tb3.1.md … tb3.4.md
 └── assets/
-    ├── illustrator-pen-export/    Blank AI, reference images and provenance notes
+    ├── illustrator-pen-tool/    Blank AI, reference images and provenance notes
     ├── gui360/                    Upstream TB3.1/TB3.2 templates and provenance
     └── tb3/                       Bench-owned TB3.3/TB3.4 workbook
 ```
 
-Shared trial machinery stays at the root; application-specific AHK/JSX scripts live in their application folder. `illustrator_pen_export.py` coordinates those scripts and checks the drawing and maintainer-rendered evidence. Maintainer observers run outside actor timing and are not tools available to the actor.
+Shared trial machinery stays at the root; application-specific AHK/JSX scripts live in their application folder. `illustrator_pen_tool.py` coordinates those scripts and checks the drawing and maintainer-rendered evidence. Maintainer observers run outside actor timing and are not tools available to the actor.
 
 Generated transcripts, screenshots, metrics, logs and crash reports belong in `.pi/bench/<run-id>/`, not here. New comparison reports are self-contained HTML in `docs/reports/`. When final-image evidence exists, embed a labeled side-by-side comparison of every scheduled trial, including failures and incomplete outputs; mark missing images explicitly and use a consistent scale. Keep raw evidence local and unchanged. Do not upload raw agent sessions or bulk trial outputs; share only requested reports and selected, reviewed evidence. Historical results remain unchanged; maintenance notes may identify superseded instructions without rewriting original measurements.
 
@@ -130,11 +130,11 @@ Cleanup protects every pre-existing visible top-level handle, checks the indepen
 
 Versions: **v1.0** is the button-only prompt that rounds 1 to 3 used, with the expression `128+465*12387/138473-12343` and the evidence-file protocol in the prompt (its 2026-10-09 drafts tightened ownership and then allowed semantic Invoke alongside pointer clicks; the archived run directories keep each draft and its hash). A one-round interim text that listed allowed input routes, and whose title line "Calculator buttons" was sent to the actors, is recorded in [its report](../docs/reports/testbench-1-v4-2026-10-11.md) and superseded. **v1.1** is the two-line task above with a new expression. Comparisons across versions are across prompts and expressions. Preserve original verdicts and prompt hashes; this is not an exact-prompt statistical comparison.
 
-## Adobe Illustrator Pen and Export
+## Adobe Illustrator Pen Tool
 
-Use `--scenario illustrator-pen-export`. The identifier and benchmark heading remain stable, but the [v0.11 actor task](scenarios/illustrator-pen-export.md) is **Pen drawing only**. The actor recreates the reference with genuine Pen-tool Bézier curves, fill #00AEEF and no stroke, then leaves the finished document open. No actor export, AI save or result manifest is requested. The separate Curvature Tool is not the requested tool. Short straight-line segments approximating reference curves are prohibited. By the user's selected simpler direction, v0.11 states the drawing task and required appearance without a blanket other-tool/command ban. Undo, ordinary editing/recovery and zoom/panning are not separately prohibited. The shape must still be Pen-created with genuine Bézier handles, and every Illustrator interaction must use the assigned computer-use runtime. The no-stroke instruction remains beside the fill-color requirement. Window-handle changes are diagnostic only, not pass/fail inputs. These changes apply equally to all five configurations and do not retroactively change earlier verdicts.
+Use `--scenario illustrator-pen-tool`. The [v0.11 actor task](scenarios/illustrator-pen-tool.md) is **Pen drawing only**. The actor recreates the reference with genuine Pen-tool Bézier curves, fill #00AEEF and no stroke, then leaves the finished document open. No actor export, AI save or result manifest is requested. The separate Curvature Tool is not the requested tool. Short straight-line segments approximating reference curves are prohibited. By the user's selected simpler direction, v0.11 states the drawing task and required appearance without a blanket other-tool/command ban. Undo, ordinary editing/recovery and zoom/panning are not separately prohibited. The shape must still be Pen-created with genuine Bézier handles, and every Illustrator interaction must use the assigned computer-use runtime. The no-stroke instruction remains beside the fill-color requirement. Window-handle changes are diagnostic only, not pass/fail inputs. These changes apply equally to all five configurations and do not retroactively change earlier verdicts.
 
-The blank starter and separate 800 × 800 reference PNG remain the only inputs. Provenance, official vectors and maintainer inspection stay outside actor context. [Asset notes](assets/illustrator-pen-export/README.md) freeze the lossless reference transform and hashes. Workspace and Scratch folder paths are rendered into the prompt; there is no actor Final output path. Bench-authored references beneath the current user's home use `~/...`, not a literal account directory. Claude Code's selected-skill declaration uses the same home-relative form. The controller derives the home from `Path.home()` and the checkout from its source location, so neither is tied to a username. Paths outside the home retain their supplied location because they have no home-relative equivalent. Internal launch/configuration paths and private evidence remain resolved; harness-generated context or tool output can still expose absolute paths, so this is not blanket provider-side path redaction. Off-app analysis/code/generated geometry and external scratch remain allowed. Normal GUI revisions, smoothing, redraws and navigation are permitted; the v0.9/v0.10 blanket Pen-and-appearance-only command restriction is superseded. Pen construction, genuine curves, assigned-runtime interaction and final appearance remain the task requirements. Every Illustrator interaction must still use the assigned computer-use runtime; no benchmark recipes are added to ACU or vendor skills.
+The blank starter and separate 800 × 800 reference PNG remain the only inputs. Provenance, official vectors and maintainer inspection stay outside actor context. [Asset notes](assets/illustrator-pen-tool/README.md) freeze the lossless reference transform and hashes. Workspace and Scratch folder paths are rendered into the prompt; there is no actor Final output path. Bench-authored references beneath the current user's home use `~/...`, not a literal account directory. Claude Code's selected-skill declaration uses the same home-relative form. The controller derives the home from `Path.home()` and the checkout from its source location, so neither is tied to a username. Paths outside the home retain their supplied location because they have no home-relative equivalent. Internal launch/configuration paths and private evidence remain resolved; harness-generated context or tool output can still expose absolute paths, so this is not blanket provider-side path redaction. Off-app analysis/code/generated geometry and external scratch remain allowed. Normal GUI revisions, smoothing, redraws and navigation are permitted; the v0.9/v0.10 blanket Pen-and-appearance-only command restriction is superseded. Pen construction, genuine curves, assigned-runtime interaction and final appearance remain the task requirements. Every Illustrator interaction must still use the assigned computer-use runtime; no benchmark recipes are added to ACU or vendor skills.
 
 After the actor stops, the controller audits its conduct **before** maintainer export/close actions. Cleanup binds exactly one independently owned live document, inspects its actual path anchors/direction handles, and exports that drawing **as-is** through maintainer-only native Illustrator scripting. It never reopens a saved copy, alters geometry/fill/curves, imports a replacement, changes the artboard or resizes/composites the image. The `plan.json::export_policy` freezes two export attempts, artifact ownership/path and PNG properties; a modified policy or ambiguous/foreign document is an explicit refusal.
 
@@ -204,7 +204,7 @@ python bench/run.py prepare --arm pi-computer-use
 python bench/run.py prepare --arm claude-cua
 ```
 
-These examples use Calculator. Add `--scenario illustrator-pen-export` or `--scenario tb3.1` (through `tb3.4`) to `prepare`, `start.py` or `run`. A prepared `--run-dir` must be run with its matching arm/scenario and cannot be reused after an attempt. `bench/aggregate.py` accepts only the matched 15-trial Illustrator round, not Calculator or TB3 runs.
+These examples use Calculator. Add `--scenario illustrator-pen-tool` or `--scenario tb3.1` (through `tb3.4`) to `prepare`, `start.py` or `run`. A prepared `--run-dir` must be run with its matching arm/scenario and cannot be reused after an attempt. `bench/aggregate.py` accepts only the matched 15-trial Illustrator round, not Calculator or TB3 runs.
 
 With desktop authorization (the current Illustrator benchmark work has standing approval), start in the background without opening another terminal:
 

@@ -32,14 +32,14 @@ def test_all_illustrator_configurations_receive_the_same_simple_drawing_and_appe
         folder.mkdir()
         name = 'computer-use' if arm == 'pi-computer-use' else ('cua-driver' if arm.endswith('cua') else 'acu')
         native = {'mcp_servers': {'node_repl': {'command': 'native-fixture', 'args': []}}}
-        plan = prepare(arm, folder / 'trial', scenario='illustrator-pen-export',
+        plan = prepare(arm, folder / 'trial', scenario='illustrator-pen-tool',
                        skill=skill_fixture(folder, name), native_config=native)
         template = (folder / 'trial/prompt-template.txt').read_text(encoding='utf-8')
         assert 'using the Pen tool' in template and 'genuine Bézier curves' in template
         assert 'Set the fill color to #00AEEF. Set the stroke to None (no stroke).' in template
         for removed in ('Use only the Pen tool', 'Do not use other Illustrator tools', 'initial zoom', 'fit-to-window'):
             assert removed not in template
-        assert plan['scenario_version'] == 'Adobe Illustrator Pen and Export v0.11'
+        assert plan['scenario_version'] == 'Adobe Illustrator Pen Tool v0.11'
         assert plan['window_audit_policy'] == 'diagnostic-only-v1'
         assert not (folder / 'trial/state.json').exists()
         templates.append(template)
@@ -81,14 +81,14 @@ def test_actor_prompt_paths_use_the_current_user_root_without_exposing_the_accou
     import bench.run as bench
     home = tmp_path / 'different-account'
     checkout = home / 'portable-checkout'
-    shutil.copytree(bench.ROOT / 'bench/assets/illustrator-pen-export', checkout / 'bench/assets/illustrator-pen-export')
+    shutil.copytree(bench.ROOT / 'bench/assets/illustrator-pen-tool', checkout / 'bench/assets/illustrator-pen-tool')
     shutil.copytree(bench.ROOT / 'bench/scenarios', checkout / 'bench/scenarios')
     monkeypatch.setattr(Path, 'home', classmethod(lambda cls: home))
     monkeypatch.setattr(bench, 'ROOT', checkout)
     (home / '.agents').mkdir()
     skill = skill_fixture(home / '.agents', 'cua-driver')
     directory = checkout / '.pi/bench/trial'
-    plan = prepare('claude-cua', directory, scenario='illustrator-pen-export', skill=skill)
+    plan = prepare('claude-cua', directory, scenario='illustrator-pen-tool', skill=skill)
     prompt = (directory / 'prompt.txt').read_text(encoding='utf-8')
     declaration = plan['command'][plan['command'].index('--append-system-prompt') + 1]
     assert 'Workspace: ~/portable-checkout/.pi/bench/trial/workspace' in prompt
@@ -99,7 +99,7 @@ def test_actor_prompt_paths_use_the_current_user_root_without_exposing_the_accou
     assert plan['skill_path'] == str(skill / 'SKILL.md')
 
 
-@pytest.mark.parametrize('scenario', ['calculator', 'illustrator-pen-export'])
+@pytest.mark.parametrize('scenario', ['calculator', 'illustrator-pen-tool'])
 def test_prepare_pi_arms_share_scenario_and_do_not_inherit_user_configuration(tmp_path, scenario):
     acu = prepare('pi-acu', tmp_path / 'acu-run', scenario=scenario, skill=skill_fixture(tmp_path, 'acu'))
     cua = prepare('pi-cua', tmp_path / 'cua-run', scenario=scenario, skill=skill_fixture(tmp_path, 'cua-driver'))
@@ -126,7 +126,7 @@ def test_prepare_pi_arms_share_scenario_and_do_not_inherit_user_configuration(tm
         assert (run_dir / 'workspace').is_dir()
 
 
-@pytest.mark.parametrize('scenario', ['calculator', 'illustrator-pen-export'])
+@pytest.mark.parametrize('scenario', ['calculator', 'illustrator-pen-tool'])
 @pytest.mark.parametrize('arm,skill_name', [('claude-acu', 'acu'), ('claude-cua', 'cua-driver')])
 def test_prepare_claude_arm_runs_opus_low_in_safe_mode_with_only_four_tools(tmp_path, arm, skill_name, scenario):
     plan = prepare(arm, tmp_path / 'claude-run', scenario=scenario, skill=skill_fixture(tmp_path, skill_name))
@@ -156,7 +156,7 @@ def test_prepare_claude_arm_runs_opus_low_in_safe_mode_with_only_four_tools(tmp_
 
 
 @pytest.mark.parametrize('scenario,allowed,forbidden', [('calculator', 'calc.exe', 'Illustrator.exe'),
-                                                     ('illustrator-pen-export', 'Illustrator.exe', 'calc.exe')])
+                                                     ('illustrator-pen-tool', 'Illustrator.exe', 'calc.exe')])
 def test_prepare_pi_native_keeps_the_same_gpt_profile_and_only_native_mcp(tmp_path, scenario, allowed, forbidden):
     source_config = {'mcp_servers': {'node_repl': {'command': str(tmp_path / 'native-node.exe'), 'args': ['--fixture'],
                                                    'env': {'SKY_CUA_NATIVE_PIPE': '1', 'SKY_CUA_NATIVE_PIPE_DIRECTORY': 'old-pipe'}}}}

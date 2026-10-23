@@ -1,4 +1,4 @@
-# Adobe Illustrator Pen and Export v0.11
+# Adobe Illustrator Pen Tool v0.11
 
 Workspace: <WORKSPACE>
 Scratch folder: <WORKSPACE>/scratch

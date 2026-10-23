@@ -204,7 +204,7 @@ def test_controller_preserves_actor_outcome_and_separates_maintainer_export_fail
     executable.parent.mkdir(parents=True)
     executable.touch()
     monkeypatch.setenv('ProgramFiles', str(tmp_path / 'programs'))
-    plan = bench.prepare('pi-acu', tmp_path / 'trial', scenario='illustrator-pen-export')
+    plan = bench.prepare('pi-acu', tmp_path / 'trial', scenario='illustrator-pen-tool')
     directory = tmp_path / 'trial'
     credential = tmp_path / 'fixture-auth.json'
     credential.write_text('{}', encoding='utf-8')

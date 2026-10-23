@@ -12,7 +12,7 @@ The stable `reports/latest/` link points to the newest published report. GitHub 
 
 - [ACU installation, usage and debugging](../../README.md)
 - [Benchmark scenarios, profiles, measurement and cleanup](../../bench/README.md)
-- [Current Illustrator actor task](../../bench/scenarios/illustrator-pen-export.md)
+- [Current Illustrator actor task](../../bench/scenarios/illustrator-pen-tool.md)
 - [Domain terms](../../CONTEXT.md) and [architectural decisions](../adr/)
 - [Project agent instructions and desktop approval](../../AGENTS.md)
 
@@ -26,7 +26,7 @@ Current Illustrator actors draw and leave the document open; maintainers export 
 - [Historical four-trial turn-by-turn report](testbench-2-four-trials-turn-by-turn-2026-10-11.html): curated command/output evidence for the earlier four-configuration, actor-export task. Its timings and policies are not today's ranking or execution rules.
 - [Original ACU progress snapshot](acu-progress-2026-10-08.html): implementation history before the current CLI and desktop-state policy.
 
-Other dated files in this directory remain available as historical records. File names using Testbench 1/TB2 refer to Calculator/Adobe Illustrator Pen and Export; current CLI identifiers are in the benchmark guide.
+Other dated files in this directory remain available as historical records. File names using Testbench 1/TB2 refer to Calculator/Adobe Illustrator Pen Tool (formerly Pen and Export); current CLI identifiers are in the benchmark guide.
 
 ## Public and local evidence
 

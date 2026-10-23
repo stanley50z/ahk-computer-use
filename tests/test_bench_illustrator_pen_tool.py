@@ -1,4 +1,4 @@
-"""Adobe Illustrator Pen and Export preparation and grading boundaries; the native integration check is explicitly desktop-marked."""
+"""Adobe Illustrator Pen Tool preparation and grading boundaries; the native integration check is explicitly desktop-marked."""
 
 import hashlib
 import json
@@ -13,9 +13,9 @@ from bench.run import ROOT, prepare
 
 
 def test_lossless_reference_png_preserves_the_previous_reference_framing(tmp_path):
-    from bench.illustrator_pen_export import shape_metrics, verify_outputs
+    from bench.illustrator_pen_tool import shape_metrics, verify_outputs
 
-    path = ROOT / 'bench/assets/illustrator-pen-export/Cloud9-Reference.png'
+    path = ROOT / 'bench/assets/illustrator-pen-tool/Cloud9-Reference.png'
     with Image.open(path) as reference:
         assert reference.format == 'PNG'
         assert reference.mode == 'RGB' and reference.size == (800, 800)
@@ -24,18 +24,18 @@ def test_lossless_reference_png_preserves_the_previous_reference_framing(tmp_pat
         # Independent bounds recorded from the former reference; preparation must not change its framing.
         assert shape_metrics(reference, reference)['foreground_bounds'] == [143, 206, 693, 585]
     directory = tmp_path / 'trial'
-    prepare('pi-acu', directory, scenario='illustrator-pen-export')
+    prepare('pi-acu', directory, scenario='illustrator-pen-tool')
     (directory / 'grading/Cloud9-Recreated.png').write_bytes(path.read_bytes())
     assert verify_outputs(directory)['passed'], 'the prepared reference must itself satisfy the PNG appearance/export checks'
 
 
-def test_illustrator_pen_export_prepare_freezes_png_and_resolves_task_paths(tmp_path):
+def test_illustrator_pen_tool_prepare_freezes_png_and_resolves_task_paths(tmp_path):
     skill = tmp_path / 'acu'
     skill.mkdir()
     (skill / 'SKILL.md').write_text('---\nname: acu\ndescription: fixture\n---\n', encoding='utf-8')
     directory = tmp_path / 'trial'
-    plan = prepare('pi-acu', directory, skill=skill, scenario='illustrator-pen-export')
-    assert plan['scenario'] == 'illustrator-pen-export'
+    plan = prepare('pi-acu', directory, skill=skill, scenario='illustrator-pen-tool')
+    assert plan['scenario'] == 'illustrator-pen-tool'
     assert plan['grading']['shape_pass_threshold'] is None
     assert plan['grading']['registration'] == 'none'
     assert plan['grading']['mode'] == 'live-drawing'
@@ -50,7 +50,7 @@ def test_illustrator_pen_export_prepare_freezes_png_and_resolves_task_paths(tmp_
         '.ahk-computer-use', 'Cloud9-Pen-Starter.ai', 'Cloud9-Reference.png', 'scratch']
     assert (directory / 'workspace/scratch').is_dir()
     for name in ('Cloud9-Pen-Starter.ai', 'Cloud9-Reference.png'):
-        data = (ROOT / 'bench/assets/illustrator-pen-export' / name).read_bytes()
+        data = (ROOT / 'bench/assets/illustrator-pen-tool' / name).read_bytes()
         assert (directory / 'workspace' / name).read_bytes() == data
         assert plan['assets'][name] == hashlib.sha256(data).hexdigest()
     reference = directory / 'grading/reference.png'
@@ -84,16 +84,16 @@ def test_illustrator_pen_export_prepare_freezes_png_and_resolves_task_paths(tmp_
     assert json.loads((directory / 'plan.json').read_text(encoding='utf-8')) == plan
 
 
-def test_cli_prepares_illustrator_pen_export_without_desktop_approval(tmp_path):
+def test_cli_prepares_illustrator_pen_tool_without_desktop_approval(tmp_path):
     directory = tmp_path / 'cli-trial'
     completed = subprocess.run(
-        [sys.executable, str(ROOT / 'bench/run.py'), 'prepare', '--scenario', 'illustrator-pen-export',
+        [sys.executable, str(ROOT / 'bench/run.py'), 'prepare', '--scenario', 'illustrator-pen-tool',
          '--arm', 'pi-acu', '--run-dir', str(directory)],
         capture_output=True, text=True, encoding='utf-8', timeout=20)
     assert completed.returncode == 0, completed.stderr
     plan = json.loads(completed.stdout)
-    assert plan['scenario'] == 'illustrator-pen-export'
-    assert plan['scenario_version'] == 'Adobe Illustrator Pen and Export v0.11'
+    assert plan['scenario'] == 'illustrator-pen-tool'
+    assert plan['scenario_version'] == 'Adobe Illustrator Pen Tool v0.11'
     # The blank starter is unchanged; the new reference is derived from the official lossless PNG.
     assert plan['prompt_sha256'] != 'b6b38f65c7675f11b27fd94fa0fcbef75d38208c441a6914727ef97a6f3c254b'
     assert plan['assets'] == {
@@ -104,7 +104,7 @@ def test_cli_prepares_illustrator_pen_export_without_desktop_approval(tmp_path):
 
 
 def test_preparation_leaves_export_settings_untouched_until_post_actor_cleanup(tmp_path, monkeypatch):
-    from bench.illustrator_pen_export import prepare_desktop
+    from bench.illustrator_pen_tool import prepare_desktop
 
     programs = tmp_path / 'programs'
     executable = programs / 'Adobe/Adobe Illustrator Fixture/Support Files/Contents/Windows/Illustrator.exe'
@@ -112,7 +112,7 @@ def test_preparation_leaves_export_settings_untouched_until_post_actor_cleanup(t
     executable.touch()
     monkeypatch.setenv('ProgramFiles', str(programs))
     directory = tmp_path / 'trial'
-    plan = prepare('pi-acu', directory, scenario='illustrator-pen-export')
+    plan = prepare('pi-acu', directory, scenario='illustrator-pen-tool')
     preferences = {'ResolutionR': 144, 'AntiAlias': 2, 'BackgroundTransparent': True, 'Interlaced': True}
 
     # Only the external desktop boundary is simulated; the real preparation code and files are used.
@@ -141,7 +141,7 @@ def test_preparation_leaves_export_settings_untouched_until_post_actor_cleanup(t
 
 
 def test_maintainer_png_quality_is_observational_and_requires_no_actor_ai_or_manifest(tmp_path):
-    from bench.illustrator_pen_export import shape_metrics, verify_outputs
+    from bench.illustrator_pen_tool import shape_metrics, verify_outputs
 
     reference = Image.new('RGB', (40, 40), 'white')
     for x in range(10, 20):
@@ -154,7 +154,7 @@ def test_maintainer_png_quality_is_observational_and_requires_no_actor_ai_or_man
     assert shape_metrics(moved, reference)['foreground_iou'] == pytest.approx(1 / 3)
 
     directory = tmp_path / 'trial'
-    prepare('pi-acu', directory, scenario='illustrator-pen-export')
+    prepare('pi-acu', directory, scenario='illustrator-pen-tool')
     workspace = directory / 'workspace'
     # PNG inspection is separate from native Bézier/method verification; numeric quality is not a pass threshold.
     image = Image.new('RGB', (800, 800), 'white')
@@ -187,10 +187,10 @@ def test_maintainer_png_quality_is_observational_and_requires_no_actor_ai_or_man
 
 
 def test_png_grading_ignores_unsolicited_actor_exports_and_requires_maintainer_output(tmp_path):
-    from bench.illustrator_pen_export import verify_outputs
+    from bench.illustrator_pen_tool import verify_outputs
 
     directory = tmp_path / 'trial'
-    prepare('pi-acu', directory, scenario='illustrator-pen-export')
+    prepare('pi-acu', directory, scenario='illustrator-pen-tool')
     image = Image.new('RGB', (800, 800), 'white')
     image.paste((0, 174, 239), (100, 100, 200, 200))
     for suffix in ('', '-01', '-Drawing'):
@@ -203,17 +203,17 @@ def test_png_grading_ignores_unsolicited_actor_exports_and_requires_maintainer_o
 
 
 def test_image_grading_refuses_a_modified_frozen_reference(tmp_path):
-    from bench.illustrator_pen_export import verify_outputs
+    from bench.illustrator_pen_tool import verify_outputs
 
     directory = tmp_path / 'trial'
-    prepare('pi-acu', directory, scenario='illustrator-pen-export')
+    prepare('pi-acu', directory, scenario='illustrator-pen-tool')
     (directory / 'grading/reference.png').write_bytes(b'changed')
     with pytest.raises(ValueError, match='reference'):
         verify_outputs(directory)
 
 
-def test_illustrator_pen_export_cleanup_protects_existing_documents_and_refuses_unclaimed_work(tmp_path):
-    from bench.illustrator_pen_export import owned_documents
+def test_illustrator_pen_tool_cleanup_protects_existing_documents_and_refuses_unclaimed_work(tmp_path):
+    from bench.illustrator_pen_tool import owned_documents
 
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
@@ -237,7 +237,7 @@ def drawing_cleanup_fixture(tmp_path, *, export_errors=0, straight=False, wrong_
                             render_size=(800, 800), export_mutates_drawing=False, flat_loop=False,
                             native_fill_unknown=False, export_marks_dirty=False):
     directory = tmp_path / 'trial'
-    prepare('pi-acu', directory, scenario='illustrator-pen-export')
+    prepare('pi-acu', directory, scenario='illustrator-pen-tool')
     existing = {'path': str(tmp_path / 'existing.ai'), 'name': 'existing.ai', 'saved': False,
                 'artwork_signature': 'protected'}
     drawing = {'path': str(directory / 'workspace/Cloud9-Pen-Starter.ai'),
@@ -298,7 +298,7 @@ def drawing_cleanup_fixture(tmp_path, *, export_errors=0, straight=False, wrong_
 
 @pytest.mark.parametrize('initial_saved', [False, True])
 def test_cleanup_exports_unchanged_artwork_when_export_marks_document_dirty(tmp_path, initial_saved):
-    from bench.illustrator_pen_export import cleanup_desktop
+    from bench.illustrator_pen_tool import cleanup_desktop
 
     directory, observer, state, native_image = drawing_cleanup_fixture(tmp_path, export_marks_dirty=True)
     state['documents'][-1]['saved'] = initial_saved
@@ -320,7 +320,7 @@ def test_cleanup_exports_unchanged_artwork_when_export_marks_document_dirty(tmp_
 
 @pytest.mark.parametrize('flat_loop', [False, True])
 def test_cleanup_detects_straight_segment_approximation_without_repairing_the_drawing(tmp_path, flat_loop):
-    from bench.illustrator_pen_export import cleanup_desktop
+    from bench.illustrator_pen_tool import cleanup_desktop
 
     directory, observer, state, native_image = drawing_cleanup_fixture(tmp_path, straight=True, flat_loop=flat_loop)
     result = cleanup_desktop(directory, observer, export_drawing=True)
@@ -336,7 +336,7 @@ def test_cleanup_detects_straight_segment_approximation_without_repairing_the_dr
 
 @pytest.mark.parametrize('export_errors', [0, 2])
 def test_cleanup_uses_rendered_fill_for_other_native_color_types_without_inventing_a_failure(tmp_path, export_errors):
-    from bench.illustrator_pen_export import cleanup_desktop
+    from bench.illustrator_pen_tool import cleanup_desktop
 
     directory, observer, state, _ = drawing_cleanup_fixture(tmp_path, native_fill_unknown=True, export_errors=export_errors)
     result = cleanup_desktop(directory, observer, export_drawing=True)
@@ -351,7 +351,7 @@ def test_cleanup_uses_rendered_fill_for_other_native_color_types_without_inventi
 
 
 def test_cleanup_records_missing_drawing_as_task_failure_without_reopening_or_exporting_a_blank(tmp_path):
-    from bench.illustrator_pen_export import cleanup_desktop
+    from bench.illustrator_pen_tool import cleanup_desktop
 
     directory, observer, state, _ = drawing_cleanup_fixture(tmp_path)
     state['documents'] = state['documents'][:1]  # Actor no longer left an owned drawing open.
@@ -365,7 +365,7 @@ def test_cleanup_records_missing_drawing_as_task_failure_without_reopening_or_ex
 
 
 def test_cleanup_exports_wrong_fill_as_evidence_without_calling_it_an_export_failure(tmp_path):
-    from bench.illustrator_pen_export import cleanup_desktop
+    from bench.illustrator_pen_tool import cleanup_desktop
 
     directory, observer, state, native_image = drawing_cleanup_fixture(tmp_path, wrong_fill=True)
     result = cleanup_desktop(directory, observer, export_drawing=True)
@@ -379,7 +379,7 @@ def test_cleanup_exports_wrong_fill_as_evidence_without_calling_it_an_export_fai
 
 
 def test_cleanup_stops_after_export_integrity_failure_without_retry_repair_or_close(tmp_path):
-    from bench.illustrator_pen_export import cleanup_desktop
+    from bench.illustrator_pen_tool import cleanup_desktop
 
     directory, observer, state, _ = drawing_cleanup_fixture(tmp_path, export_mutates_drawing=True)
     result = cleanup_desktop(directory, observer, export_drawing=True)
@@ -393,7 +393,7 @@ def test_cleanup_stops_after_export_integrity_failure_without_retry_repair_or_cl
 
 
 def test_cleanup_retains_invalid_sized_export_as_infrastructure_failure_with_logs_and_no_resize(tmp_path):
-    from bench.illustrator_pen_export import cleanup_desktop
+    from bench.illustrator_pen_tool import cleanup_desktop
 
     directory, observer, state, _ = drawing_cleanup_fixture(tmp_path, render_size=(400, 400))
     result = cleanup_desktop(directory, observer, export_drawing=True)
@@ -411,7 +411,7 @@ def test_cleanup_retains_invalid_sized_export_as_infrastructure_failure_with_log
 
 @pytest.mark.parametrize('failures', [1, 2])
 def test_cleanup_retries_only_export_and_classifies_exhaustion_as_infrastructure_failure(tmp_path, failures):
-    from bench.illustrator_pen_export import cleanup_desktop
+    from bench.illustrator_pen_tool import cleanup_desktop
 
     directory, observer, state, _ = drawing_cleanup_fixture(tmp_path, export_errors=failures, export_marks_dirty=True)
     state['documents'][-1]['saved'] = True
@@ -433,7 +433,7 @@ def test_cleanup_retries_only_export_and_classifies_exhaustion_as_infrastructure
 def test_illustrator_conduct_keeps_resource_tampering_gated_and_window_changes_diagnostic(tmp_path):
     from bench.run import conduct_audit
 
-    plan = {'scenario': 'illustrator-pen-export', 'run_dir': str(tmp_path), 'workspace': str(tmp_path), 'skill_path': str(ROOT / 'acu/SKILL.md')}
+    plan = {'scenario': 'illustrator-pen-tool', 'run_dir': str(tmp_path), 'workspace': str(tmp_path), 'skill_path': str(ROOT / 'acu/SKILL.md')}
     before = 'window=1 pid=5\n'
     clean = conduct_audit(plan, before, 'window=1 pid=5\nwindow=9 pid=8\nwindow=10 pid=8\nillustrator=9\npid=8\n', {}, {}, [])
     assert clean['passed']
@@ -456,10 +456,10 @@ def test_illustrator_conduct_keeps_resource_tampering_gated_and_window_changes_d
 @pytest.mark.parametrize('initially_enabled', [False, True])
 def test_real_preparation_enables_smart_guides_and_snap_to_point(initially_enabled):
     from bench.run import acu_observer
-    from bench.illustrator_pen_export import prepare_desktop, cleanup_desktop
+    from bench.illustrator_pen_tool import prepare_desktop, cleanup_desktop
 
-    directory = ROOT / '.pi/illustrator-pen-export-validation' / f'snapping-check-{uuid4().hex[:8]}'
-    plan = prepare('pi-acu', directory, scenario='illustrator-pen-export')
+    directory = ROOT / '.pi/illustrator-pen-tool-validation' / f'snapping-check-{uuid4().hex[:8]}'
+    plan = prepare('pi-acu', directory, scenario='illustrator-pen-tool')
     acu_observer(directory, ROOT / 'bench/probe.ahk', suffix='-before')
 
     # Seed the real application immediately before production setup, not a simulated preference store.
@@ -508,13 +508,13 @@ def test_real_preparation_enables_smart_guides_and_snap_to_point(initially_enabl
 
 
 @pytest.mark.desktop
-def test_illustrator_pen_export_real_illustrator_preparation_and_owned_document_cleanup(tmp_path):
+def test_illustrator_pen_tool_real_illustrator_preparation_and_owned_document_cleanup(tmp_path):
     from bench.run import acu_observer
-    from bench.illustrator_pen_export import prepare_desktop, cleanup_desktop
+    from bench.illustrator_pen_tool import prepare_desktop, cleanup_desktop
     from concurrent.futures import ThreadPoolExecutor
 
-    directory = ROOT / '.pi/illustrator-pen-export-validation' / f'native-check-{uuid4().hex[:8]}'
-    plan = prepare('pi-acu', directory, scenario='illustrator-pen-export')
+    directory = ROOT / '.pi/illustrator-pen-tool-validation' / f'native-check-{uuid4().hex[:8]}'
+    plan = prepare('pi-acu', directory, scenario='illustrator-pen-tool')
     acu_observer(directory, ROOT / 'bench/probe.ahk', suffix='-before')
     cleanup_finished = False
     try:
