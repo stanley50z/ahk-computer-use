@@ -18,10 +18,10 @@ from pathlib import PurePosixPath
 import tiktoken
 
 from bench.intervals import busy_seconds
+from bench.arms import ARM_TABLE, ComputerUseRoute
+from bench.tool_calls import ToolCall, completed_calls
 
 ENCODING = 'o200k_base'
-RUNTIMES = {'pi-acu': 'ACU', 'claude-acu': 'ACU', 'pi-cua': 'CUA', 'claude-cua': 'CUA',
-            'pi-computer-use': 'Codex computer use', 'codex-computer-use': 'Codex computer use'}
 SCRIPT_SUFFIXES = {'.ahk', '.py', '.js', '.mjs', '.ps1', '.sh'}
 PYTHON_COMMAND = re.compile(r'(?:python(?:\d+(?:\.\d+)?)?|py)(?:\.exe)?')
 EXECUTION_WRAPPERS = {'timeout', 'nohup', 'exec', 'xargs', 'cmd', 'cmd.exe', 'powershell', 'powershell.exe', 'uv', 'env'}
@@ -48,8 +48,24 @@ def js_code(text):
     return re.sub(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|`(?:\\.|[^`\\])*`|//[^\n]*|/\*[\s\S]*?\*/', ' ', text)
 
 
+# Match route facts only at parsed command positions, including Windows executable suffixes.
+def executable_route(name, routes: tuple[ComputerUseRoute, ...]):
+    return next((route for route in routes if route.executable and name in (route.executable, route.executable + '.exe')), None)
+
+
+# Shell action exclusions and script operands are defined by the selected route.
+def is_route_command(command, route: ComputerUseRoute):
+    return len(command) > 1 and (command[1] == route.subcommand if route.subcommand else command[1] not in route.excluded_subcommands)
+
+
+# Callers strip JS strings and comments before checking a configured runtime namespace.
+def javascript_route(clean, routes: tuple[ComputerUseRoute, ...]):
+    return any(re.search(rf'\b{re.escape(route.javascript_namespace)}\s*\.', clean)
+               for route in routes if route.javascript_namespace)
+
+
 # Only functions whose bodies reference the runtime become persistent computer-use helpers.
-def js_helpers(clean, known):
+def js_helpers(clean, known, routes):
     names = set()
     pattern = r'(?:globalThis\.)?(\w+)\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*=>\s*|\bfunction\s+(\w+)\s*\([^)]*\)\s*'
     for match in re.finditer(pattern, clean):
@@ -65,7 +81,7 @@ def js_helpers(clean, known):
             separator = clean.find(';', start)
             end = len(clean) if separator < 0 else separator
         body = clean[start:end]
-        if re.search(r'\bsky\s*\.', body) or any(re.search(rf'\b{re.escape(name)}\s*\(', body) for name in known):
+        if javascript_route(body, routes) or any(re.search(rf'\b{re.escape(name)}\s*\(', body) for name in known):
             names.add(match.group(1) or match.group(2))
     return names
 
@@ -225,7 +241,7 @@ def replay_sed(text, expressions):
 
 
 # Identify Python helper imports and actual subprocess invocation literals; quoted report text is not a route.
-def python_routes(text):
+def python_routes(text, routes):
     try:
         tree = ast.parse(text)
     except SyntaxError as error:
@@ -241,9 +257,10 @@ def python_routes(text):
             return command_head(assignments[node.id], seen | {node.id})
         if isinstance(node, (ast.List, ast.Tuple)) and node.elts:
             first = command_head(node.elts[0], seen)
-            if first is not None and script_name(first) in ('acu', 'acu.exe'):
+            selected = executable_route(script_name(first), routes) if first is not None else None
+            if selected and selected.subcommand:
                 second = command_head(node.elts[1], seen) if len(node.elts) > 1 else None
-                return 'acu ' + second if second is not None else None
+                return selected.executable + ' ' + second if second is not None else None
             return first
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
             return command_head(node.left, seen)
@@ -273,7 +290,7 @@ def python_routes(text):
                 if first is None:
                     warnings.append(f'dynamic subprocess command at Python line {node.lineno}; cannot attribute statically')
                 elif isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
-                    child_route, child_imports, child_warnings, child_invoked = shell_routes(node.args[0].value)
+                    child_route, child_imports, child_warnings, child_invoked = shell_routes(node.args[0].value, routes)
                     route |= child_route
                     imports.update(child_imports)
                     warnings.extend(child_warnings)
@@ -293,12 +310,20 @@ def python_routes(text):
                     else:
                         warnings.append(f'unresolved Python script prefix at line {node.lineno}; attribution needs review')
                 else:
-                    route |= script_name(first) in ('cua-driver', 'cua-driver.exe') or bool(re.match(r'^(?:cua-driver(?:\s|$)|acu\s+run\b)', first))
+                    # A captured executable prefix can prove a helper route even with dynamic trailing arguments.
+                    for candidate in routes:
+                        if not candidate.executable:
+                            continue
+                        prefix = re.escape(candidate.executable)
+                        if candidate.subcommand:
+                            route |= bool(re.match(rf'^{prefix}\s+{re.escape(candidate.subcommand)}\b', first))
+                        else:
+                            route |= executable_route(script_name(first), (candidate,)) is not None or bool(re.match(rf'^{prefix}(?:\s|$)', first))
     return route, imports, warnings, invoked
 
 
 # Follow captured shell helpers through literal runtime/Python/script prefixes, not quoted data.
-def shell_routes(text):
+def shell_routes(text, routes):
     executable, bodies = heredocs(text)
     route, imports, warnings, invoked = False, set(), [], set()
     inline = [body for path, body, _ in bodies if path is None]
@@ -306,10 +331,9 @@ def shell_routes(text):
     warnings.extend(f'shell helper writes {path}; source effects require review' for path in sorted(written))
     for command in shell_commands(executable):
         name = script_name(command[0])
-        if name in ('cua-driver', 'cua-driver.exe'):
-            route |= len(command) > 1 and command[1] not in ('--help', '--version', 'describe')
-        elif name in ('acu', 'acu.exe'):
-            route |= len(command) > 1 and command[1] == 'run'
+        selected = executable_route(name, routes)
+        if selected:
+            route |= is_route_command(command, selected)
         elif PYTHON_COMMAND.fullmatch(name):
             if '-c' in command and command.index('-c') + 1 < len(command):
                 inline.append(command[command.index('-c') + 1])
@@ -321,7 +345,7 @@ def shell_routes(text):
         elif name in ('mv', 'cp', 'sed', 'perl'):
             warnings.append(f'shell helper source effects from {name} require review')
     for source in inline:
-        child_route, child_imports, child_warnings, child_invoked = python_routes(source)
+        child_route, child_imports, child_warnings, child_invoked = python_routes(source, routes)
         # Inline writes inside a helper are not replayed here; suppress stale child links explicitly.
         for node in ast.walk(ast.parse(source)):
             target = None
@@ -350,7 +374,9 @@ def shell_routes(text):
 
 # Attribute captured code payloads and execution spans; emit the selection ledger and unresolved cases for review.
 def measure_efficiency(measurements, arm):
-    runtime = RUNTIMES[arm]
+    runtime = ARM_TABLE[arm].runtime
+    # Preserve attribution across all supported routes, including an actor using another arm's runtime.
+    routes = tuple(dict.fromkeys(item.route for item in ARM_TABLE.values()))
     scripts, payloads, included = {}, {}, set()
     calls, notes, helpers = [], [], set()
 
@@ -391,15 +417,15 @@ def measure_efficiency(measurements, arm):
         try:
             route, imported, warnings, invoked = (False, set(), [], set())
             if name.endswith('.py'):
-                route, imported, warnings, invoked = python_routes(script.text)
+                route, imported, warnings, invoked = python_routes(script.text, routes)
             elif name.endswith('.sh'):
-                route, imported, warnings, invoked = shell_routes(script.text)
+                route, imported, warnings, invoked = shell_routes(script.text, routes)
             notes.extend({'call_id': call_id, 'reason': f'{name}: {warning}'} for warning in warnings)
         except ValueError as error:
             notes.append({'call_id': call_id, 'reason': f'{name}: {error}'})
             return False, set()
         if name.endswith(('.js', '.mjs')):
-            route |= bool(re.search(r'\bsky\s*\.', js_code(script.text)))
+            route |= javascript_route(js_code(script.text), routes)
         used = set(script.payloads)
         for dep in imported | invoked:
             child_route, child_payloads = dependencies(dep, call_id, seen, required=dep in invoked)
@@ -489,7 +515,8 @@ def measure_efficiency(measurements, arm):
             if path and PurePosixPath(script_name(path)).suffix in SCRIPT_SUFFIXES:
                 invalidate_source(path, call_id, f'unreplayed Python source mutation for {path}')
 
-    for tool in sorted(measurements['tools'], key=lambda item: item['start_s'] if item['start_s'] is not None else item['end_s']):
+    tools: list[ToolCall] = completed_calls(measurements['tools'])
+    for tool in sorted(tools, key=lambda item: item['start_s'] if item['start_s'] is not None else item['end_s']):
         identity, name = tool['id'], tool['name'].casefold()
         args = tool.get('arguments')
         if not isinstance(args, dict):
@@ -551,8 +578,8 @@ def measure_efficiency(measurements, arm):
                 clean = js_code(code)
                 assigned = {value for pair in re.findall(r'globalThis\.(\w+)\s*=|\b(?:var|let|const)\s+(\w+)\s*=', clean) for value in pair if value}
                 helpers.difference_update(assigned)
-                is_use = bool(re.search(r'\bsky\s*\.', clean) or any(re.search(rf'\b{re.escape(h)}\s*\(', clean) for h in helpers))
-                helpers.update(js_helpers(clean, helpers))
+                is_use = bool(javascript_route(clean, routes) or any(re.search(rf'\b{re.escape(h)}\s*\(', clean) for h in helpers))
+                helpers.update(js_helpers(clean, helpers, routes))
         elif name in ('bash', 'command_execution'):
             try:
                 executable, bodies = heredocs(code)
@@ -583,14 +610,14 @@ def measure_efficiency(measurements, arm):
                 if not command:
                     continue
                 executable_name = script_name(command[0])
-                if executable_name in ('acu', 'acu.exe') and len(command)>1 and command[1]=='run':
-                    is_use = True
-                    if len(command)>2:
-                        key = binding(command[2], identity)
+                selected = executable_route(executable_name, routes)
+                if selected:
+                    action = is_route_command(command, selected)
+                    is_use |= action
+                    if action and selected.script_argument is not None and len(command) > selected.script_argument:
+                        key = binding(command[selected.script_argument], identity)
                         if key is not None:
                             used.update(scripts[key].payloads)
-                elif executable_name in ('cua-driver', 'cua-driver.exe'):
-                    is_use |= len(command)>1 and command[1] not in ('--help', '--version', 'describe')
                 elif PYTHON_COMMAND.fullmatch(executable_name):
                     if '-c' in command:
                         at = command.index('-c')+1
@@ -649,7 +676,7 @@ def measure_efficiency(measurements, arm):
                         scripts[key].payloads.add(payload(identity, f'patch-{key}', code, 'generated script edit command'))
             for text in inline_python:
                 try:
-                    route, imported, warnings, invoked = python_routes(text)
+                    route, imported, warnings, invoked = python_routes(text, routes)
                     notes.extend({'call_id': identity, 'reason': warning} for warning in warnings)
                 except ValueError as error:
                     notes.append({'call_id': identity, 'reason': str(error)})

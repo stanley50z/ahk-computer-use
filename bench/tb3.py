@@ -24,6 +24,7 @@ from pathlib import Path
 
 from bench.common import ROOT, save_json
 from bench.scenario import Scenario
+from bench.tool_calls import ToolCall, completed_calls
 
 GUI360_REVISION = '1c46362efaae836c601004e77b98a1aba89a530f'
 OFFICE_DIR = Path(os.environ.get('ProgramFiles', 'C:/Program Files')) / 'Microsoft Office/root/Office16'
@@ -357,7 +358,8 @@ def check_input(run_dir, plan):
 
 
 # Task success is the saved-file check and the named input when there is one; tool calls and COM use are observations.
-def grade(run_dir, plan, tools):
+def grade(run_dir, plan, tools: list[ToolCall]):
+    tools = completed_calls(tools)
     task = plan['tb3']
     graded = Path(run_dir) / 'grading' / task['template']
     check = check_document(plan['scenario'], graded, template_path(task['template'])) if graded.is_file() \

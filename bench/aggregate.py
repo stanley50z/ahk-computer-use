@@ -11,8 +11,9 @@ from pathlib import Path
 from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from bench.common import TRIAL_POLICY
-from bench.run import ARMS, PI_PROVIDER, PI_RECOVERY_POLICY, CLAUDE_RECOVERY_POLICY, WINDOW_AUDIT_POLICY, actor_path, harness
+from bench.common import TRIAL_POLICY, actor_path
+from bench.run import WINDOW_AUDIT_POLICY
+from bench.arms import ARMS, ARM_TABLE
 
 
 SCENARIO = 'illustrator-pen-tool'
@@ -101,14 +102,13 @@ def aggregate_round(manifest_path):
             raise ValueError('this round must contain the five Illustrator configurations')
         if version != SCENARIO_VERSION or plan.get('skill_guidance_policy') != 'benchmark-neutral-v1':
             raise ValueError('round requires the neutral v0.11 simple drawing-and-appearance baseline; historical protocols are not eligible')
-        if harness(plan['arm']) == 'pi' and plan.get('provider') != PI_PROVIDER:
-            raise ValueError('round requires the explicit openai-codex Pi provider; historical providers cannot be mixed')
+        host = ARM_TABLE[plan['arm']].harness
+        host.validate_plan(plan, aggregate=True)
         if plan.get('window_audit_policy') != WINDOW_AUDIT_POLICY:
             raise ValueError('round requires the diagnostic-only window audit policy')
         if plan.get('export_policy') != EXPORT_POLICY or plan.get('actor_deliverables') != []:
             raise ValueError('round requires matched maintainer export policy and no actor file deliverables')
-        recovery = PI_RECOVERY_POLICY if harness(plan['arm']) == 'pi' else CLAUDE_RECOVERY_POLICY
-        if plan.get('recovery_policy') != recovery:
+        if plan.get('recovery_policy') != host.recovery_policy:
             raise ValueError('round requires the normal within-session recovery policy')
         if plan.get('trial_policy') != TRIAL_POLICY:
             raise ValueError('round requires the three-attempt all-successes trial policy')
@@ -182,8 +182,8 @@ def aggregate_round(manifest_path):
         if len({attempt['started_at'] for attempt in attempts_in_group}) != len(attempts_in_group):
             raise ValueError('ambiguous persisted trial order')
         attempts_in_group.sort(key=lambda attempt: attempt['started_at'])
-    for prefix in ('pi-', 'claude-'):
-        if len({(identity['model'], identity['reasoning']) for arm, identity in identities.items() if arm.startswith(prefix)}) != 1:
+    for host in {ARM_TABLE[arm].harness for arm in ARMS}:
+        if len({(identity['model'], identity['reasoning']) for arm, identity in identities.items() if ARM_TABLE[arm].harness is host}) != 1:
             raise ValueError('unmatched model/reasoning within a harness comparison')
     if len({identity['measurement_policy'] for identity in identities.values()}) != 1:
         raise ValueError('unmatched measurement policies between configurations')

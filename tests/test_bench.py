@@ -208,7 +208,7 @@ def test_controller_preserves_actor_outcome_and_separates_maintainer_export_fail
     directory = tmp_path / 'trial'
     credential = tmp_path / 'fixture-auth.json'
     credential.write_text('{}', encoding='utf-8')
-    monkeypatch.setitem(bench.CREDENTIALS, 'pi', (str(credential), 'auth.json'))
+    monkeypatch.setattr(bench.ARM_TABLE['pi-acu'].harness, 'credential', (str(credential), 'auth.json'))
     entries = [{'type': 'model_change', 'provider': 'openai-codex', 'modelId': 'gpt-6-astra'},
                {'type': 'thinking_level_change', 'thinkingLevel': 'low'},
                {'type': 'message', 'message': {'role': 'system', 'sections': {'skills': '<name>acu</name>'},

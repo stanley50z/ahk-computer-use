@@ -14,7 +14,6 @@ import subprocess
 import sys
 import threading
 import time
-import tomllib
 import traceback
 import uuid
 from copy import deepcopy
@@ -22,483 +21,26 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from bench.common import ROOT, load_actor_json, read_jsonl, save_json
+from bench.common import ROOT, load_actor_json, read_jsonl, save_json, actor_path, expand_user_root
 from bench.calculator import (EXPRESSION, EXPECTED, actor_window, bind_owned_window,
                               new_calculator_window, owned_window, script_input_methods)
 from bench.scenario import Trial
 from bench.scenarios import SCENARIOS, get_scenario
-from bench.intervals import busy_seconds
 from bench.runtime import ensure_project_runtime
+from bench.tool_calls import ToolCall, completed_calls, argument_text
 
-MODEL = 'gpt-6-astra'
-PI_PROVIDER = 'openai-codex'
-REASONING = 'low'
-# Freeze normal Pi session recovery so retries/compaction remain reproducible within the same scheduled trial.
-PI_RECOVERY_POLICY = {
-    'retry': {'enabled': True, 'maxRetries': 3, 'baseDelayMs': 2000, 'maxAgentDelayMs': 60000,
-              'provider': {'maxRetries': 0}},
-    'compaction': {'enabled': True, 'reserveTokens': 16384, 'keepRecentTokens': 20000},
-}
-# Record native Claude recovery for plan matching only; the controller does not configure its internals.
-CLAUDE_RECOVERY_POLICY = {'retry': 'harness-default', 'compaction': 'harness-default'}
-TOOLS = ['read', 'bash', 'edit', 'write']
-CLAUDE_TOOLS = ['Read', 'Write', 'Edit', 'Bash']
-ARMS = ('pi-acu', 'pi-cua', 'pi-computer-use', 'claude-acu', 'claude-cua')
-NATIVE_TOOLS = ['mcp__node_repl__js', 'mcp__node_repl__js_reset',
-                'mcp__node_repl__js_add_node_module_dir', 'mcp__node_repl__turn_ended']
+from bench.arms import ARM_TABLE, ARMS, arm_model, uses_cua_daemon
+# Preserve the established analysis/command imports while implementation lives in each adapter.
+from bench.harnesses.pi import (MODEL, PI_PROVIDER, REASONING, PI_RECOVERY_POLICY, TOOLS, NATIVE_TOOLS,
+                                analyse_pi, audit_pi_session, pi_command, native_skill, native_server)
+from bench.harnesses.claude import CLAUDE_RECOVERY_POLICY, CLAUDE_TOOLS, analyse_claude, audit_claude_session, claude_command
+from bench.harnesses.codex import analyse_codex, audit_codex_session
+
 WINDOW_AUDIT_POLICY = 'diagnostic-only-v1'
-# Claude Code runs Opus; Pi comparisons hold GPT-6 Astra and low reasoning fixed.
-ARM_MODELS = {arm: ('claude-opus-5-5', 'low') for arm in ('claude-acu', 'claude-cua')}
-SKILLS = {
-    'pi-acu': ROOT / 'acu',
-    'claude-acu': ROOT / 'acu',
-    'pi-cua': Path.home() / '.agents/skills/cua-driver',
-    'claude-cua': Path.home() / '.agents/skills/cua-driver',
-}
-# What a computer-use call looks like in each arm's tool arguments, or in a workspace script those arguments run.
-COMPUTER_USE_PATTERNS = {'pi-acu': r'\bacu run\b', 'claude-acu': r'\bacu run\b',
-                         'pi-cua': r'cua-driver', 'claude-cua': r'cua-driver',
-                         'pi-computer-use': r'\bsky\.', 'codex-computer-use': r'\bsky\.'}  # Last entry replays archived trials only.
-# Saved login per harness: the source under the home directory and the private copy's name under agent-home.
-CREDENTIALS = {'pi': ('.pi/agent/auth.json', 'auth.json'), 'claude': ('.claude/.credentials.json', '.credentials.json'), 'codex': ('.codex/auth.json', 'auth.json')}
-
-
-def harness(arm):
-    return arm.split('-', 1)[0]
-
-
-# The shared cua-driver daemon is restarted only before the arm that uses it.
-def uses_cua_daemon(arm):
-    return arm in ('pi-cua', 'claude-cua')
-
-
-def arm_model(arm):
-    return ARM_MODELS.get(arm, (MODEL, REASONING))
-
-
-# Resolve the home alias consistently in prompts and audits, using the current user's root.
-def expand_user_root(path):
-    path = Path(path)
-    return Path.home().joinpath(*path.parts[1:]) if path.parts and path.parts[0] == '~' else path
-
-
-# Bench-authored prompt references use the current user's home alias; internal paths stay resolved.
-def actor_path(path):
-    path = expand_user_root(path).absolute()
-    home = Path.home().absolute()
-    if not path.is_relative_to(home):
-        path, home = path.resolve(), home.resolve()
-    if path.is_relative_to(home):
-        relative = path.relative_to(home)
-        return '~' if not relative.parts else '~/' + relative.as_posix()
-    return path.as_posix()  # A path outside the user root has no home-relative equivalent.
-
-
-# The CLI is a public seam: only one explicitly selected skill and the four ordinary file/shell tools.
-def pi_command(run_dir, skill, prompt, *, native=False):
-    runtime = ['-e', 'builtin:mcp'] if native else ['--no-mcp']
-    tools = TOOLS + NATIVE_TOOLS if native else TOOLS
-    return ['pi', '-ne', '-ns', '-nc', '-np', '--no-themes', *runtime,
-            '--skill', str(skill), '--tools', ','.join(tools),
-            '--model', f'{PI_PROVIDER}/{MODEL}', '--thinking', 'low', '--offline',
-            '--approve', '--session', str(run_dir / 'session.jsonl'),
-            '--mode', 'json', '--print', prompt]
-
-
-# Claude Code is a public seam too: safe mode drops CLAUDE.md, skills, hooks and plugins; the selected skill is
-# declared by path, like the Codex arm, and only the four ordinary file/shell tools exist.
-def claude_command(skill, prompt, session_id, *, arm='claude-acu'):
-    model, effort = ARM_MODELS[arm]
-    skill_name = 'cua-driver' if uses_cua_daemon(arm) else 'acu'
-    declaration = (f'The only enabled skill is {skill_name}. Read {actor_path(Path(skill) / "SKILL.md")} before desktop interaction. '
-                   'No other skill or desktop automation route is enabled.')
-    return ['claude', '-p', '--safe-mode', '--disable-slash-commands', '--strict-mcp-config',
-            '--setting-sources', 'user', '--tools', ','.join(CLAUDE_TOOLS),
-            '--permission-mode', 'bypassPermissions', '--model', model, '--effort', effort,
-            '--session-id', session_id, '--output-format', 'stream-json', '--verbose',
-            '--include-partial-messages', '--append-system-prompt', declaration, prompt]
-
-
-# Tool arguments as raw text, so a route pattern sees real line breaks rather than JSON-escaped ones.
-def argument_text(arguments):
-    if isinstance(arguments, dict):
-        return '\n'.join(str(value) for value in arguments.values() if value is not None)
-    return '' if arguments is None else str(arguments)
-
-
-# Analyse final usage once; optional offline exclusion keeps interrupted responses as separate evidence.
-def analyse_pi(records, wall_s, reference_tps=None, *, cancelled=False, exclude_interrupted_turns=False):
-    tokens = dict(input_uncached=0, cache_read=0, cache_write=0,
-                  output_including_reasoning=0, reasoning_subset=None, total=0)
-    turns, tools, intervals, errors = [], [], [], []
-    excluded_turns = []
-    pending_provider_errors, recovered_provider_errors, pending_recovery_errors, recovery_events = [], [], [], []
-    current = None
-    starts = {}
-    agent_start = agent_end = None
-    last_stop_reason = None
-    usage_unknown = retry_cancelled = False
-    completed = False
-    compactions = 0
-
-    # Both agent responses and compaction summaries report the same Pi usage schema, once at completion.
-    def add_usage(usage):
-        tokens['input_uncached'] += usage['input']
-        tokens['cache_read'] += usage.get('cacheRead', 0)
-        tokens['cache_write'] += usage.get('cacheWrite', 0)
-        tokens['output_including_reasoning'] += usage['output']
-        tokens['total'] += usage['totalTokens']
-        if 'reasoning' in usage:
-            tokens['reasoning_subset'] = (tokens['reasoning_subset'] or 0) + usage['reasoning']
-    for record in records:
-        elapsed, event = record['elapsed_s'], record['event']
-        kind = event['type']
-        if kind.startswith(('auto_retry_', 'summarization_retry_')) or kind in ('compaction_start', 'compaction_end'):
-            recovery_events.append(record)
-        if kind == 'auto_retry_end' and event.get('finalError') == 'Retry cancelled':
-            retry_cancelled = True
-        if kind == 'summarization_retry_scheduled':
-            usage_unknown = True  # Failed summary requests may have unreported consumption.
-        if kind == 'compaction_start':
-            completed = False
-        if kind == 'compaction_end':
-            completed = False
-            compactions += 1
-            result = event.get('result')
-            usage = (result or {}).get('usage')
-            if usage:
-                add_usage(usage)
-            else:
-                usage_unknown = True
-            if result is not None and not event.get('aborted'):
-                pending_recovery_errors.clear()
-            elif event.get('errorMessage'):
-                pending_recovery_errors.append(event['errorMessage'])
-            elif event.get('aborted'):
-                pending_recovery_errors.append('Compaction aborted')
-        if kind == 'agent_start':
-            completed = retry_cancelled = False
-            if agent_start is None:
-                agent_start = elapsed
-        if kind == 'message_start' and event['message']['role'] == 'assistant':
-            completed = False
-            current = {'start_s': elapsed, 'first_visible_delta_s': None}
-        elif kind == 'message_update' and current is not None:
-            if event['assistantMessageEvent']['type'] in ('text_delta', 'toolcall_delta', 'thinking_delta') and current['first_visible_delta_s'] is None:
-                current['first_visible_delta_s'] = elapsed - current['start_s']
-        elif kind == 'message_end' and event['message']['role'] == 'assistant':
-            message = event['message']
-            if current is None:
-                raise ValueError('assistant ended without a matching message_start')
-            usage = message['usage']
-            interrupted = message['stopReason'] in ('error', 'aborted')
-            if not (exclude_interrupted_turns and interrupted):
-                add_usage(usage)
-            last_stop_reason = message['stopReason']
-            stream_duration = elapsed - current['start_s']
-            duration = message['durationMs'] / 1000 if 'durationMs' in message else None
-            first_delta = current['first_visible_delta_s']
-            if first_delta is not None and duration is not None:
-                first_delta += duration - stream_duration
-            turn = {**current, 'first_visible_delta_s': first_delta, 'duration_s': duration,
-                    'stream_observed_s': stream_duration, 'output_tokens': usage['output'],
-                    'effective_output_tps': usage['output'] / duration if duration is not None and duration > 0 else None,
-                    'usage': usage, 'model': message.get('model'),
-                    'response_model': message.get('responseModel'),
-                    'thinking': message.get('thinkingLevel'), 'stop_reason': message['stopReason']}
-            if exclude_interrupted_turns and interrupted:
-                excluded_turns.append({**turn, 'error': message.get('errorMessage', message['stopReason']),
-                                       'response_index': len(turns) + len(excluded_turns)})
-            else:
-                turns.append(turn)
-            if interrupted:
-                error = message.get('errorMessage', message['stopReason'])
-                errors.append(error)
-                if not exclude_interrupted_turns:
-                    usage_unknown = True
-                if message['stopReason'] == 'error':
-                    pending_provider_errors.append(error)  # Provider-response failure, not a desktop tool result.
-            else:
-                recovered_provider_errors.extend(pending_provider_errors)
-                pending_provider_errors.clear()
-                pending_recovery_errors.clear()
-            current = None
-        elif kind == 'tool_execution_start':
-            starts[event['toolCallId']] = (elapsed, event['toolName'], event.get('args', {}))
-        elif kind == 'tool_execution_end':
-            start, name, arguments = starts.pop(event['toolCallId'])
-            intervals.append((start, elapsed))
-            tools.append({'id': event['toolCallId'], 'name': name, 'start_s': start, 'end_s': elapsed, 'duration_s': elapsed - start,
-                          'is_error': event['isError'], 'reported_duration_ms': event.get('durationMs'),
-                          'arguments': arguments, 'text': argument_text(arguments)})
-        elif kind == 'agent_settled':
-            agent_end = elapsed
-            completed = not event['aborted'] and last_stop_reason == 'stop' and not pending_recovery_errors
-    model_s = sum(turn['duration_s'] for turn in turns) if not compactions and all(turn['duration_s'] is not None for turn in turns) else None
-    if cancelled:
-        completed = False
-    result = {'wall_s': wall_s, 'agent_start_s': agent_start, 'agent_elapsed_s': agent_end - agent_start if agent_start is not None and agent_end is not None else None,
-              'model_response_s': model_s, 'tool_busy_s': busy_seconds(intervals),
-              'tokens': tokens, 'effective_output_tps': tokens['output_including_reasoning'] / model_s if model_s is not None and model_s > 0 else None,
-              'end_to_end_output_tps': tokens['output_including_reasoning'] / wall_s if wall_s > 0 else None,
-              'model_turns': turns, 'tools': tools, 'model_errors': errors,
-              'agent_completed': completed, 'token_counts_complete': completed and not usage_unknown, 'unfinished_tools': list(starts),
-              'recovered_provider_errors': recovered_provider_errors, 'recovery_events': recovery_events,
-              'recovery_errors': pending_recovery_errors, 'compactions': compactions,
-              'unexpected_failure': {'kind': 'unexpected_provider_failure', 'errors': pending_provider_errors}
-                                    if pending_provider_errors and not retry_cancelled and not cancelled else None}
-    if exclude_interrupted_turns:
-        result.update(token_usage_scope='excluding-interrupted-turns', excluded_model_turns=excluded_turns,
-                      full_request_consumption_complete=completed and not usage_unknown and not excluded_turns)
-    if compactions:
-        result['timing_limitation'] = 'Compaction usage is included, but its provider-response duration is not exposed; model-rate diagnostics are unknown.'
-    if reference_tps is not None:
-        if reference_tps <= 0:
-            raise ValueError('reference throughput must be positive')
-        result['reference_tps'] = reference_tps
-        result['estimated_wall_at_reference_tps_s'] = wall_s - model_s + tokens['output_including_reasoning'] / reference_tps if model_s is not None else None
-        result['normalization_method'] = 'Whole-response effective-rate counterfactual, including prefill/queueing; not pure decoding speed.'
-        visible_turns = [turn for turn in turns if turn['duration_s'] is not None and turn['first_visible_delta_s'] is not None]
-        if not compactions and len(visible_turns) == len(turns):
-            post_delta_s = sum(turn['duration_s'] - turn['first_visible_delta_s'] for turn in visible_turns)
-            visible_output = sum(turn['output_tokens'] - (turn['usage'].get('reasoning') or 0) for turn in visible_turns)
-            result['estimated_wall_preserving_first_delta_at_reference_visible_tps_s'] = wall_s - post_delta_s + visible_output / reference_tps
-        else:
-            result['estimated_wall_preserving_first_delta_at_reference_visible_tps_s'] = None
-    return result
-
-
-# Audit the actual persisted prompt, declarations and model state, not just intended launch flags.
-def audit_pi_session(entries, expected_skill, *, expected_model=MODEL, expected_provider=PI_PROVIDER):
-    problems = []
-    expected_tools = set(TOOLS + (NATIVE_TOOLS if expected_skill == 'computer-use' else []))
-    declared_tools = set()
-    saw_system = saw_model = saw_thinking = False
-    sections = {}
-    skills = []
-    for entry in entries:
-        if entry['type'] == 'model_change':
-            saw_model = True
-            if (entry['provider'], entry['modelId']) != (expected_provider, expected_model):
-                problems.append('model/provider changed')
-        if entry['type'] == 'thinking_level_change':
-            saw_thinking = True
-            if entry['thinkingLevel'] != 'low':
-                problems.append('reasoning is not low')
-        if entry['type'] != 'message':
-            continue
-        message = entry['message']
-        if message['role'] == 'system':
-            saw_system = True
-            sections.update(message.get('sections', {}))
-            skills = re.findall(r'<name>(.*?)</name>', sections.get('skills') or '')
-            if skills != [expected_skill]:
-                problems.append(f'unexpected skills: {skills}')
-            for key in ('project_context', 'addendum'):
-                if sections.get(key):
-                    problems.append(f'unexpected {key}')
-            additions = {tool['name'] for tool in message.get('toolsAdded', [])}
-            if additions - expected_tools:
-                problems.append('unexpected declared tools')
-            declared_tools.update(additions)
-            declared_tools.difference_update(message.get('toolsRemoved', []))
-            if sections.get('mcp_servers') and expected_skill != 'computer-use':
-                problems.append('unexpected MCP servers')
-        if message['role'] == 'assistant':
-            if message.get('model') != expected_model or message.get('thinkingLevel') != 'low':
-                problems.append('assistant used wrong model/reasoning')
-            for block in message.get('content', []):
-                if block['type'] == 'toolCall' and block['name'] not in expected_tools:
-                    problems.append(f'unexpected invoked tool: {block["name"]}')
-                if block['type'] == 'toolCall' and block['name'] == 'read':
-                    path = block['arguments']['path'].replace('\\', '/')
-                    if path.endswith('/SKILL.md') and f'/{expected_skill}/' not in path:
-                        problems.append(f'other skill read: {path}')
-    if declared_tools != expected_tools:
-        problems.append('missing or changed tool declarations')
-    if not all((saw_system, saw_model, saw_thinking)):
-        problems.append('missing system/model/reasoning evidence')
-    return {'passed': not problems, 'skills': skills, 'problems': sorted(set(problems))}
-
-
-
-# Inspect Codex's persisted turn model and developer skill catalog; absent evidence fails explicitly.
-def audit_codex_session(entries, expected_model='gpt-6.1-sol'):
-    problems = []
-    contexts = [entry['payload'] for entry in entries if entry['type'] == 'turn_context']
-    if not contexts:
-        problems.append('no persisted turn_context evidence')
-    for context in contexts:
-        if context.get('model') != expected_model or context.get('effort') != 'low':
-            problems.append('wrong model/reasoning in native turn context')
-    developer_texts = []
-    for entry in entries:
-        if entry['type'] != 'response_item':
-            continue
-        payload = entry['payload']
-        if payload.get('role') == 'developer':
-            developer_texts.extend(block.get('text', '') for block in payload.get('content', []))
-        if payload.get('type') == 'function_call':
-            name = payload.get('name', '')
-            if name.startswith('mcp__') and not name.startswith('mcp__node_repl__'):
-                problems.append(f'unexpected native MCP tool: {name}')
-    text = '\n'.join(developer_texts)
-    catalog = re.findall(r'^- ([a-z][a-z0-9-]*):.*\(file: .*SKILL\.md\)', text, re.MULTILINE)
-    if catalog and set(catalog) != {'computer-use'}:
-        problems.append(f'unexpected native skills: {catalog}')
-    if not catalog and 'The only enabled skill is computer-use.' not in text:
-        problems.append('missing native skill-catalog evidence')
-    if re.search(r'<project_instructions|# AGENTS\.md instructions', text):
-        problems.append('unexpected project instructions')
-    return {'passed': not problems, 'skills': catalog or ['computer-use'] if not problems else catalog,
-            'problems': problems, 'evidence_kind': 'persisted native turn context and developer skill declaration'}
-
-
-# Claude Code stream-json carries no server-side response duration: a response is timed from the request status
-# event to message_stop receipt. Token totals come from the final result; per-message usage is deduplicated by id.
-def analyse_claude(records, wall_s, reference_tps=None, *, cancelled=False):
-    tokens = dict(input_uncached=0, cache_read=0, cache_write=0,
-                  output_including_reasoning=0, reasoning_subset=None, total=0)
-    turns, tools, intervals, errors, provider_errors = [], [], [], [], []
-    pending_provider_errors, recovered_provider_errors = [], []
-    usage_by_message, tool_starts = {}, {}
-    agent_start = agent_end = request_start = None
-    current = None
-    final = None
-    for record in records:
-        elapsed, event = record['elapsed_s'], record['event']
-        kind = event.get('type')
-        if kind == 'system':
-            if event.get('subtype') == 'init' and agent_start is None:
-                agent_start = elapsed
-            elif event.get('subtype') == 'status' and event.get('status') == 'requesting':
-                request_start = elapsed
-        elif kind == 'stream_event':
-            inner = event['event']
-            if inner['type'] == 'error':
-                error = json.dumps(inner['error'], ensure_ascii=False)
-                errors.append(error)
-                provider_errors.append(error)
-                pending_provider_errors.append(error)
-            elif inner['type'] == 'message_start':
-                current = {'start_s': request_start if request_start is not None else elapsed, 'first_visible_delta_s': None,
-                           'message_id': inner['message'].get('id'), 'model': inner['message'].get('model'), 'delta_usage': None}
-            elif current is None:
-                continue
-            elif inner['type'] == 'content_block_delta' and current['first_visible_delta_s'] is None:
-                current['first_visible_delta_s'] = elapsed - current['start_s']
-            elif inner['type'] == 'message_delta':
-                current['delta_usage'] = inner.get('usage')
-            elif inner['type'] == 'message_stop':
-                usage = current.pop('delta_usage') or usage_by_message.get(current['message_id'], {})
-                output = usage.get('output_tokens', 0)
-                duration = elapsed - current['start_s']
-                turns.append({**current, 'duration_s': duration, 'output_tokens': output,
-                              'effective_output_tps': output / duration if duration > 0 else None, 'usage': usage})
-                recovered_provider_errors.extend(pending_provider_errors)
-                pending_provider_errors.clear()
-                current = request_start = None
-        elif kind == 'assistant':
-            message = event['message']
-            usage_by_message[message.get('id')] = message.get('usage', {})
-            for block in message.get('content', []):
-                if block.get('type') == 'tool_use':
-                    tool_starts[block['id']] = (elapsed, block.get('name'), block.get('input', {}))
-        elif kind == 'user':
-            content = event.get('message', {}).get('content')
-            for block in content if isinstance(content, list) else []:
-                if block.get('type') == 'tool_result' and block.get('tool_use_id') in tool_starts:
-                    start, name, arguments = tool_starts.pop(block['tool_use_id'])
-                    intervals.append((start, elapsed))
-                    tools.append({'id': block['tool_use_id'], 'name': name, 'start_s': start, 'end_s': elapsed,
-                                  'duration_s': elapsed - start, 'is_error': bool(block.get('is_error')),
-                                  'arguments': arguments, 'text': argument_text(arguments)})
-        elif kind == 'result':
-            agent_end = elapsed
-            final = event
-            if event.get('is_error') or event.get('subtype') != 'success':
-                reported = event.get('errors') or [str(event.get('result') or event.get('subtype'))]
-                errors.extend(reported)
-                terminal_errors = [error for error in reported if error.lstrip().lower().startswith('api error:')]
-                provider_errors.extend(terminal_errors)
-                pending_provider_errors.extend(terminal_errors)
-    if final is not None and final.get('usage'):
-        usage = final['usage']
-        tokens.update(input_uncached=usage.get('input_tokens', 0), cache_read=usage.get('cache_read_input_tokens', 0),
-                      cache_write=usage.get('cache_creation_input_tokens', 0), output_including_reasoning=usage.get('output_tokens', 0),
-                      reasoning_subset=(usage.get('output_tokens_details') or {}).get('thinking_tokens'))
-    else:
-        for usage in usage_by_message.values():
-            tokens['input_uncached'] += usage.get('input_tokens', 0)
-            tokens['cache_read'] += usage.get('cache_read_input_tokens', 0)
-            tokens['cache_write'] += usage.get('cache_creation_input_tokens', 0)
-            tokens['output_including_reasoning'] += usage.get('output_tokens', 0)
-    tokens['total'] = tokens['input_uncached'] + tokens['cache_read'] + tokens['cache_write'] + tokens['output_including_reasoning']
-    model_s = sum(turn['duration_s'] for turn in turns) if turns else None
-    completed = final is not None and final.get('subtype') == 'success' and not final.get('is_error') and not cancelled
-    if completed:
-        recovered_provider_errors.extend(pending_provider_errors)
-        pending_provider_errors.clear()
-    result = {'wall_s': wall_s, 'agent_start_s': agent_start,
-              'agent_elapsed_s': agent_end - agent_start if agent_start is not None and agent_end is not None else None,
-              'model_response_s': model_s, 'tool_busy_s': busy_seconds(intervals), 'tokens': tokens,
-              'effective_output_tps': tokens['output_including_reasoning'] / model_s if model_s else None,
-              'end_to_end_output_tps': tokens['output_including_reasoning'] / wall_s if wall_s > 0 else None,
-              'reported_api_duration_s': final['duration_api_ms'] / 1000 if final and 'duration_api_ms' in final else None,
-              'model_turns': turns, 'tools': tools, 'model_errors': errors, 'agent_completed': completed,
-              'recovered_provider_errors': list(dict.fromkeys(recovered_provider_errors)),
-              'unexpected_failure': {'kind': 'unexpected_provider_failure', 'errors': list(dict.fromkeys(pending_provider_errors))}
-                                    if pending_provider_errors and not cancelled else None,
-              'unfinished_tools': list(tool_starts), 'token_counts_complete': final is not None and bool(final.get('usage')) and not provider_errors,
-              'timing_basis': 'Receipt intervals from the request status event to message_stop; Claude Code exposes no per-response server duration.'}
-    if reference_tps is not None:
-        if reference_tps <= 0:
-            raise ValueError('reference throughput must be positive')
-        result['reference_tps'] = reference_tps
-        result['estimated_wall_at_reference_tps_s'] = wall_s - model_s + tokens['output_including_reasoning'] / reference_tps if model_s is not None else None
-        result['normalization_method'] = 'Whole-response effective-rate counterfactual, including prefill/queueing; not pure decoding speed.'
-    return result
-
-
-# Audit the stream's init event and the persisted transcript; absent evidence fails rather than passing by default.
-def audit_claude_session(records, entries, expected_skill_dir):
-    model, effort = ARM_MODELS['claude-acu']
-    problems = []
-    inits = [r['event'] for r in records if r['event'].get('type') == 'system' and r['event'].get('subtype') == 'init']
-    if not inits:
-        problems.append('no init evidence in the stream')
-    for init in inits:
-        if init.get('model') != model:
-            problems.append('wrong model in init')
-        if sorted(init.get('tools', [])) != sorted(CLAUDE_TOOLS):
-            problems.append(f"unexpected tools: {init.get('tools')}")
-        if init.get('mcp_servers'):
-            problems.append('unexpected MCP servers')
-        if init.get('skills') or init.get('slash_commands'):
-            problems.append(f"unexpected skills: {init.get('skills') or init.get('slash_commands')}")
-    assistants = [entry for entry in entries if entry.get('type') == 'assistant']
-    if not assistants:
-        problems.append('no persisted assistant evidence')
-    expected = Path(expected_skill_dir).resolve().as_posix().casefold().rstrip('/') + '/'
-    for entry in assistants:
-        if entry.get('effort') != effort:
-            problems.append(f'effort is not {effort}')
-        if entry.get('requestedModel', entry.get('message', {}).get('model')) != model:
-            problems.append('assistant used wrong model')
-        for block in entry.get('message', {}).get('content', []):
-            if isinstance(block, dict) and block.get('type') == 'tool_use' and block.get('name') == 'Read':
-                path = str(block.get('input', {}).get('file_path', '')).replace('\\', '/')
-                if path.endswith('/SKILL.md'):
-                    resolved = expand_user_root(path).resolve().as_posix().casefold()
-                    if not resolved.startswith(expected):
-                        problems.append(f'other skill read: {path}')
-    return {'passed': not problems, 'skills': [Path(expected_skill_dir).name], 'problems': sorted(set(problems)),
-            'evidence_kind': 'stream init event (model, tools, MCP, skills) and persisted transcript (effort, model, reads)',
-            'limitation': 'Safe mode disables CLAUDE.md, hooks and plugins by flag; the stream lists no memory files, so that part is not independently evidenced.'}
 
 
 # Historical end-to-end timing only. New benchmark scoring uses measure_efficiency; old evidence remains unchanged.
-def task_time(agent_start_s, tools, pattern, workspace):
+def task_time(agent_start_s, tools: list[ToolCall], pattern, workspace):
     helpers = set()  # names a computer-use call defined; a persistent REPL lets later calls reach the route through them
 
     def uses_computer(text):
@@ -511,7 +53,7 @@ def task_time(agent_start_s, tools, pattern, workspace):
         return False
 
     uses = []
-    for tool in sorted(tools, key=lambda tool: tool['start_s']):
+    for tool in sorted(completed_calls(tools), key=lambda tool: tool['start_s'] if tool['start_s'] is not None else tool['end_s']):
         if str(tool.get('name', '')).casefold() in ('read', 'write', 'edit'):
             continue
         text = tool.get('text', '')
@@ -563,40 +105,6 @@ def restart_cua_daemon(run_dir, driver='cua-driver', timeout_s=30, cwd=None, rec
     return record
 
 
-# Resolve the installed vendor skill without modifying it or copying prior benchmark knowledge.
-def native_skill():
-    root = Path.home() / '.codex/plugins/cache/openai-bundled/computer-use'
-    versions = sorted((path for path in root.iterdir() if (path / 'skills/computer-use/SKILL.md').is_file()),
-                      key=lambda path: tuple(int(part) for part in path.name.split('.')))
-    if not versions:
-        raise FileNotFoundError(f'no installed computer-use skill under {root}')
-    return versions[-1] / 'skills/computer-use'
-
-
-# Reuse the installed native MCP runtime, but isolate its home and allow only the desktop service.
-def native_server(home, config=None, transport='sdk-helper'):
-    original = config if config is not None else tomllib.loads((Path.home() / '.codex/config.toml').read_text(encoding='utf-8'))
-    source = original['mcp_servers']['node_repl']
-    environment = dict(source.get('env', {}))
-    environment['CODEX_HOME'] = str(home)
-    environment['SKY_CUA_NATIVE_PIPE'] = '1' if transport == 'app-pipe' else '0'
-    if transport == 'app-pipe':
-        if not environment.get('SKY_CUA_NATIVE_PIPE_DIRECTORY'):
-            raise ValueError('the user configuration names no app-owned native pipe')
-    else:
-        environment.pop('SKY_CUA_NATIVE_PIPE_DIRECTORY', None)
-    environment.update(NODE_REPL_TRUSTED_SERVICES=json.dumps({'sky': '@oai/sky/service'}),
-                       BROWSER_USE_AVAILABLE_BACKENDS='', BROWSER_USE_TINYSKY_ENABLED='0',
-                       NODE_REPL_INSTRUCTIONS_USE_CASE_BROWSER='', NODE_REPL_INSTRUCTIONS_USE_CASE_CHROME='')
-    args = list(source.get('args', []))
-    # Match the former native Codex arm's explicit full-access mode. Without this supported runtime
-    # option the standalone MCP server sandboxes its kernel and SDK helper startup fails with spawn EPERM.
-    if '--disable-sandbox' not in args:
-        args.append('--disable-sandbox')
-    return {'command': source['command'], 'args': args, 'env': environment,
-            'exposure': 'direct', 'timeout': 120}
-
-
 # Prepare reproducible, offline profiles without credentials or a live desktop session.
 def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=None, native_transport='sdk-helper'):
     adapter = get_scenario(scenario)
@@ -621,79 +129,34 @@ def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=No
     prompt = template.replace('<WORKSPACE>', actor_path(workspace))
     (run_dir / 'prompt-template.txt').write_text(template, encoding='utf-8')
     (run_dir / 'prompt.txt').write_text(prompt, encoding='utf-8')
+    arm_spec = ARM_TABLE[arm]
+    host = arm_spec.harness
     model, reasoning = arm_model(arm)
-    session_id = None
-    if harness(arm) == 'claude':
-        skill = Path(skill) if skill is not None else SKILLS[arm]
-        session_id = str(uuid.uuid4())
-        command = claude_command(skill, prompt, session_id, arm=arm)
-        environment = {'CLAUDE_CONFIG_DIR': str(home), 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1'}
-        skill_name = 'cua-driver' if uses_cua_daemon(arm) else 'acu'
-    elif harness(arm) == 'pi':
-        native = arm == 'pi-computer-use'
-        if native:
-            skill = Path(skill) if skill is not None else native_skill()
-            server = native_server(home, native_config, native_transport)
-            approved_apps = adapter.approved_apps()
-            bridge = {'command': server['command'], 'args': server['args'], 'approved_apps': approved_apps,
-                      'log_path': str(run_dir / 'native-approvals.jsonl')}
-            save_json(home / 'native-bridge.json', bridge)
-            server.update(command=sys.executable, args=[str(ROOT / 'bench/native_mcp.py'), str(home / 'native-bridge.json')])
-            save_json(home / 'mcp.json', {'mcpServers': {'node_repl': server}, 'autoEnableCodemode': False})
-        else:
-            skill = Path(skill) if skill is not None else SKILLS[arm]
-        settings = {'packages': [], 'extensions': [], 'skills': [], 'prompts': [],
-                    'cacheWarming': 'off', 'defaultTools': TOOLS, **deepcopy(PI_RECOVERY_POLICY)}
-        if os.name == 'nt':
-            settings['shellPath'] = 'C:/Program Files/Git/bin/bash.exe'
-            if not Path(settings['shellPath']).is_file():
-                raise FileNotFoundError(settings['shellPath'])
-        save_json(home / 'settings.json', settings)
-        command = pi_command(run_dir, skill, prompt, native=native)
-        environment = {'PI_CODING_AGENT_DIR': str(home), 'PI_OFFLINE': '1'}
-        skill_name = 'computer-use' if native else ('cua-driver' if uses_cua_daemon(arm) else 'acu')
+    profile = host.profile(arm_spec, run_dir, prompt, skill, native_config, native_transport,
+                           adapter.approved_apps() if arm_spec.native else [])
+    skill = profile.pop('skill')
     skill_file = skill / 'SKILL.md'
     if not skill_file.is_file():
         raise FileNotFoundError(skill_file)
-    plan = {'arm': arm, 'scenario': scenario_name, 'model': model, 'reasoning': reasoning, 'skill_names': [skill_name],
+    plan = {'arm': arm, 'scenario': scenario_name, 'model': model, 'reasoning': reasoning, 'skill_names': [arm_spec.skill_name],
             'skill_path': str(skill_file), 'skill_sha256': hashlib.sha256(skill_file.read_bytes()).hexdigest(),
             'scenario_version': heading.lstrip('# ').strip(), 'prompt_sha256': hashlib.sha256(prompt.encode('utf-8')).hexdigest(),
             'prompt_template_sha256': hashlib.sha256(template.encode('utf-8')).hexdigest(),
             'scenario_sha256': hashlib.sha256(scenario.encode('utf-8')).hexdigest(),
             'measurement_policy': 'tokens-and-computer-use-v1', 'window_audit_policy': WINDOW_AUDIT_POLICY,
-            'recovery_policy': deepcopy(PI_RECOVERY_POLICY if harness(arm) == 'pi' else CLAUDE_RECOVERY_POLICY),
-            'workspace': str(workspace), 'run_dir': str(run_dir), 'command': command,
-            'environment_overrides': environment, 'isolation': 'configuration/prompt, not OS sandbox',
+            'recovery_policy': deepcopy(host.recovery_policy),
+            'workspace': str(workspace), 'run_dir': str(run_dir), **profile, 'isolation': 'configuration/prompt, not OS sandbox',
             'runtime_validated': False}
-    if harness(arm) == 'pi':
-        plan['provider'] = PI_PROVIDER
-    if session_id is not None:
-        plan['session_id'] = session_id
-    if arm == 'pi-computer-use':
-        plan['native_transport'] = native_transport
-        plan['mcp_config_sha256'] = hashlib.sha256((home / 'mcp.json').read_bytes()).hexdigest()
-        plan['native_bridge_sha256'] = hashlib.sha256((home / 'native-bridge.json').read_bytes()).hexdigest()
-        if native_transport == 'app-pipe':
-            plan['native_pipe'] = server['env']['SKY_CUA_NATIVE_PIPE_DIRECTORY']
     adapter.prepare_files(plan)
     save_json(run_dir / 'plan.json', plan)
     return plan
 
 
-# Windows npm's .cmd launcher is replaced by its Node entry point, keeping prompts out of cmd.exe parsing.
+# Delegate command resolution to its harness, leaving ordinary test emitters unchanged.
 def executable_command(command):
-    executable = shutil.which(command[0])
-    if executable is None:
-        raise FileNotFoundError(f'{command[0]} is not on PATH')
-    if Path(executable).suffix.lower() == '.cmd' and command[0] == 'pi':
-        entry = Path(executable).parent / 'node_modules/@earendil-works/pi-coding-agent/dist/cli.js'
-        if not entry.is_file():
-            raise FileNotFoundError(entry)
-        node = shutil.which('node')
-        if node is None:
-            raise FileNotFoundError('node is not on PATH')
-        return [node, str(entry), *command[1:]]
-    return [executable, *command[1:]]
+    from bench.common import executable_command as installed_command
+    host = next((arm.harness for arm in ARM_TABLE.values() if arm.harness.name == command[0]), None)
+    return host.executable_command(command) if host else installed_command(command)
 
 
 # Capture raw JSONL until normal exit or explicit cancellation; there is no overall elapsed-time deadline.
@@ -796,7 +259,7 @@ def fingerprint(roots):
 def guarded_roots(plan, scenario=None):
     scenario = scenario if scenario is not None else get_scenario(plan.get('scenario', 'calculator'))
     roots = [ROOT, Path(plan['skill_path']).parent]
-    if plan.get('arm') == 'pi-computer-use':
+    if plan.get('arm') and ARM_TABLE[plan['arm']].native:
         roots += [Path(plan['run_dir']) / 'agent-home/mcp.json', Path(plan['run_dir']) / 'agent-home/native-bridge.json']
     roots += scenario.guarded_roots(plan)
     return [root for root in roots if root.exists()]
@@ -853,9 +316,9 @@ def inside_workspace(path, workspace):
 
 # Transcript scan: explicit write/edit tool calls outside the workspace, and commands or scripts that pair a write verb
 # with an absolute path outside it. The second list is a heuristic and is reported as such.
-def transcript_writes(tools, workspace):
+def transcript_writes(tools: list[ToolCall], workspace):
     outside, suspicious = [], []
-    for tool in tools:
+    for tool in completed_calls(tools):
         name = str(tool.get('name', '')).casefold()
         text = tool.get('text', '')
         if name in ('write', 'edit'):
@@ -895,11 +358,11 @@ def window_diff(before, after, application='calculator', *, group_process_window
 
 
 # Combine guarded-file, transcript, window and bounded runtime-output evidence before maintainer cleanup.
-def conduct_audit(plan, before_probe, after_probe, before_files, after_files, tools, *,
-                  raw_records=None, runtime_before=None, runtime_after=None, scenario=None):
+def conduct_audit(plan, before_probe, after_probe, before_files, after_files, tools: list[ToolCall], *,
+                  runtime_before=None, runtime_after=None, scenario=None):
     from bench.runtime_writes import audit_runtime_writes
 
-    runtime_writes = audit_runtime_writes(raw_records, runtime_before, runtime_after)
+    runtime_writes = audit_runtime_writes(tools, runtime_before, runtime_after)
     files = fingerprint_diff(before_files, after_files)
     outside, suspicious = transcript_writes(tools, plan['workspace'])
     scenario = scenario if scenario is not None else get_scenario(plan.get('scenario', 'calculator'))
@@ -946,9 +409,9 @@ def run_trial(plan, reference_tps=None, *, scenario=None, capture_actor=None, ob
     token_count('')  # Load the pinned reference encoding before starting any desktop work.
     run_dir = Path(plan['run_dir'])
     arm = plan['arm']
-    if harness(arm) == 'pi' and plan.get('provider') != PI_PROVIDER:
-        raise ValueError('Prepared Pi provider does not match the current explicit provider; prepare a fresh trial')
-    source, private_name = CREDENTIALS[harness(arm)]
+    host = ARM_TABLE[arm].harness
+    host.validate_plan(plan)
+    source, private_name = host.credential
     credential = Path.home() / source
     private_auth = run_dir / 'agent-home' / private_name
     if not credential.is_file():
@@ -984,30 +447,13 @@ def run_trial(plan, reference_tps=None, *, scenario=None, capture_actor=None, ob
                 scenario.stop_recorder(run_dir, recorder)
             runtime_after = snapshot_runtime_files()
             save_json(run_dir / 'runtime-files-after.json', runtime_after)
-        if harness(arm) == 'pi':
-            measurements = analyse_pi(records, wall, reference_tps,
-                                      cancelled=load_actor_json(run_dir / 'capture.json').get('cancelled') is True)
-        elif harness(arm) == 'claude':
-            measurements = analyse_claude(records, wall, reference_tps,
-                                          cancelled=load_actor_json(run_dir / 'capture.json').get('cancelled') is True)
-        else:
-            measurements = analyse_codex(records, wall)
+        measurements = host.analyse(records, wall, reference_tps,
+                                    cancelled=load_actor_json(run_dir / 'capture.json').get('cancelled') is True)
         # Persist before transcript IO, grading or cleanup so a later failure cannot hide the provider error.
         unexpected_failure = measurements.get('unexpected_failure')
         if unexpected_failure:
             save_json(run_dir / 'failure.json', unexpected_failure)
-        if harness(arm) == 'pi':
-            session_path = run_dir / 'session.jsonl'
-            entries = read_jsonl(session_path) if session_path.is_file() else []
-            isolation = audit_pi_session(entries, plan['skill_names'][0], expected_model=plan['model'])
-        elif harness(arm) == 'claude':
-            transcripts = sorted((run_dir / 'agent-home/projects').rglob('*.jsonl')) if (run_dir / 'agent-home/projects').is_dir() else []
-            entries = [entry for path in transcripts for entry in read_jsonl(path)]
-            isolation = audit_claude_session(records, entries, Path(plan['skill_path']).parent)
-        else:
-            native_sessions = list((run_dir / 'agent-home/sessions').rglob('*.jsonl'))
-            native_entries = [entry for path in native_sessions for entry in read_jsonl(path)]
-            isolation = audit_codex_session(native_entries, expected_model=plan['model'])
+        isolation = host.audit(plan, records)
         measurements['capture'] = json.loads((run_dir / 'capture.json').read_text(encoding='utf-8'))
         measurements['benchmark'] = measure_efficiency(measurements, arm)
         save_json(run_dir / 'metrics.json', measurements)
@@ -1021,7 +467,7 @@ def run_trial(plan, reference_tps=None, *, scenario=None, capture_actor=None, ob
         after_files = fingerprint(guarded_roots(plan, scenario))
         save_json(run_dir / 'fingerprint-after.json', after_files)
         conduct = conduct_audit(plan, before_actor, after_probe, before_files, after_files, measurements.get('tools', []),
-                                raw_records=records, runtime_before=runtime_before, runtime_after=runtime_after, scenario=scenario)
+                                runtime_before=runtime_before, runtime_after=runtime_after, scenario=scenario)
         scenario.audit(trial, conduct)
         conduct['stray_files'] = move_stray_files(run_dir, conduct)
         save_json(run_dir / 'conduct.json', conduct)
@@ -1091,52 +537,13 @@ def run(plan, reference_tps=None, *, scenario=None, capture_actor=None, observer
             save_json(summary_path, value)
         raise
     finally:
-        for _, private_name in CREDENTIALS.values():
+        for private_name in {arm.harness.credential[1] for arm in ARM_TABLE.values()}:
             (run_dir / 'agent-home' / private_name).unlink(missing_ok=True)
         lock.unlink()
         cleanup_path = run_dir / 'cleanup.json'
         cleanup = json.loads(cleanup_path.read_text(encoding='utf-8')) if cleanup_path.is_file() else {'passed': False, 'error': 'cleanup was not recorded'}
         save_json(run_dir / 'finished.json', {'worker_pid': os.getpid(), 'worker_finished': True,
                   'cleanup': cleanup, 'finished_at': datetime.now(timezone.utc).isoformat()})
-
-# Codex exec exposes final aggregate usage; its stream does not expose a true decoding-rate denominator.
-def analyse_codex(records, wall_s):
-    completed = [r for r in records if r['event']['type'] == 'turn.completed']
-    agent_start = next((r['elapsed_s'] for r in records if r['event']['type'] == 'thread.started'), None)
-    tools, intervals, starts = [], [], {}
-    for record in records:
-        elapsed, event = record['elapsed_s'], record['event']
-        item = event.get('item') if isinstance(event.get('item'), dict) else None
-        if item is None or item.get('type') not in ('command_execution', 'mcp_tool_call'):
-            continue
-        if event['type'] == 'item.started':
-            starts[item['id']] = elapsed
-        elif event['type'] == 'item.completed':
-            start = starts.pop(item['id'], None)
-            arguments = {'command': item.get('command', '')} if item['type'] == 'command_execution' else item.get('arguments', {})
-            text = argument_text(arguments)
-            if start is not None:
-                intervals.append((start, elapsed))
-            tools.append({'id': item['id'], 'name': item['type'] if item['type'] == 'command_execution' else f"{item.get('server')}.{item.get('tool')}",
-                          'start_s': start, 'end_s': elapsed, 'duration_s': elapsed - start if start is not None else None,
-                          'text': text or '', 'arguments': arguments})
-    timing = {'agent_start_s': agent_start, 'tool_busy_s': busy_seconds(intervals), 'tools': tools, 'unfinished_tools': list(starts)}
-    if not completed:
-        return {'wall_s': wall_s, 'tokens': None, 'model_response_s': None,
-                'effective_output_tps': None, 'end_to_end_output_tps': None, **timing,
-                'agent_completed': False, 'token_counts_complete': False,
-                'timing_limitation': 'No final Codex usage was reported; token totals are unknown, not zero.'}
-    if len(completed) != 1:
-        raise ValueError('expected exactly one Codex turn.completed usage record')
-    usage = completed[0]['event']['usage']
-    return {'wall_s': wall_s, 'tokens': {'input_including_cached': usage['input_tokens'],
-            'cache_read': usage['cached_input_tokens'], 'output_including_reasoning': usage['output_tokens'],
-            'total': usage['input_tokens'] + usage['output_tokens'], 'reasoning_subset': None},
-            'model_response_s': None, 'effective_output_tps': None,
-            'end_to_end_output_tps': usage['output_tokens'] / wall_s, **timing,
-            'timing_limitation': 'Exec has no per-response model latency. End-to-end throughput includes tool time; do not treat it as decoding speed.',
-            'agent_completed': True, 'token_counts_complete': True}
-
 
 # Public CLI: prepare is read-only/offline; run is an explicit desktop operation.
 def main():
@@ -1163,15 +570,11 @@ def main():
         prior = json.loads((args.run_dir / 'metrics.json').read_text(encoding='utf-8'))
         plan = json.loads((args.run_dir / 'plan.json').read_text(encoding='utf-8'))
         records = read_jsonl(args.run_dir / 'events.jsonl')
-        if args.exclude_interrupted_turns and harness(plan['arm']) != 'pi':
+        host = ARM_TABLE[plan['arm']].harness
+        if args.exclude_interrupted_turns and not host.supports_interrupted_exclusion:
             parser.error('--exclude-interrupted-turns requires per-response Pi usage; other harnesses are unsupported')
-        if harness(plan['arm']) == 'pi':
-            value = analyse_pi(records, prior['wall_s'], cancelled=(prior.get('capture') or {}).get('cancelled') is True,
-                               exclude_interrupted_turns=args.exclude_interrupted_turns)
-        elif harness(plan['arm']) == 'claude':
-            value = analyse_claude(records, prior['wall_s'], cancelled=(prior.get('capture') or {}).get('cancelled') is True)
-        else:
-            value = analyse_codex(records, prior['wall_s'])
+        value = host.analyse(records, prior['wall_s'], cancelled=(prior.get('capture') or {}).get('cancelled') is True,
+                             exclude_interrupted_turns=args.exclude_interrupted_turns)
         value['benchmark'] = measure_efficiency(value, plan['arm'])
     else:
         directory = args.run_dir or ROOT / '.pi/bench' / f'{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{args.scenario}-{args.arm}-{uuid.uuid4().hex[:6]}'
