@@ -21,7 +21,7 @@ def test_record_uses_marker_process_without_logging_script_text(tmp_path, acu_ho
     script = tmp_path / "action.ahk"
     source = b'; private script contents\nExitApp\n'
     script.write_bytes(source)
-    run = Run(output, "error", 1, 7, "[acu] exit 1 7ms")
+    run = Run(output, "error", 1, 7)
 
     report = record(script, run, 30)
 

@@ -157,14 +157,14 @@ def test_missing_store_and_unknown_app_are_clear_and_read_only(tmp_path, monkeyp
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows session-local lease")
 def test_cli_lists_while_desktop_lease_is_held_without_ahk(tmp_path, monkeypatch, acu_home):
-    from acu.tool import _desktop_lease
+    from acu.tool import desktop_lease
 
     monkeypatch.setenv("ACU_SNIPPETS_ROOT", str(tmp_path))
     monkeypatch.setenv("ACU_AHK", str(tmp_path / "not-installed.exe"))
     folder = tmp_path / "Editor.exe"
     folder.mkdir()
     (folder / "hello.ahk").write_text('; does: Hello\nExitApp\n', encoding="utf-8")
-    with _desktop_lease():
+    with desktop_lease():
         result = cli("snippets", "list", "editor")
     assert result.returncode == 0, result.stdout + result.stderr
     assert "hello.ahk | args:  | does: Hello" in result.stdout

@@ -36,10 +36,8 @@ def main(argv=None) -> int:
     try:
         arguments = list(sys.argv[1:] if argv is None else argv)
         forwarded = []
-        if arguments[:1] == ["run"] and "--" in arguments:
-            boundary = arguments.index("--")
-            forwarded = arguments[boundary + 1:]
-            arguments = arguments[:boundary]
+        if arguments[:1] == ["run"]:
+            arguments, forwarded = tool.split_script_args(arguments)
         options = parser.parse_args(arguments)
         if options.command == "history":
             print(history.summarize(options.session_file))
@@ -47,7 +45,6 @@ def main(argv=None) -> int:
         if options.command == "snippets":
             print(snippets.list_for_app(options.app, options.keywords))
             return 0
-        tool.launcher.install_console_handlers()
         result = tool.run(options.script, options.timeout, forwarded)
     except ValueError as error:
         print(json.dumps({"error": str(error)}, ensure_ascii=False))

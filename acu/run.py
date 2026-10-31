@@ -32,7 +32,7 @@ from contextlib import contextmanager
 from ctypes import wintypes
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, Sequence
+from typing import BinaryIO, Literal, Protocol, Sequence
 
 HERE = Path(__file__).resolve().parent
 PRELUDE = HERE / "prelude.ahk"
@@ -60,7 +60,10 @@ class Run:
     outcome: Outcome
     exit_code: int
     duration_ms: int
-    trailer: str
+    phase: Literal["validation", "execution"] = "execution"
+    timeout_s: float = 30
+    ending: str = ""
+    interrupted: bool = False
     app: str | None = field(init=False)
 
     def __post_init__(self) -> None:
@@ -68,6 +71,19 @@ class Run:
         names = {match[1].casefold(): match[1] for match in SNIPPET_MARKER.finditer(self.output)
                  if is_app_process(match[1])}
         self.app = next(iter(names.values())) if len(names) == 1 else None
+
+    @property
+    def trailer(self) -> str:
+        """Derive the unchanged text/JSON verdict in one place from execution facts."""
+        if self.interrupted:
+            phase = " during validation" if self.phase == "validation" else ""
+            return f"[acu] interrupted{phase} {self.duration_ms}ms"
+        if self.outcome == "timeout":
+            ending = "validation" if self.phase == "validation" else self.ending
+            return f"[acu] timeout {self.timeout_s:g}s: {ending}"
+        if self.outcome == "ok":
+            return f"[acu] ok {self.duration_ms}ms"
+        return f"[acu] exit {self.exit_code} {self.duration_ms}ms"
 
 
 def install_console_handlers() -> None:
@@ -182,14 +198,86 @@ def report_shutdown_failure(script: Path, output: str, timeout: float, started: 
     output += "\n" + message + "\n" + traceback.format_exc()
     duration_ms = round((time.monotonic() - started) * 1000)
     try:
-        report = record(script, Run(output, "error", 1, duration_ms, message), timeout)
+        report = record(script, Run(output, "error", 1, duration_ms), timeout)
     except OSError as diagnostic_error:
         print(f"[acu] could not persist shutdown failure: {diagnostic_error}", file=sys.stderr, flush=True)
     else:
         print(f"[acu] shutdown failure report: {report}", file=sys.stderr, flush=True)
 
 
-def validate(script: Path, args: Sequence[str], timeout: float) -> subprocess.CompletedProcess[bytes]:
+class ValidationProcess(Protocol):
+    """Pipe-based validator owned until wait completes and stdout is closed."""
+
+    stdout: BinaryIO | None
+    returncode: int | None
+
+    def communicate(self, timeout: float | None = None) -> tuple[bytes, bytes | None]: ...
+    def poll(self) -> int | None: ...
+    def kill(self) -> None: ...
+    def wait(self) -> int: ...
+
+
+class ScriptProcess(Protocol):
+    """A UI Access process; close releases its handle only after verified exit."""
+
+    def wait(self, timeout: float) -> bool: ...
+    def request_close(self) -> None: ...
+    def kill(self) -> None: ...
+    def exit_code(self) -> int: ...
+    def close(self) -> None: ...
+
+
+class ProcessAdapter(Protocol):
+    """Create owned validation/script processes; callers defer interrupts across these calls."""
+
+    def start_validation(self, command: Sequence[str]) -> ValidationProcess: ...
+    def start_script(self, exe: Path, arguments: Sequence[str]) -> ScriptProcess: ...
+
+
+class Win32ScriptProcess:
+    """Adapt a ShellExecute process handle to the launcher's lifecycle operations."""
+
+    def __init__(self, exe: Path, arguments: Sequence[str]):
+        self.kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        self.kernel32.GetProcessId.argtypes = [wintypes.HANDLE]
+        self.kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        self.kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        self.kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        # Configure the adapter before creation so no setup failure can orphan a new process.
+        self.handle = shell_execute(exe, subprocess.list2cmdline(arguments))
+
+    def wait(self, timeout: float) -> bool:
+        return wait_for_exit(self.handle, timeout)
+
+    def request_close(self) -> None:
+        request_close(self.kernel32.GetProcessId(self.handle))
+
+    def kill(self) -> None:
+        if not self.kernel32.TerminateProcess(self.handle, TIMEOUT_EXIT_CODE):
+            raise ctypes.WinError(ctypes.get_last_error())
+
+    def exit_code(self) -> int:
+        code = wintypes.DWORD()
+        if not self.kernel32.GetExitCodeProcess(self.handle, ctypes.byref(code)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return code.value
+
+    def close(self) -> None:
+        self.kernel32.CloseHandle(self.handle)
+
+
+class Win32ProcessAdapter:
+    """Use a pipe for the plain validator and ShellExecute for signed UI Access execution."""
+
+    def start_validation(self, command: Sequence[str]) -> ValidationProcess:
+        return subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+    def start_script(self, exe: Path, arguments: Sequence[str]) -> ScriptProcess:
+        return Win32ScriptProcess(exe, arguments)
+
+
+def validate(script: Path, args: Sequence[str], timeout: float,
+             process_adapter: ProcessAdapter) -> subprocess.CompletedProcess[bytes]:
     """Own the validator from creation through bounded communication and verified cleanup."""
     command = [str(plain_ahk_exe()), "/ErrorStdOut=UTF-8", "/validate", "/include", str(PRELUDE), str(script), *args]
     started = time.monotonic()
@@ -199,7 +287,7 @@ def validate(script: Path, args: Sequence[str], timeout: float) -> subprocess.Co
         try:
             try:
                 with defer_console_interrupts():
-                    process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                    process = process_adapter.start_validation(command)
                 output, _ = process.communicate(timeout=max(0, started + timeout - time.monotonic()))
             finally:
                 if process is not None:
@@ -246,52 +334,46 @@ def wait_for_exit(process: wintypes.HANDLE, timeout: float) -> bool:
             return False
 
 
-def stop_script(process: wintypes.HANDLE) -> str:
+def stop_script(process: ScriptProcess) -> str:
     """Close the owned script, escalating to a verified kill even if graceful cleanup raises."""
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.GetProcessId.argtypes = [wintypes.HANDLE]
-    kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
     try:
-        if wait_for_exit(process, 0):
+        if process.wait(0):
             return "exited"
-        request_close(kernel32.GetProcessId(process))
-        if wait_for_exit(process, CLOSE_GRACE_SECONDS):
+        process.request_close()
+        if process.wait(CLOSE_GRACE_SECONDS):
             return "closed on request"
     finally:
-        if not wait_for_exit(process, 0):
-            if not kernel32.TerminateProcess(process, TIMEOUT_EXIT_CODE):
-                raise ctypes.WinError(ctypes.get_last_error())
-            if not wait_for_exit(process, 5):
+        if not process.wait(0):
+            process.kill()
+            if not process.wait(5):
                 raise RuntimeError("AutoHotkey did not exit after termination")
     return "killed"
 
 
-def run_script(script: Path, timeout: float, args: Sequence[str] = ()) -> Run:
+def run_script(script: Path, timeout: float, args: Sequence[str] = (), *,
+               process_adapter: ProcessAdapter | None = None) -> Run:
     """Run within one validation/execution budget; reap the script before returning or raising."""
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
-    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
-    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    adapter = Win32ProcessAdapter() if process_adapter is None else process_adapter
 
     started = time.monotonic()
     deadline = started + timeout
     try:
-        loaded = validate(script, args, max(0, deadline - time.monotonic()))
+        loaded = validate(script, args, max(0, deadline - time.monotonic()), adapter)
     except subprocess.TimeoutExpired as failure:
         output = (failure.stdout or b"").decode("utf-8", errors="replace")
         duration_ms = round((time.monotonic() - started) * 1000)
-        return Run(output, "timeout", TIMEOUT_EXIT_CODE, duration_ms, f"[acu] timeout {timeout:g}s: validation")
+        return Run(output, "timeout", TIMEOUT_EXIT_CODE, duration_ms, phase="validation", timeout_s=timeout)
     except KeyboardInterrupt:
         duration_ms = round((time.monotonic() - started) * 1000)
-        return Run("", "error", 130, duration_ms, f"[acu] interrupted during validation {duration_ms}ms")
+        return Run("", "error", 130, duration_ms, phase="validation", interrupted=True)
     output = loaded.stdout.decode("utf-8", errors="replace")
     if loaded.returncode != 0:
         duration_ms = round((time.monotonic() - started) * 1000)
-        return Run(output, "error", loaded.returncode, duration_ms, f"[acu] exit {loaded.returncode} {duration_ms}ms")
+        return Run(output, "error", loaded.returncode, duration_ms, phase="validation")
 
     if time.monotonic() >= deadline:
         duration_ms = round((time.monotonic() - started) * 1000)
-        return Run(output, "timeout", TIMEOUT_EXIT_CODE, duration_ms, f"[acu] timeout {timeout:g}s: validation")
+        return Run(output, "timeout", TIMEOUT_EXIT_CODE, duration_ms, phase="validation", timeout_s=timeout)
 
     import tempfile
 
@@ -299,13 +381,13 @@ def run_script(script: Path, timeout: float, args: Sequence[str] = ()) -> Run:
     os.close(fd)
     timed_out = interrupted = False
     try:
-        params = subprocess.list2cmdline(["/ErrorStdOut=UTF-8", "/include", str(PRELUDE), str(script), OUTPUT_ARG + out_path, HOME_ARG + str(acu_home()), *args])
+        arguments = ["/ErrorStdOut=UTF-8", "/include", str(PRELUDE), str(script), OUTPUT_ARG + out_path, HOME_ARG + str(acu_home()), *args]
         process = None
         try:
             try:
                 with defer_console_interrupts():
-                    process = shell_execute(ahk_exe(), params)
-                timed_out = not wait_for_exit(process, deadline - time.monotonic())
+                    process = adapter.start_script(ahk_exe(), arguments)
+                timed_out = not process.wait(deadline - time.monotonic())
             except KeyboardInterrupt:
                 interrupted = True
             finally:
@@ -326,27 +408,30 @@ def run_script(script: Path, timeout: float, args: Sequence[str] = ()) -> Run:
                                 # Even an unsuccessful wait cannot prove exit. Keep the handle and lease;
                                 # defer further console interrupts until the OS confirms the process ended.
                                 with defer_console_interrupts():
-                                    while kernel32.WaitForSingleObject(process, 1000) != 0:
+                                    while True:
+                                        try:
+                                            if process.wait(1):
+                                                break
+                                        except OSError:
+                                            pass  # Already reported; only a successful wait proves exit.
                                         time.sleep(0.05)
                             raise
-            exit_code = wintypes.DWORD()
-            if process is not None and not kernel32.GetExitCodeProcess(process, ctypes.byref(exit_code)):
-                raise ctypes.WinError(ctypes.get_last_error())
+            exit_code = process.exit_code() if process is not None else 0
         finally:
             if process is not None:
-                kernel32.CloseHandle(process)
+                process.close()
         output += Path(out_path).read_text(encoding="utf-8", errors="replace")
     finally:
         os.unlink(out_path)
 
     duration_ms = round((time.monotonic() - started) * 1000)
     if interrupted:
-        return Run(output, "error", 130, duration_ms, f"[acu] interrupted {duration_ms}ms")
+        return Run(output, "error", 130, duration_ms, interrupted=True)
     if timed_out:
-        return Run(output, "timeout", TIMEOUT_EXIT_CODE, duration_ms, f"[acu] timeout {timeout:g}s: {ending}")
-    if exit_code.value == 0:
-        return Run(output, "ok", 0, duration_ms, f"[acu] ok {duration_ms}ms")
-    return Run(output, "error", exit_code.value, duration_ms, f"[acu] exit {exit_code.value} {duration_ms}ms")
+        return Run(output, "timeout", TIMEOUT_EXIT_CODE, duration_ms, timeout_s=timeout, ending=ending)
+    if exit_code == 0:
+        return Run(output, "ok", 0, duration_ms)
+    return Run(output, "error", exit_code, duration_ms)
 
 
 def record(script: Path, run: Run, timeout: float) -> Path | None:
@@ -383,28 +468,24 @@ def record(script: Path, run: Run, timeout: float) -> Path | None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Format the shared run operation as output followed by the low-level trailer."""
     import argparse
+    from .tool import LOW_LEVEL_OPTIONS, run_operation, split_script_args
 
-    # Split at the first -- by hand: everything after it belongs to the script, whatever argparse version runs.
-    launcher_args = list(sys.argv[1:] if argv is None else argv)
-    script_args: list[str] = []
-    if "--" in launcher_args:
-        split = launcher_args.index("--")
-        launcher_args, script_args = launcher_args[:split], launcher_args[split + 1 :]
+    launcher_args, script_args = split_script_args(sys.argv[1:] if argv is None else argv)
 
     parser = argparse.ArgumentParser(
         description="Run an AutoHotkey v2 script under the ACU prelude.",
         epilog="Arguments after -- are passed to the script and arrive in its A_Args.",
     )
-    parser.add_argument("script", type=Path, help="path to the .ahk script")
+    parser.add_argument("script", help="path to the .ahk script")
     parser.add_argument("--timeout", type=float, default=30, help="seconds before the watchdog stops the script")
     args = parser.parse_args(launcher_args)
-    script = args.script.resolve()
-    if not script.is_file():
-        parser.error(f"script not found: {script}")
-
-    install_console_handlers()
-    run = run_script(script, args.timeout, script_args)
+    try:
+        completed = run_operation(args.script, args.timeout, script_args, options=LOW_LEVEL_OPTIONS)
+    except ValueError as error:
+        parser.error(str(error))
+    run = completed.run
 
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     text = run.output
@@ -413,13 +494,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     sys.stdout.write(text + run.trailer + "\n")
     sys.stdout.flush()
 
-    # After the output, and never allowed to replace the script's exit code: a lost log line is reported, not fatal.
-    try:
-        record(script, run, args.timeout)
-    except OSError as failure:
-        print(f"[acu] log failed: {failure}", file=sys.stderr)
+    if completed.log_error is not None:
+        print(f"[acu] log failed: {completed.log_error}", file=sys.stderr)
     return run.exit_code
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # Direct file invocation must use the same package module as the installed CLI.
+    sys.path.insert(0, str(HERE.parent))
+    from acu.run import main as package_main
+
+    sys.exit(package_main())

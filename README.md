@@ -161,7 +161,19 @@ For launcher development, the low-level entry point remains available:
 python acu/run.py script.ahk [--timeout 30] [-- arguments for the script]
 ```
 
-It returns merged stdout/stderr followed by an `[acu]` status trailer, rather than the CLI's JSON. It does not take the CLI's desktop lease. Scripts do not inherit the launcher's environment through Windows ShellExecute; pass values as arguments. `ACU_HOME` is passed through explicitly.
+It returns merged stdout/stderr followed by an `[acu]` status trailer, rather than the CLI's JSON. Both commands resolve local paths and bare bundled script names (a local file wins), forward arguments after the first `--`, and use `acu.tool.run_operation` for execution and recording. The operation's `RunOptions` makes the three intentional differences explicit:
+
+| Option | `acu run` | `python acu/run.py` |
+| --- | --- | --- |
+| `lease` | Reject overlapping runs | No desktop lease |
+| `bounded_timeout` | Require a finite timeout in `(0, 300]` | No range validation |
+| `expand_markers` | Expand snippet markers into listings | Keep raw markers |
+
+Both record app attribution before marker expansion. Run recording finishes before formatting; a log-write failure is reported in JSON `log_error` or on stderr without replacing the script's exit code. Shutdown failures are persisted immediately while the process is still owned, as described above.
+
+`acu.run.ProcessAdapter` supplies the plain validation process and the UI Access script process. The Win32 adapter uses the existing pipe and ShellExecute transports; tests inject a fake through `run_operation(..., process_adapter=...)` to exercise deadlines, cancellation and verified shutdown without starting AutoHotkey. `Run.trailer` derives the text from the run's outcome, phase and timing facts for both formatters.
+
+Scripts do not inherit the launcher's environment through Windows ShellExecute; pass values as arguments. `ACU_HOME` is passed through explicitly.
 
 ### Vendored code
 
