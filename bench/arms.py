@@ -7,6 +7,21 @@ from bench.common import ROOT
 from bench.harnesses import pi, claude, codex
 
 
+# Syntax-aware attribution reads these facts after identifying executable code.
+@dataclass(frozen=True)
+class ComputerUseRoute:
+    executable: str | None = None
+    subcommand: str | None = None
+    excluded_subcommands: tuple[str, ...] = ()
+    script_argument: int | None = None
+    javascript_namespace: str | None = None
+
+
+ACU_ROUTE = ComputerUseRoute(executable='acu', subcommand='run', script_argument=2)
+CUA_ROUTE = ComputerUseRoute(executable='cua-driver', excluded_subcommands=('--help', '--version', 'describe'))
+NATIVE_ROUTE = ComputerUseRoute(javascript_namespace='sky')
+
+
 # Arm facts are shared by profile preparation, measurement, auditing and aggregation.
 @dataclass(frozen=True)
 class Arm:
@@ -14,7 +29,7 @@ class Arm:
     harness: ModuleType
     skill_name: str
     runtime: str
-    computer_use_pattern: str
+    route: ComputerUseRoute
     uses_cua_daemon: bool = False
     native: bool = False
 
@@ -26,12 +41,12 @@ class Arm:
 
 
 ARM_TABLE = {arm.id: arm for arm in (
-    Arm('pi-acu', pi, 'acu', 'ACU', r'\bacu run\b'),
-    Arm('pi-cua', pi, 'cua-driver', 'CUA', r'cua-driver', uses_cua_daemon=True),
-    Arm('pi-computer-use', pi, 'computer-use', 'Codex computer use', r'\bsky\.', native=True),
-    Arm('claude-acu', claude, 'acu', 'ACU', r'\bacu run\b'),
-    Arm('claude-cua', claude, 'cua-driver', 'CUA', r'cua-driver', uses_cua_daemon=True),
-    Arm('codex-computer-use', codex, 'computer-use', 'Codex computer use', r'\bsky\.', native=True),
+    Arm('pi-acu', pi, 'acu', 'ACU', ACU_ROUTE),
+    Arm('pi-cua', pi, 'cua-driver', 'CUA', CUA_ROUTE, uses_cua_daemon=True),
+    Arm('pi-computer-use', pi, 'computer-use', 'Codex computer use', NATIVE_ROUTE, native=True),
+    Arm('claude-acu', claude, 'acu', 'ACU', ACU_ROUTE),
+    Arm('claude-cua', claude, 'cua-driver', 'CUA', CUA_ROUTE, uses_cua_daemon=True),
+    Arm('codex-computer-use', codex, 'computer-use', 'Codex computer use', NATIVE_ROUTE, native=True),
 )}
 ARMS = tuple(key for key, arm in ARM_TABLE.items() if arm.harness.live)
 

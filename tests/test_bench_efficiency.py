@@ -19,6 +19,67 @@ def metrics(tools, output=1000, complete=True):
             'agent_completed': complete, 'token_counts_complete': complete}
 
 
+# The public measurement follows route facts supplied by the arm table.
+def test_arm_table_route_controls_direct_and_captured_helper_attribution(monkeypatch):
+    from dataclasses import replace
+    from bench.arms import ARM_TABLE
+
+    arm = ARM_TABLE['pi-acu']
+    route = replace(arm.route, executable='desktop-tool', subcommand='execute')
+    monkeypatch.setattr('bench.efficiency.ARM_TABLE', {'pi-acu': replace(arm, route=route)})
+    tools = [
+        call('source', 'write', {'path': 'draw.ahk', 'content': 'Click(1, 2)'}, 1, 2),
+        call('direct', 'bash', {'command': 'desktop-tool.exe execute draw.ahk'}, 3, 4),
+        call('helper', 'write', {'path': 'helper.py', 'content':
+            "import subprocess\nsubprocess.run(['desktop-tool', 'execute', 'draw.ahk'])\n"}, 5, 6),
+        call('indirect', 'bash', {'command': 'python helper.py'}, 7, 8),
+        call('old-route', 'bash', {'command': 'acu run draw.ahk'}, 9, 10),
+        call('quoted', 'bash', {'command': 'echo "desktop-tool execute draw.ahk"'}, 11, 12),
+    ]
+    result = measure_efficiency(metrics(tools), 'pi-acu')
+    assert [item['id'] for item in result['computer_use']['calls']] == ['direct', 'indirect']
+    assert {item['call_id'] for item in result['code_tokens']['payloads']} == {'source', 'direct', 'helper', 'indirect'}
+
+
+# A shared namespace change applies to direct calls and remembered JavaScript helpers.
+def test_arm_table_namespace_controls_javascript_attribution(monkeypatch):
+    from dataclasses import replace
+    from bench.arms import ARM_TABLE
+
+    arm = ARM_TABLE['pi-computer-use']
+    route = replace(arm.route, javascript_namespace='desktop')
+    monkeypatch.setattr('bench.efficiency.ARM_TABLE', {arm.id: replace(arm, route=route)})
+    tools = [
+        call('define', 'node_repl.js', {'code': 'globalThis.tap=async()=>{await desktop.click()}; await tap()'}, 1, 2),
+        call('repeat', 'node_repl.js', {'code': 'await tap()'}, 3, 4),
+        call('old-route', 'node_repl.js', {'code': 'await sky.click()'}, 5, 6),
+        call('quoted', 'node_repl.js', {'code': 'console.log("desktop.click()")'}, 7, 8),
+    ]
+    result = measure_efficiency(metrics(tools), arm.id)
+    assert [item['id'] for item in result['computer_use']['calls']] == ['define', 'repeat']
+
+
+# Action exclusions come from the route in both direct commands and captured shell helpers.
+def test_arm_table_exclusions_control_shell_helper_attribution(monkeypatch):
+    from dataclasses import replace
+    from bench.arms import ARM_TABLE
+
+    arm = ARM_TABLE['pi-cua']
+    route = replace(arm.route, executable='desktop-driver', excluded_subcommands=('inspect-help',))
+    monkeypatch.setattr('bench.efficiency.ARM_TABLE', {arm.id: replace(arm, route=route)})
+    tools = [
+        call('source', 'write', {'path': 'helper.sh', 'content': 'desktop-driver.exe click {}'}, 1, 2),
+        call('indirect', 'bash', {'command': 'bash helper.sh'}, 3, 4),
+        call('direct', 'bash', {'command': 'desktop-driver click {}'}, 5, 6),
+        call('help', 'bash', {'command': 'desktop-driver inspect-help'}, 7, 8),
+        call('help-source', 'write', {'path': 'help.sh', 'content': 'desktop-driver inspect-help'}, 9, 10),
+        call('help-indirect', 'bash', {'command': 'bash help.sh'}, 11, 12),
+    ]
+    result = measure_efficiency(metrics(tools), arm.id)
+    assert [item['id'] for item in result['computer_use']['calls']] == ['indirect', 'direct']
+    assert {item['call_id'] for item in result['code_tokens']['payloads']} == {'source', 'indirect', 'direct'}
+
+
 def test_direct_calls_use_output_denominator_and_union_of_call_intervals():
     tools = [call('a', 'bash', {'command': 'acu run a.ahk'}, 10, 12),
              call('b', 'bash', {'command': 'acu run b.ahk'}, 11, 14),
