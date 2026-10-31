@@ -222,6 +222,37 @@ def test_each_run_in_a_shell_call_gets_only_its_own_result(tmp_path):
     assert 'unknown app: 2 runs' in result.stdout
 
 
+@pytest.mark.parametrize('output', [
+    'window=1 "Notes" Other.exe\nsnippets C:\\store\\Other.exe\n',
+    'window=42 "Changed title" Different.exe\nsnippets C:\\store\\Different.exe\n',
+    'no dump header or snippet listing\n',
+])
+@pytest.mark.parametrize('app', ['Recorded.exe', None])
+def test_recorded_app_is_authoritative_even_when_output_and_selectors_disagree(tmp_path, output, app):
+    session = shell_session(tmp_path, 'acu run tree.ahk -- "ahk_exe Selector.exe"', tmp_path, [output])
+    result = history(tmp_path, session, logs=[
+        {'ts': '2026-10-20T10:00:02Z', 'script': str(Path('acu/tree.ahk').resolve()),
+         'outcome': 'ok', 'app': app},
+    ])
+    assert result.returncode == 0, result.stdout + result.stderr
+    expected = 'Recorded.exe' if app else 'unknown app'
+    assert f'{expected}: 1 runs (1 ok' in result.stdout
+    assert 'Other.exe' not in result.stdout and 'Different.exe' not in result.stdout
+    assert 'Selector.exe' not in result.stdout
+
+
+def test_recorded_apps_pair_with_runs_in_order_in_one_shell_call(tmp_path):
+    tree = str(Path('acu/tree.ahk').resolve())
+    session = shell_session(tmp_path, 'acu run tree.ahk; acu run tree.ahk', tmp_path)
+    result = history(tmp_path, session, logs=[
+        {'ts': '2026-10-20T10:00:03Z', 'script': tree, 'outcome': 'error', 'app': 'Second.exe'},
+        {'ts': '2026-10-20T10:00:02Z', 'script': tree, 'outcome': 'ok', 'app': 'First.exe'},
+    ])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'First.exe: 1 runs (1 ok, 0 error' in result.stdout
+    assert 'Second.exe: 1 runs (0 ok, 1 error' in result.stdout
+
+
 @pytest.mark.parametrize('data, decoded', [
     ('WinActivate("ahk_exe Editor.exe")\n'.encode('utf-16'), True),
     (b'\xffWinActivate("ahk_exe Editor.exe")\n', False),  # Neither UTF-8 nor UTF-16 with a BOM: source stays unknown.

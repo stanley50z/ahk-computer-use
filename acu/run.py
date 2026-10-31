@@ -24,12 +24,13 @@ also write a crash report with the full output to <ACU_HOME>/crashes/. ACU_HOME 
 # Modules a run does not always need are imported where they are used: the CLI starts once per action chain.
 import ctypes
 import os
+import re
 import subprocess
 import sys
 import time
 from contextlib import contextmanager
 from ctypes import wintypes
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Sequence
 
@@ -43,6 +44,12 @@ OUTPUT_ARG = "--acu-out="  # the prelude strips these leading arguments: the out
 HOME_ARG = "--acu-home="
 
 Outcome = Literal["ok", "error", "timeout"]
+SNIPPET_MARKER = re.compile(r"^\[acu:snippets\] ([^\\/\r\n:]+\.exe)\r?$(?:\n)?", re.MULTILINE | re.IGNORECASE)
+
+
+def is_app_process(name: str) -> bool:
+    """Exclude store-app frame hosts from both run records and legacy history attribution."""
+    return name.casefold() != "applicationframehost.exe"
 
 
 @dataclass
@@ -54,6 +61,13 @@ class Run:
     exit_code: int
     duration_ms: int
     trailer: str
+    app: str | None = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Capture one distinct app before discovery expands output; absent/ambiguous markers stay unknown."""
+        names = {match[1].casefold(): match[1] for match in SNIPPET_MARKER.finditer(self.output)
+                 if is_app_process(match[1])}
+        self.app = next(iter(names.values())) if len(names) == 1 else None
 
 
 def install_console_handlers() -> None:
@@ -352,6 +366,7 @@ def record(script: Path, run: Run, timeout: float) -> Path | None:
         "exit_code": run.exit_code,
         "duration_ms": run.duration_ms,
         "timeout_s": timeout,
+        "app": run.app,
     }
     report = None
     if run.outcome != "ok":

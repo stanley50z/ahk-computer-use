@@ -37,6 +37,8 @@ def test_run_expands_full_list_and_preserves_other_output(store, tmp_path, monke
     assert output.startswith(f"before\nsnippets {store}\n")
     assert "action-000.ahk | args: value | does: Temporary action 0\n" in output
     assert output.endswith("action-304.ahk | args: value | does: Temporary action 304\nafter\n")
+    entry = json.loads((tool.launcher.acu_home() / "logs" / "runs.jsonl").read_text(encoding="utf-8"))
+    assert entry["app"] == "calculatorapp.exe"
 
 
 @pytest.mark.parametrize("settings_text", ["{", '{"snippets":{"enabled":"yes"}}'])
@@ -55,7 +57,9 @@ def test_invalid_settings_preserve_completed_run(store, tmp_path, monkeypatch, s
     assert len(lines) == 3 and lines[0] == "before" and lines[2] == "after"
     assert "Invalid settings file" in lines[1] and str(settings) in lines[1]
     log = Path(result["artifacts"]["run_log"])
-    assert json.loads(log.read_text(encoding="utf-8").splitlines()[-1])["outcome"] == "ok"
+    entry = json.loads(log.read_text(encoding="utf-8").splitlines()[-1])
+    assert entry["outcome"] == "ok"
+    assert entry["app"] == "CalculatorApp.exe"
 
 
 def test_unreadable_snippet_preserves_completed_run_and_other_snippets(store, tmp_path, monkeypatch):
@@ -98,6 +102,8 @@ def test_discovery_without_snippets_is_quiet(case, store, tmp_path, monkeypatch)
     output = tool.run(str(script))["output"]
     expected = f"before\nsnippets {store}\nafter\n" if case == "empty-folder" else "before\nafter\n"
     assert output == expected
+    entry = json.loads((tool.launcher.acu_home() / "logs" / "runs.jsonl").read_text(encoding="utf-8"))
+    assert entry["app"] == "CalculatorApp.exe"
 
 
 # Run the installed CLI from the project's working folder, not the script's folder.

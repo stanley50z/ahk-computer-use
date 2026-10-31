@@ -12,7 +12,7 @@ import re
 import shlex
 import warnings
 
-from .run import acu_home
+from .run import acu_home, is_app_process
 from .snippets import snippets_root
 from .tool import BUNDLED_SCRIPTS, resolve_script
 
@@ -439,6 +439,7 @@ def collect(calls, root):
 # Require a unique path+tool interval assignment. Never consume another session's old run.
 def join_runs(runs, logs, root):
     grouped = defaultdict(list)
+    recorded_apps = {}
     for run in runs:
         grouped[(run.call.id, run.path.casefold())].append(run)
     assignments = defaultdict(list)
@@ -457,6 +458,8 @@ def join_runs(runs, logs, root):
         if len(matches) == len(group):
             for run, row in zip(group, sorted(matches, key=lambda row: timestamp(row["ts"]))):
                 run.outcome = row["outcome"]
+                if "app" in row:
+                    recorded_apps[id(run)] = row["app"]
                 if run.source is not None and row.get("sha256"):
                     variants = {run.source.encode("utf-8"), run.source.replace("\r\n", "\n").replace("\n", "\r\n").encode("utf-8")}
                     if row["sha256"] not in {hashlib.sha256(data).hexdigest() for data in variants}:
@@ -465,11 +468,13 @@ def join_runs(runs, logs, root):
                     data = Path(run.path).read_bytes()
                     if hashlib.sha256(data).hexdigest() == row.get("sha256"):
                         run.source = decoded_source(data)
-    # Pair each call's CLI results with its runs in order; when the counts differ no result is attributed.
+    # Legacy rows without app: pair CLI results in order, never attributing mismatched counts.
     by_call, outputs = defaultdict(list), {}
     for run in runs:
         by_call[run.call.id].append(run)
     for call_runs in by_call.values():
+        if all(id(run) in recorded_apps for run in call_runs):
+            continue
         results = cli_outputs(call_runs[0].call.output)
         if len(results) == len(call_runs):
             outputs.update(zip(map(id, call_runs), results))
@@ -477,18 +482,22 @@ def join_runs(runs, logs, root):
         app = snippet_app(run.path, root)
         run.snippet = app is not None
         run.look = posixpath.basename(run.path).lower() in ("tree.ahk", "screenshot.ahk")
+        if run.source is not None:
+            run.lines = len(run.source.splitlines())
+        if id(run) in recorded_apps:
+            run.app = recorded_apps[id(run)] or "unknown app"
+            continue
+        # Compatibility only for rows predating app (or unmatched requests).
         names = app_names((run.source or "") + "\n" + run.arguments)
         output = outputs.get(id(run), "")
         names.update(re.findall(r"^window=\d+ .*? ([\w.+-]+\.exe)\s*$", output, re.M))
         # The snippet list names a store app's own process; its frame host names no app.
         names.update(re.findall(r"^snippets .*[\\/]([\w.+-]+\.exe)\s*$", output, re.M))
-        names = {name for name in names if name.casefold() != "applicationframehost.exe"}
+        names = {name for name in names if is_app_process(name)}
         if app:
             run.app = app
         elif len({name.casefold() for name in names}) == 1:
             run.app = sorted(names)[0]
-        if run.source is not None:
-            run.lines = len(run.source.splitlines())
 
 
 # Summarize all requests while keeping code and raw result text out of the report.

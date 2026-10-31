@@ -124,6 +124,8 @@ acu history <session-file.jsonl>
 
 History reads a native Pi, Codex, or Claude Code session alongside ACU's run log. It summarizes app activity, repeated attempts that may be worth saving as snippets, changed snippets, and snippets with frequent failures. It does not use the desktop or modify the store. Missing or ambiguous evidence stays unknown. Run `acu history --help` for the matching rules and thresholds.
 
+New run records include `app`, captured from snippet markers before discovery expands them. It is the process name, or `null` when no marker identifies a single app. `ApplicationFrameHost.exe` does not identify an app; repeated names ignore case, and markers naming different apps remain unknown. This works even when snippet listing is disabled or the store is missing. History uses the recorded value, including `null`, without inferring a different app from captured output or script selectors. Only older records without `app` (and unmatched requests) use the legacy inference from script selectors, snippet paths, dump headers, and snippet listings. Run logs still contain no script text.
+
 ## Debugging artifacts
 
 | Artifact | Default location |

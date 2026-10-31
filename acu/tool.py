@@ -52,7 +52,7 @@ def _desktop_lease():
 
 def _expand_snippet_markers(output: str, working_folder: Path) -> str:
     """Replace AHK discovery lines using the same store and format as explicit listing."""
-    marker = re.compile(r"^\[acu:snippets\] ([^\\/\r\n:]+\.exe)\r?$(?:\n)?", re.MULTILINE | re.IGNORECASE)
+    marker = launcher.SNIPPET_MARKER
     if not marker.search(output):
         return output
     try:
