@@ -30,9 +30,8 @@ def test_benchmark_entry_points_do_not_offer_an_overall_deadline():
 def test_benchmark_setup_failure_stops_before_creating_a_trial(tmp_path, entry, arguments, environment):
     checkout = tmp_path / 'checkout'
     bench = checkout / 'bench'
-    bench.mkdir(parents=True)
-    for name in ('__init__.py', 'start.py', 'run.py', 'intervals.py', 'runtime.py'):
-        shutil.copyfile(REPO / 'bench' / name, bench / name)
+    # Copy the controller's package, including adapters, while keeping dependencies deliberately absent.
+    shutil.copytree(REPO / 'bench', bench, ignore=shutil.ignore_patterns('__pycache__', 'assets'))
     if environment == 'without-dependencies':
         venv.EnvBuilder(with_pip=False).create(checkout / '.venv')
     result = subprocess.run([sys._base_executable, '-S', str(bench / entry), *arguments],

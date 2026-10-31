@@ -56,13 +56,13 @@ def illustrator_reference(tmp_path, monkeypatch):
         return
     from PIL import Image, ImageDraw
 
-    import bench.run
+    import bench.illustrator_pen_tool
 
     stand_in = tmp_path / "Cloud9-Reference.png"
     image = Image.new("RGB", (800, 800), "white")
     ImageDraw.Draw(image).rectangle((143, 206, 692, 584), fill=(0, 174, 239))
     image.save(stand_in, dpi=(72, 72))
-    monkeypatch.setattr(bench.run, "ILLUSTRATOR_REFERENCE", stand_in)
+    monkeypatch.setattr(bench.illustrator_pen_tool, "ILLUSTRATOR_REFERENCE", stand_in)
 
 
 @pytest.fixture(autouse=True)

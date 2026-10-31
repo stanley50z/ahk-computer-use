@@ -8,9 +8,11 @@ method are also graded on that input, observed by bench/input_recorder.py while 
 """
 
 import ctypes
+import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 import traceback
@@ -19,6 +21,9 @@ import xml.etree.ElementTree as ET
 import zipfile
 from ctypes import wintypes
 from pathlib import Path
+
+from bench.common import ROOT, save_json
+from bench.scenario import Scenario
 
 GUI360_REVISION = '1c46362efaae836c601004e77b98a1aba89a530f'
 OFFICE_DIR = Path(os.environ.get('ProgramFiles', 'C:/Program Files')) / 'Microsoft Office/root/Office16'
@@ -56,6 +61,52 @@ OFFICE_EXES = [app['exe'] for app in APPS.values()]
 
 def is_tb3(scenario):
     return str(scenario).startswith('tb3.')
+
+
+# TB3 records only actor input and collects the saved Office document after the conduct audit.
+class TB3Scenario(Scenario):
+    application = 'office'
+
+    def __init__(self, name):
+        self.name = name
+        self.collected = False
+
+    def prepare_files(self, plan):
+        workspace = Path(plan['workspace'])
+        task = TASKS[self.name]
+        shutil.copyfile(template_path(task['template']), workspace / task['template'])
+        plan['assets'] = {task['template']: hashlib.sha256((workspace / task['template']).read_bytes()).hexdigest()}
+        plan['tb3'] = {**task, 'gui360_revision': GUI360_REVISION, 'window_dips': list(WINDOW_DIPS)}
+        plan['grading'] = {'mode': 'ooxml-file-check-v1', 'llm_judge': None}
+        plan['skill_guidance_policy'] = 'benchmark-neutral-v1'
+
+    def approved_apps(self):
+        executable = APPS[TASKS[self.name]['app']]['exe']
+        return [executable, str(OFFICE_DIR / executable), 'process:' + str(OFFICE_DIR / executable)]
+
+    def prepare_desktop(self, trial):
+        prepare_desktop(trial.plan, trial.observer)
+
+    def start_recorder(self, run_dir):
+        return start_recorder(run_dir)
+
+    def stop_recorder(self, run_dir, recorder):
+        stop_recorder(run_dir, recorder)
+
+    def collect_and_grade(self, trial, tools):
+        self.collected = True
+        collect(trial.run_dir, trial.plan, trial.observer)
+        return grade(trial.run_dir, trial.plan, tools)
+
+    def cleanup(self, trial):
+        result = cleanup(trial.run_dir)
+        result['collected'] = self.collected
+        return result
+
+    def summarize(self, summary, plan, verification, conduct, isolation):
+        summary.update(scenario=plan['scenario'], gui360_id=plan['tb3']['gui360_id'],
+                       file_check=verification['file_check'], input_check=verification['input_check'],
+                       office_com_used=verification['office_com_used'], tool_calls=verification['tool_calls'])
 
 
 # Actor prompt: where the document is, the task request, where to keep files, and the shared open-document ending.
@@ -124,7 +175,6 @@ def bind_document(path):
 
 
 def screenshot(run_dir, observer, hwnd, name):
-    from bench.run import ROOT
     path = Path(run_dir) / 'grading' / name
     observer(run_dir, ROOT / 'acu/screenshot.ahk', 'app', f'ahk_id {hwnd}', '--out', path, '--max', '0', suffix='-' + path.stem)
     return path
@@ -132,7 +182,6 @@ def screenshot(run_dir, observer, hwnd, name):
 
 # UFO's environment preparation: open the copied template in a fresh Office instance the bench owns.
 def prepare_desktop(plan, observer):
-    from bench.run import ROOT, save_json
     run_dir = Path(plan['run_dir'])
     task, document = plan['tb3'], Path(plan['workspace']) / plan['tb3']['template']
     app = APPS[task['app']]
@@ -173,7 +222,6 @@ def _com_retry(action, what, log, escape):
 
 # UFO's post-execution: final screenshot, save the document through COM, quit the owned Office instance.
 def collect(run_dir, plan, observer):
-    from bench.run import ROOT, save_json
     run_dir = Path(run_dir)
     identity = json.loads((run_dir / 'office-identity.json').read_text(encoding='utf-8'))
     record = {'interventions': [], 'log': []}
@@ -234,7 +282,6 @@ COM_PATTERN = r'(?:Excel|Word)\.Application|win32com|ComObj(?:Get|Active|ect)\b|
 
 # GUI-360 templates and the bench's own templates live in separate asset folders.
 def template_path(name):
-    from bench.run import ROOT
     gui360 = ROOT / 'bench/assets/gui360' / name
     return gui360 if gui360.is_file() else ROOT / 'bench/assets/tb3' / name
 
@@ -242,7 +289,6 @@ def template_path(name):
 # Start the Raw Input recorder for the actor's run; maintainer setup and collection stay outside its window.
 def start_recorder(run_dir):
     import sys
-    from bench.run import ROOT, save_json
     run_dir = Path(run_dir)
     process = subprocess.Popen([sys.executable, str(ROOT / 'bench/input_recorder.py'), str(run_dir / 'input-log.jsonl'),
                                 str(run_dir / 'input-recorder.stop')], creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))

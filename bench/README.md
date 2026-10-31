@@ -306,3 +306,24 @@ python -m pytest tests/test_bench*.py -q
 ```
 
 These tests exercise profiles, usage/timing, ownership checks, Codex computer-use audit parsing, cancellation and descendant cleanup using ordinary Python stand-ins. They do not launch AutoHotkey, open applications, or interact with the desktop. Real desktop evidence comes from explicitly approved trials, not a routine full integration suite.
+
+### Scenario lifecycle
+
+`bench/scenario.py` defines the scenario contract. Calculator, Illustrator and TB3 implement it in their own modules;
+`bench/scenarios/__init__.py` registers a fresh adapter per attempt. Add an adapter and its scenario Markdown file to
+that registry to add a task. `bench/common.py` owns shared paths and evidence IO; adapters never import `bench/run.py`.
+
+Preparation delegates asset validation, file preparation and native application allowlists to the adapter.
+`run_trial` owns the actor, audits, evidence writes and failure handling. It prepares the desktop, starts optional
+input recording immediately before the actor, stops recording immediately afterward, and collects and grades the
+result. Calculator retains verification before conduct; Illustrator and TB3 collect only after `conduct.json` is
+written. Illustrator keeps the result of its combined collection/cleanup operation and never repeats a refused
+collection. The shared `finally` block performs scenario cleanup and restores the saved cursor scheme even if
+cleanup raises. Adapters retain their summary fields and verdict policies.
+
+`run_trial` and `run` accept keyword-only `scenario`, `capture_actor` and `observer` dependencies for offline lifecycle
+checks. Tests exercise the real measurement, isolation, conduct and evidence code with synthetic actor sessions and
+fake desktop boundaries. `tests/test_bench_scenarios.py` pins summary/cleanup shapes and collection/failure ordering;
+the runtime-writes test uses the same seam. Trial artifacts remain in the run directory: `verification.json`,
+`conduct.json`, `summary.json`, `cleanup.json`, and `crash.txt` with a traceback on failure. Test runs can retain these
+fake directories with pytest's `--basetemp <evidence-directory>` option.
