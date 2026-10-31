@@ -10,7 +10,13 @@ Historical reports call Calculator "Testbench 1" and Illustrator "Testbench 2", 
 bench/
 ├── README.md
 ├── __init__.py
-├── run.py                         Shared controller, profiles, timing and audits
+├── run.py                         Shared trial controller and offline analysis CLI
+├── arms.py                        Arm table: harness, skill, runtime and route
+├── harnesses/                     Commands, profiles, transcripts and isolation audits
+│   ├── pi.py
+│   ├── claude.py
+│   └── codex.py                    Archived trial replay only
+├── tool_calls.py                  Shared normalized tool-call record
 ├── start.py                       Background trial entry point
 ├── stop.py                        Cancellation and cleanup acknowledgement
 ├── processes.py                   Owned child-process lifecycle
@@ -51,6 +57,12 @@ bench/
 ```
 
 Shared trial machinery stays at the root; application-specific AHK/JSX scripts live in their application folder. `illustrator_pen_tool.py` coordinates those scripts and checks the drawing and maintainer-rendered evidence. Maintainer observers run outside actor timing and are not tools available to the actor.
+
+`ARM_TABLE` selects a harness adapter without interpreting the arm's name. Each adapter builds its command/profile, locates credentials, analyses its transcript and audits its persisted session. Scenario adapters still own application preparation, permissions, grading and cleanup. Codex accepts archived analysis and isolation evidence but cannot prepare or launch a new trial.
+
+The adapters return `ToolCall` dictionaries with arguments, decoded argument text, results, receipt timing, reported error state, and explicit `matched`, `completed` and `truncated` flags. Efficiency, conduct, TB3 grading and the runtime-write audit consume this same list. Pending requests and unmatched results remain visible; historical metrics and task grading select completed matched requests. Codex completed items contain their own arguments even when their start is missing, so they remain countable with unknown duration. Codex native status/error evidence is retained separately from the unreported Pi/Claude error boolean. The runtime-write audit supports the same Pi/Claude shell routes as before; Codex output does not newly establish runtime-write coverage.
+
+Pairing follows call IDs, with the most recent pending request winning when an ID is repeated. Pi's absent `isError` stays unknown and cannot prove a successful write; Claude's absent `is_error` means false. Pi truncation metadata and Claude persisted-output markers withhold runtime-write attribution without erasing completed-call timing. Claude tool blocks are paired in either assistant or user envelopes, following the former runtime-write parser. No raw-event parser remains in the runtime-write audit.
 
 Generated transcripts, screenshots, metrics, logs and crash reports belong in `.pi/bench/<run-id>/`, not here. New comparison reports are self-contained HTML in `docs/reports/`. When final-image evidence exists, embed a labeled side-by-side comparison of every scheduled trial, including failures and incomplete outputs; mark missing images explicitly and use a consistent scale. Keep raw evidence local and unchanged. Do not upload raw agent sessions or bulk trial outputs; share only requested reports and selected, reviewed evidence. Historical results remain unchanged; maintenance notes may identify superseded instructions without rewriting original measurements.
 

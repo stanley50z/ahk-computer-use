@@ -9,6 +9,8 @@ import shlex
 import stat
 import tempfile
 
+from bench.tool_calls import ToolCall
+
 
 # Normalize returned absolute paths without interpreting them relative to actor cwd.
 def absolute_path(value):
@@ -116,46 +118,19 @@ def capture_requests(arguments):
     return [path] if isinstance(path, str) and path and request.get('include_screenshot') is not False else []
 
 
-# Retain matched request arguments as well as results, so readbacks cannot impersonate capture calls.
-def execution_results(records):
-    pending = {}
-    for record in records:
-        event = record.get('event', record)
-        kind = event.get('type')
-        if kind == 'tool_execution_start':
-            pending[event['toolCallId']] = (event.get('toolName', ''), event.get('args'))
-        elif kind == 'tool_execution_end':
-            call_id = event['toolCallId']
-            name, arguments = pending.pop(call_id, (None, None))
-            body = event.get('result')
-            truncated = isinstance(body, dict) and bool((body.get('details') or {}).get('truncation', {}).get('truncated'))
-            yield call_id, name or 'unmatched', arguments, body, name is None or event.get('isError') is not False or truncated
-        elif kind in ('assistant', 'user'):
-            content = event.get('message', {}).get('content', [])
-            for block in content if isinstance(content, list) else []:
-                if block.get('type') == 'tool_use':
-                    pending[block['id']] = (block.get('name', ''), block.get('input'))
-                elif block.get('type') == 'tool_result':
-                    call_id = block['tool_use_id']
-                    name, arguments = pending.pop(call_id, (None, None))
-                    body = block.get('content')
-                    truncated = isinstance(body, str) and '<persisted-output>' in body
-                    yield call_id, name or 'unmatched', arguments, body, name is None or bool(block.get('is_error')) or truncated
-    for call_id, (name, arguments) in pending.items():
-        yield call_id, name, arguments, None, True
-
-
 # A changed existing destination plus a successful actual output is the failure boundary.
-def audit_runtime_writes(records, before, after):
+def audit_runtime_writes(calls: list[ToolCall], before, after):
     result = {'policy': 'direct-root-metadata-v1', 'outputs': [], 'unverified_calls': [],
               'changed_preexisting': [], 'coverage': 'unverified' if before is None or after is None else 'bounded'}
     if before is not None and after is not None:
         result['changed_preexisting'] = [path for path, info in before['files'].items()
                                          if after['files'].get(path) != info]
     shell_calls = 0
-    for call_id, name, arguments, body, failed in execution_results(records or []):
-        if name.casefold() not in ('bash', 'shell', 'unmatched'):
+    for call in calls:
+        if call['name'].casefold() not in ('bash', 'shell', 'unmatched'):
             continue
+        call_id, arguments, body = call['id'], call['arguments'], call['result']
+        failed = not call['matched'] or not call['completed'] or call['is_error'] is not False or call['truncated']
         shell_calls += 1
         requested = capture_requests(arguments)
         destinations = list(dict.fromkeys(result_destinations(body))) if not failed else []

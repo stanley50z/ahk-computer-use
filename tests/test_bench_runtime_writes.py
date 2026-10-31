@@ -4,7 +4,7 @@ import shlex
 
 import pytest
 
-from bench.run import conduct_audit
+from bench.run import analyse_claude, analyse_pi, conduct_audit
 
 
 def events(harness, path, *, failed=False, command=None, body=None):
@@ -26,8 +26,10 @@ def events(harness, path, *, failed=False, command=None, body=None):
 
 
 def audit(tmp_path, records, before, after):
+    analyse = analyse_pi if records[0]['event']['type'].startswith('tool_') else analyse_claude
+    tools = analyse(records, 2)['tools']
     return conduct_audit({'workspace': str(tmp_path), 'skill_path': str(tmp_path / 'skill/SKILL.md')},
-                         '', '', {}, {}, [], raw_records=records,
+                         '', '', {}, {}, tools,
                          runtime_before=before, runtime_after=after)
 
 
@@ -165,7 +167,7 @@ def test_old_capture_json_or_unresolved_helper_cannot_blame_an_unrelated_write(t
 
 
 def test_unsupported_event_format_does_not_claim_complete_runtime_evidence(tmp_path):
-    result = audit(tmp_path, [{'event': {'type': 'response_item', 'payload': {'type': 'function_call_output'}}}], snapshot({}), snapshot({}))
+    result = audit(tmp_path, [{'elapsed_s': 0, 'event': {'type': 'response_item', 'payload': {'type': 'function_call_output'}}}], snapshot({}), snapshot({}))
     assert result['runtime_writes']['evidence_complete'] is False
 
 

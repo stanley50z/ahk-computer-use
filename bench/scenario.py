@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from bench.tool_calls import ToolCall
+
 
 # The independent observer is shared by all arms and can be replaced for offline lifecycle checks.
 class Observer(Protocol):
@@ -58,7 +60,7 @@ class Scenario(ABC):
         pass
 
     @abstractmethod
-    def collect_and_grade(self, trial: Trial, tools) -> dict:
+    def collect_and_grade(self, trial: Trial, tools: list[ToolCall]) -> dict:
         """Return verification; the controller persists it at this scenario's audit boundary."""
 
     @abstractmethod

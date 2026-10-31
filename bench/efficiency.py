@@ -18,10 +18,10 @@ from pathlib import PurePosixPath
 import tiktoken
 
 from bench.intervals import busy_seconds
+from bench.arms import ARM_TABLE
+from bench.tool_calls import ToolCall, completed_calls
 
 ENCODING = 'o200k_base'
-RUNTIMES = {'pi-acu': 'ACU', 'claude-acu': 'ACU', 'pi-cua': 'CUA', 'claude-cua': 'CUA',
-            'pi-computer-use': 'Codex computer use', 'codex-computer-use': 'Codex computer use'}
 SCRIPT_SUFFIXES = {'.ahk', '.py', '.js', '.mjs', '.ps1', '.sh'}
 PYTHON_COMMAND = re.compile(r'(?:python(?:\d+(?:\.\d+)?)?|py)(?:\.exe)?')
 EXECUTION_WRAPPERS = {'timeout', 'nohup', 'exec', 'xargs', 'cmd', 'cmd.exe', 'powershell', 'powershell.exe', 'uv', 'env'}
@@ -350,7 +350,7 @@ def shell_routes(text):
 
 # Attribute captured code payloads and execution spans; emit the selection ledger and unresolved cases for review.
 def measure_efficiency(measurements, arm):
-    runtime = RUNTIMES[arm]
+    runtime = ARM_TABLE[arm].runtime
     scripts, payloads, included = {}, {}, set()
     calls, notes, helpers = [], [], set()
 
@@ -489,7 +489,8 @@ def measure_efficiency(measurements, arm):
             if path and PurePosixPath(script_name(path)).suffix in SCRIPT_SUFFIXES:
                 invalidate_source(path, call_id, f'unreplayed Python source mutation for {path}')
 
-    for tool in sorted(measurements['tools'], key=lambda item: item['start_s'] if item['start_s'] is not None else item['end_s']):
+    tools: list[ToolCall] = completed_calls(measurements['tools'])
+    for tool in sorted(tools, key=lambda item: item['start_s'] if item['start_s'] is not None else item['end_s']):
         identity, name = tool['id'], tool['name'].casefold()
         args = tool.get('arguments')
         if not isinstance(args, dict):
