@@ -1,175 +1,136 @@
-"""Launcher failure paths through the CLI, without starting AutoHotkey."""
+"""Launcher lifecycle through the process adapter, without starting AutoHotkey."""
 
-import ctypes
 import json
 import signal
-import subprocess
-from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import Mock
+from contextlib import contextmanager
 
 import pytest
 
-from acu import run as launcher
-from acu.cli import main
+from acu import run as launcher, tool
+from acu.tool import RunOptions, run_operation
 
 
 @pytest.fixture
-def native_process(tmp_path, monkeypatch):
-    """Model process creation/exit at the Win32 boundary without starting a program."""
+def process_run(tmp_path, process_adapter):
+    """Use real run orchestration with isolated installation paths and a fake process adapter."""
     script = tmp_path / "action.ahk"
     script.write_text("ExitApp\n", encoding="utf-8")
-    for name in ("AutoHotkey64_UIA.exe", "AutoHotkey64.exe"):
-        (tmp_path / name).touch()
-    monkeypatch.setenv("ACU_AHK", str(tmp_path / "AutoHotkey64_UIA.exe"))
-    validator = Mock(stdout=Mock(), returncode=0)
-    validator.communicate.return_value = (b"", None)
-    validator.poll.return_value = 0
-    validator.wait.return_value = 0
-    monkeypatch.setattr(subprocess, "Popen", Mock(return_value=validator))
-    state = SimpleNamespace(alive=False, closed=False, closed_while_alive=False, interrupt_launch=False)
+    adapter = process_adapter
+    adapter.output = "script output\n"
 
-    def start(info_pointer):
-        ctypes.cast(info_pointer, ctypes.POINTER(launcher.ShellExecuteInfo)).contents.hProcess = 12345
-        state.alive = True
-        if state.interrupt_launch:
-            signal.raise_signal(signal.SIGINT)
-        return 1
+    def execute(timeout=1, lease=False):
+        return run_operation(str(script), timeout, options=RunOptions(lease=lease), process_adapter=adapter)
 
-    def terminate(*_):
-        state.alive = False
-        return 1
-
-    def exit_code(_, pointer):
-        ctypes.cast(pointer, ctypes.POINTER(ctypes.c_ulong)).contents.value = 0
-        return 1
-
-    def close(_):
-        state.closed_while_alive = state.alive
-        state.closed = True
-        return 1
-
-    kernel = SimpleNamespace(
-        WaitForSingleObject=Mock(side_effect=lambda *_: 258 if state.alive else 0),
-        GetProcessId=Mock(return_value=424242), TerminateProcess=Mock(side_effect=terminate),
-        GetExitCodeProcess=Mock(side_effect=exit_code), CloseHandle=Mock(side_effect=close),
-    )
-    shell = SimpleNamespace(ShellExecuteExW=Mock(side_effect=start))
-    monkeypatch.setattr(ctypes, "WinDLL", lambda name, **_: shell if name == "shell32" else kernel)
-    monkeypatch.setattr(ctypes.windll.user32, "EnumWindows", Mock(return_value=1))
-    monkeypatch.setattr(launcher, "CLOSE_GRACE_SECONDS", 0)
-    return script, state, kernel
+    return adapter, execute
 
 
-def test_interrupt_during_process_creation_is_deferred_until_cleanup_is_registered(native_process):
-    script, state, _ = native_process
-    state.interrupt_launch = True
+@pytest.mark.parametrize("phase", ["validation", "execution"])
+def test_creation_interrupt_is_deferred_until_cleanup_is_registered(process_run, phase):
+    adapter, execute = process_run
+    adapter.interrupt_creation = phase
+    adapter.script.finish = False
     previous = signal.getsignal(signal.SIGINT)
-    try:
-        result = launcher.run_script(script, 1)
-    except KeyboardInterrupt:
-        result = None
+    result = execute().run
 
-    assert not state.alive, "an interrupt during ShellExecute orphaned the process"
-    assert state.closed and not state.closed_while_alive
-    assert result is not None and result.exit_code == 130
+    assert result.exit_code == 130
     assert signal.getsignal(signal.SIGINT) == previous
+    assert adapter.events.index("validator.wait") < adapter.events.index("validator.close")
+    if phase == "execution":
+        assert adapter.script.closed and not adapter.script.alive
+        assert result.output == "script output\n"
+    else:
+        assert "validator.kill" in adapter.events and "script.start" not in adapter.events
+        assert "validation" in result.trailer
 
 
-def test_failed_shutdown_retains_ownership_until_exit_is_verified(native_process, acu_home):
-    script, state, kernel = native_process
-    failed_termination = False
-    checks_after_failure = 0
+@pytest.mark.parametrize("ignore_close, ending", [(False, "closed on request"), (True, "killed")])
+def test_timeout_requests_close_before_kill_and_verifies_exit(process_run, ignore_close, ending):
+    adapter, execute = process_run
+    adapter.script.finish = False
+    adapter.script.ignore_close = ignore_close
+    result = execute().run
 
-    def refuse_termination(*_):
-        nonlocal failed_termination
-        failed_termination = True
-        ctypes.set_last_error(5)
-        return 0
+    assert result.exit_code == 124 and result.outcome == "timeout"
+    assert result.trailer == f"[acu] timeout 1s: {ending}"
+    assert adapter.script.closed and not adapter.script.alive
+    assert 1.0 in adapter.script.budgets, "close grace period was not offered"
+    assert ("script.kill" in adapter.events) == ignore_close
+    if ignore_close:
+        assert adapter.events.index("script.request_close") < adapter.events.index("script.kill")
+    assert adapter.events[-2:] == ["script.exited", "script.close_handle"]
 
-    def observe_exit(*_):
-        nonlocal checks_after_failure
-        if failed_termination:
-            checks_after_failure += 1
-            if checks_after_failure >= 3:
-                state.alive = False
-        return 258 if state.alive else 0
 
-    kernel.TerminateProcess.side_effect = refuse_termination
-    kernel.WaitForSingleObject.side_effect = observe_exit
-    with pytest.raises(OSError):
-        launcher.run_script(script, 0.01)
+def test_failed_shutdown_retains_ownership_until_exit_is_verified(process_run, acu_home, monkeypatch):
+    adapter, execute = process_run
+    adapter.script.finish = False
+    adapter.script.ignore_close = True
+    adapter.script.kill_failure = True
 
-    assert failed_termination
-    assert not state.closed_while_alive, "failed shutdown released ownership of a live script"
-    assert not state.alive and state.closed
+    @contextmanager
+    def lease():
+        adapter.events.append("lease.acquired")
+        try:
+            yield
+        finally:
+            assert adapter.script.closed and not adapter.script.alive
+            adapter.events.append("lease.released")
+
+    monkeypatch.setattr(tool, "desktop_lease", lease)
+    with pytest.raises(OSError, match="termination denied"):
+        execute(lease=True)
+
+    assert adapter.script.checks_after_failure >= 3
+    assert adapter.script.closed and not adapter.script.alive
     reports = list((acu_home / "crashes").glob("*.json"))
-    assert reports
-    assert any("retaining" in json.loads(report.read_text(encoding="utf-8"))["output"] for report in reports)
+    assert len(reports) == 1
+    output = json.loads(reports[0].read_text(encoding="utf-8"))["output"]
+    assert "retaining ownership" in output and "Traceback" in output
+    assert adapter.events[-2:] == ["script.close_handle", "lease.released"]
 
 
-def test_validator_creation_interrupt_reaps_it_before_returning(tmp_path, monkeypatch, capsys):
-    script = tmp_path / "action.ahk"
-    script.write_text("ExitApp\n", encoding="utf-8")
-    for name in ("AutoHotkey64_UIA.exe", "AutoHotkey64.exe"):
-        (tmp_path / name).touch()
-    monkeypatch.setenv("ACU_AHK", str(tmp_path / "AutoHotkey64_UIA.exe"))
-    state = SimpleNamespace(alive=False, reaped=False)
+def test_validation_timeout_uses_the_run_budget_and_persists_output(process_run):
+    adapter, execute = process_run
+    adapter.validator.timeout = True
+    adapter.validator.output = b"validator output\n"
+    completed = execute(0.25)
 
-    def kill():
-        state.alive = False
-
-    def wait():
-        state.reaped = True
-        return -9
-
-    validator = Mock(stdout=Mock(), returncode=-9)
-    validator.poll.side_effect = lambda: None if state.alive else -9
-    validator.kill.side_effect = kill
-    validator.wait.side_effect = wait
-
-    def create(*_, **__):
-        state.alive = True
-        signal.raise_signal(signal.SIGINT)
-        return validator
-
-    monkeypatch.setattr(subprocess, "Popen", create)
-    exit_code = main(["run", str(script), "--timeout", "1"])
-    response = json.loads(capsys.readouterr().out)
-
-    assert not state.alive and state.reaped, "interrupted validation left its process alive"
-    assert exit_code == 130 and response["exit_code"] == 130
-    assert "validation" in response["trailer"]
-
-
-def test_validation_timeout_uses_the_run_budget_and_persists_output(tmp_path, monkeypatch, capsys):
-    """A stalled validator must finish as a logged timeout, not a tool crash."""
-    script = tmp_path / "action.ahk"
-    script.write_text("ExitApp\n", encoding="utf-8")
-    for name in ("AutoHotkey64_UIA.exe", "AutoHotkey64.exe"):
-        (tmp_path / name).touch()
-    monkeypatch.setenv("ACU_AHK", str(tmp_path / "AutoHotkey64_UIA.exe"))
-    budgets = []
-
-    def stalled_communication(**options):
-        if "timeout" not in options:
-            return b"validator output\n", None
-        budgets.append(options["timeout"])
-        raise subprocess.TimeoutExpired([], options["timeout"], output=b"validator output\n")
-
-    validator = Mock(stdout=Mock(), returncode=-9)
-    validator.communicate.side_effect = stalled_communication
-    validator.poll.return_value = None
-    validator.wait.return_value = -9
-    monkeypatch.setattr(subprocess, "Popen", Mock(return_value=validator))
-    exit_code = main(["run", str(script), "--timeout", "0.25"])
-    response = json.loads(capsys.readouterr().out)
-
-    assert budgets and budgets[0] is not None and 0 < budgets[0] <= 0.25
-    assert exit_code == 124, response
-    assert response["outcome"] == "timeout"
-    assert "validation" in response["trailer"]
-    assert "validator output" in response["output"]
-    report = json.loads(Path(response["artifacts"]["crash_report"]).read_text(encoding="utf-8"))
+    assert 0 < adapter.validator.budgets[0] <= 0.25
+    assert completed.run.exit_code == 124
+    assert completed.run.trailer == "[acu] timeout 0.25s: validation"
+    assert "script.start" not in adapter.events
+    assert adapter.events == ["validator.start", "validator.kill", "validator.wait", "validator.close"]
+    report = json.loads(completed.crash_report.read_text(encoding="utf-8"))
     assert report["outcome"] == "timeout"
-    assert report["output"] == response["output"]
+    assert report["output"] == completed.run.output == "validator output\n"
+
+
+@pytest.mark.parametrize("validation_seconds", [0.4, 1.0])
+def test_validation_and_execution_share_one_timeout_budget(process_run, monkeypatch, validation_seconds):
+    adapter, execute = process_run
+    now = 0
+
+    def finish_validation():
+        nonlocal now
+        now = validation_seconds
+
+    adapter.validator.on_communicate = finish_validation
+    monkeypatch.setattr(launcher.time, "monotonic", lambda: now)
+    result = execute().run
+    assert adapter.validator.budgets == [1]
+    if validation_seconds == 0.4:
+        assert adapter.script.budgets[0] == pytest.approx(0.6)
+        assert result.exit_code == 0
+    else:
+        assert "script.start" not in adapter.events
+        assert result.exit_code == 124 and result.trailer == "[acu] timeout 1s: validation"
+
+
+def test_second_interrupt_during_shutdown_does_not_abandon_script(process_run):
+    adapter, execute = process_run
+    adapter.script.finish = False
+    adapter.script.interrupt_wait = True
+    adapter.script.interrupt_close = True
+    result = execute().run
+    assert result.exit_code == 130
+    assert adapter.events.index("script.request_close") < adapter.events.index("script.kill")
+    assert adapter.script.closed and not adapter.script.alive

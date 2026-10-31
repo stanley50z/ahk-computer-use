@@ -3,13 +3,11 @@
 import json
 import subprocess
 import sys
-from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
 
 from acu import tool
-from acu.run import Run
 
 
 @pytest.fixture
@@ -27,13 +25,11 @@ def store(tmp_path, monkeypatch):
     return folder
 
 
-def test_run_expands_full_list_and_preserves_other_output(store, tmp_path, monkeypatch):
+def test_run_expands_full_list_and_preserves_other_output(store, tmp_path, process_adapter):
     script = tmp_path / "action.ahk"
     script.touch()
-    monkeypatch.setattr(tool, "_desktop_lease", nullcontext)
-    monkeypatch.setattr(tool.launcher, "run_script", lambda *args: Run(
-        "before\n[acu:snippets] calculatorapp.exe\nafter\n", "ok", 0, 1, "[acu] ok 1ms"))
-    output = tool.run(str(script))["output"]
+    process_adapter.output = "before\n[acu:snippets] calculatorapp.exe\nafter\n"
+    output = tool.run_operation(str(script), options=tool.RunOptions(lease=False), process_adapter=process_adapter).run.output
     assert output.startswith(f"before\nsnippets {store}\n")
     assert "action-000.ahk | args: value | does: Temporary action 0\n" in output
     assert output.endswith("action-304.ahk | args: value | does: Temporary action 304\nafter\n")
@@ -42,47 +38,41 @@ def test_run_expands_full_list_and_preserves_other_output(store, tmp_path, monke
 
 
 @pytest.mark.parametrize("settings_text", ["{", '{"snippets":{"enabled":"yes"}}'])
-def test_invalid_settings_preserve_completed_run(store, tmp_path, monkeypatch, settings_text):
+def test_invalid_settings_preserve_completed_run(store, tmp_path, process_adapter, settings_text):
     settings = tmp_path / "global.json"
     settings.write_text(settings_text, encoding="utf-8")
     script = tmp_path / "action.ahk"
     script.touch()
-    monkeypatch.setattr(tool, "_desktop_lease", nullcontext)
-    monkeypatch.setattr(tool.launcher, "run_script", lambda *args: Run(
-        "before\n[acu:snippets] CalculatorApp.exe\nafter\n", "ok", 0, 1, "[acu] ok 1ms"))
-    result = tool.run(str(script))
-    assert result["outcome"] == "ok" and result["exit_code"] == 0
-    assert result["trailer"] == "[acu] ok 1ms"
-    lines = result["output"].splitlines()
+    process_adapter.output = "before\n[acu:snippets] CalculatorApp.exe\nafter\n"
+    result = tool.run_operation(str(script), options=tool.RunOptions(lease=False), process_adapter=process_adapter)
+    assert result.run.outcome == "ok" and result.run.exit_code == 0
+    assert result.run.trailer.startswith("[acu] ok ")
+    lines = result.run.output.splitlines()
     assert len(lines) == 3 and lines[0] == "before" and lines[2] == "after"
     assert "Invalid settings file" in lines[1] and str(settings) in lines[1]
-    log = Path(result["artifacts"]["run_log"])
+    log = result.run_log
     entry = json.loads(log.read_text(encoding="utf-8").splitlines()[-1])
     assert entry["outcome"] == "ok"
     assert entry["app"] == "CalculatorApp.exe"
 
 
-def test_unreadable_snippet_preserves_completed_run_and_other_snippets(store, tmp_path, monkeypatch):
+def test_unreadable_snippet_preserves_completed_run_and_other_snippets(store, tmp_path, process_adapter):
     (store / "utf16.ahk").write_text("; does: Wide\n", encoding="utf-16")
     script = tmp_path / "action.ahk"
     script.touch()
-    monkeypatch.setattr(tool, "_desktop_lease", nullcontext)
-    monkeypatch.setattr(tool.launcher, "run_script", lambda *args: Run(
-        "before\n[acu:snippets] CalculatorApp.exe\nafter\n", "ok", 0, 1, "[acu] ok 1ms"))
-    result = tool.run(str(script))
-    assert result["outcome"] == "ok" and "run_log" in result["artifacts"]
-    lines = result["output"].splitlines()
+    process_adapter.output = "before\n[acu:snippets] CalculatorApp.exe\nafter\n"
+    result = tool.run_operation(str(script), options=tool.RunOptions(lease=False), process_adapter=process_adapter)
+    assert result.run.outcome == "ok" and result.run_log.is_file()
+    lines = result.run.output.splitlines()
     assert lines[0] == "before" and lines[-1] == "after" and len(lines) == 2 + 1 + 306
     assert any(line.startswith("utf16.ahk | unreadable: ") for line in lines)
 
 
 @pytest.mark.parametrize("case", ["missing-store", "unknown-app", "empty-folder", "disabled"])
-def test_discovery_without_snippets_is_quiet(case, store, tmp_path, monkeypatch):
+def test_discovery_without_snippets_is_quiet(case, store, tmp_path, monkeypatch, process_adapter):
     script = tmp_path / "action.ahk"
     script.touch()
-    monkeypatch.setattr(tool, "_desktop_lease", nullcontext)
-    monkeypatch.setattr(tool.launcher, "run_script", lambda *args: Run(
-        "before\n[acu:snippets] CalculatorApp.exe\nafter\n", "ok", 0, 1, "[acu] ok 1ms"))
+    process_adapter.output = "before\n[acu:snippets] CalculatorApp.exe\nafter\n"
     if case == "missing-store":
         monkeypatch.setenv("ACU_SNIPPETS_ROOT", str(tmp_path / "absent"))
     elif case == "unknown-app":
@@ -99,7 +89,7 @@ def test_discovery_without_snippets_is_quiet(case, store, tmp_path, monkeypatch)
         child = tmp_path / "nested"
         child.mkdir()
         monkeypatch.chdir(child)
-    output = tool.run(str(script))["output"]
+    output = tool.run_operation(str(script), options=tool.RunOptions(lease=False), process_adapter=process_adapter).run.output
     expected = f"before\nsnippets {store}\nafter\n" if case == "empty-folder" else "before\nafter\n"
     assert output == expected
     entry = json.loads((tool.launcher.acu_home() / "logs" / "runs.jsonl").read_text(encoding="utf-8"))
