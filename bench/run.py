@@ -21,8 +21,12 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from bench.common import ROOT, load_actor_json, read_jsonl, save_json
+from bench.calculator import (EXPRESSION, EXPECTED, actor_window, bind_owned_window,
+                              new_calculator_window, owned_window, script_input_methods)
+from bench.scenario import Trial
+from bench.scenarios import SCENARIOS, get_scenario
 from bench.intervals import busy_seconds
 from bench.runtime import ensure_project_runtime
 
@@ -42,12 +46,9 @@ CLAUDE_TOOLS = ['Read', 'Write', 'Edit', 'Bash']
 ARMS = ('pi-acu', 'pi-cua', 'pi-computer-use', 'claude-acu', 'claude-cua')
 NATIVE_TOOLS = ['mcp__node_repl__js', 'mcp__node_repl__js_reset',
                 'mcp__node_repl__js_add_node_module_dir', 'mcp__node_repl__turn_ended']
-SCENARIOS = ('calculator', 'illustrator-pen-tool', 'tb3.1', 'tb3.2', 'tb3.3', 'tb3.4')
 WINDOW_AUDIT_POLICY = 'diagnostic-only-v1'
 # Claude Code runs Opus; Pi comparisons hold GPT-6 Astra and low reasoning fixed.
 ARM_MODELS = {arm: ('claude-opus-5-5', 'low') for arm in ('claude-acu', 'claude-cua')}
-EXPRESSION = '98765 * 432 / 1234 * 56 / 789 + 6543 - 4321'
-EXPECTED = '4676.045886202710280949769213229720652488'  # normal precedence; the verifier compares to a millionth
 SKILLS = {
     'pi-acu': ROOT / 'acu',
     'claude-acu': ROOT / 'acu',
@@ -562,23 +563,6 @@ def restart_cua_daemon(run_dir, driver='cua-driver', timeout_s=30, cwd=None, rec
     return record
 
 
-# Read the actor's JSON as UTF-8, including the BOM that Windows PowerShell may emit.
-def load_actor_json(path):
-    return json.loads(path.read_text(encoding='utf-8-sig'))
-
-
-# Read LF-delimited files without treating Unicode paragraph separators as record boundaries.
-def read_jsonl(path):
-    return [json.loads(line) for line in path.read_text(encoding='utf-8').split('\n') if line.strip()]
-
-
-# Store structured evidence atomically so a stopped worker cannot leave half a JSON report.
-def save_json(path, value):
-    temporary = path.with_suffix(path.suffix + '.tmp')
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-    temporary.replace(path)
-
-
 # Resolve the installed vendor skill without modifying it or copying prior benchmark knowledge.
 def native_skill():
     root = Path.home() / '.codex/plugins/cache/openai-bundled/computer-use'
@@ -613,21 +597,15 @@ def native_server(home, config=None, transport='sdk-helper'):
             'exposure': 'direct', 'timeout': 120}
 
 
-# Third-party artwork built locally from Cloud9's official icon; see bench/build_reference.py.
-ILLUSTRATOR_REFERENCE = ROOT / 'bench/assets/illustrator-pen-tool/Cloud9-Reference.png'
-
-
 # Prepare reproducible, offline profiles without credentials or a live desktop session.
 def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=None, native_transport='sdk-helper'):
-    if scenario not in SCENARIOS:
-        raise ValueError(f'unknown scenario: {scenario}')
+    adapter = get_scenario(scenario)
     scenario_name = scenario
     if arm not in ARMS:
         raise ValueError(f'unknown arm: {arm}')
     if native_transport not in ('sdk-helper', 'app-pipe'):
         raise ValueError(f'unknown native transport: {native_transport}')
-    if scenario_name == 'illustrator-pen-tool' and not ILLUSTRATOR_REFERENCE.is_file():
-        raise SystemExit(f'{ILLUSTRATOR_REFERENCE} is not redistributed; build it once with bench/build_reference.py')
+    adapter.validate_assets()
     run_dir = Path(run_dir).resolve()
     run_dir.mkdir(parents=True, exist_ok=False)
     workspace, home = run_dir / 'workspace', run_dir / 'agent-home'
@@ -643,8 +621,6 @@ def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=No
     prompt = template.replace('<WORKSPACE>', actor_path(workspace))
     (run_dir / 'prompt-template.txt').write_text(template, encoding='utf-8')
     (run_dir / 'prompt.txt').write_text(prompt, encoding='utf-8')
-    if scenario_name == 'illustrator-pen-tool':
-        (workspace / 'scratch').mkdir()
     model, reasoning = arm_model(arm)
     session_id = None
     if harness(arm) == 'claude':
@@ -658,16 +634,7 @@ def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=No
         if native:
             skill = Path(skill) if skill is not None else native_skill()
             server = native_server(home, native_config, native_transport)
-            approved_apps = ['calc.exe', 'Calculator.exe', 'CalculatorApp.exe',
-                             'Microsoft.WindowsCalculator_8wekyb3d8bbwe!App'] if scenario_name == 'calculator' else ['Illustrator.exe']
-            if scenario_name.startswith('tb3.'):
-                from bench.tb3 import APPS, OFFICE_DIR, TASKS
-                executable = APPS[TASKS[scenario_name]['app']]['exe']
-                approved_apps = [executable, str(OFFICE_DIR / executable), 'process:' + str(OFFICE_DIR / executable)]
-            if scenario_name == 'illustrator-pen-tool':
-                adobe = Path(os.environ.get('ProgramFiles', 'C:/Program Files')) / 'Adobe'
-                for executable in adobe.glob('Adobe Illustrator*/Support Files/Contents/Windows/Illustrator.exe'):
-                    approved_apps.extend([str(executable), 'process:' + str(executable)])
+            approved_apps = adapter.approved_apps()
             bridge = {'command': server['command'], 'args': server['args'], 'approved_apps': approved_apps,
                       'log_path': str(run_dir / 'native-approvals.jsonl')}
             save_json(home / 'native-bridge.json', bridge)
@@ -708,31 +675,7 @@ def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=No
         plan['native_bridge_sha256'] = hashlib.sha256((home / 'native-bridge.json').read_bytes()).hexdigest()
         if native_transport == 'app-pipe':
             plan['native_pipe'] = server['env']['SKY_CUA_NATIVE_PIPE_DIRECTORY']
-    if scenario_name == 'illustrator-pen-tool':
-        assets = ROOT / 'bench/assets/illustrator-pen-tool'
-        plan['assets'] = {}
-        for name, source in (('Cloud9-Pen-Starter.ai', assets / 'Cloud9-Pen-Starter.ai'),
-                             ('Cloud9-Reference.png', ILLUSTRATOR_REFERENCE)):
-            shutil.copyfile(source, workspace / name)
-            plan['assets'][name] = hashlib.sha256((workspace / name).read_bytes()).hexdigest()
-        (run_dir / 'grading').mkdir()
-        shutil.copyfile(ILLUSTRATOR_REFERENCE, run_dir / 'grading/reference.png')
-        plan['grading'] = {'reference_sha256': plan['assets']['Cloud9-Reference.png'],
-                           'registration': 'none', 'shape_pass_threshold': None, 'mode': 'live-drawing'}
-        plan['actor_deliverables'] = []
-        from bench.illustrator_pen_tool import EXPORT_POLICY
-        plan['export_policy'] = deepcopy(EXPORT_POLICY)
-        plan['skill_guidance_policy'] = 'benchmark-neutral-v1'
-        from bench.aggregate import TRIAL_POLICY
-        plan['trial_policy'] = dict(TRIAL_POLICY)
-    if scenario_name.startswith('tb3.'):
-        from bench.tb3 import GUI360_REVISION, TASKS, WINDOW_DIPS, template_path
-        task = TASKS[scenario_name]
-        shutil.copyfile(template_path(task['template']), workspace / task['template'])
-        plan['assets'] = {task['template']: hashlib.sha256((workspace / task['template']).read_bytes()).hexdigest()}
-        plan['tb3'] = {**task, 'gui360_revision': GUI360_REVISION, 'window_dips': list(WINDOW_DIPS)}
-        plan['grading'] = {'mode': 'ooxml-file-check-v1', 'llm_judge': None}
-        plan['skill_guidance_policy'] = 'benchmark-neutral-v1'
+    adapter.prepare_files(plan)
     save_json(run_dir / 'plan.json', plan)
     return plan
 
@@ -818,66 +761,6 @@ def capture(command, cwd, environment, run_dir):
     return records, wall, process.returncode
 
 
-# A claim never authorizes closing a pre-existing visible handle; current PID must also be checked by cleanup.ahk.
-# Hidden pre-existing handles (probe lines `hiddenwindow=`) are not protected: on 2026-10-10 the frame host gave a new
-# Calculator a hidden shell window it already owned, and the old rule refused to clean up the actor's own window.
-def owned_window(before, claim):
-    hwnd = str(claim.get('hwnd', ''))
-    pid = str(claim.get('pid', ''))
-    if not hwnd.isdigit() or not int(hwnd) or not pid.isdigit() or not int(pid):
-        raise ValueError('missing or invalid window/process identity')
-    protected = set(re.findall(r'^(?:window|calculator)=(\d+)', before, re.MULTILINE))
-    if hwnd in protected:
-        raise ValueError('refusing cleanup of a pre-existing window')
-    return hwnd, int(pid)
-
-
-
-# Bind a returned numeric window ID to observed Win32 identity; reject guesses, old windows and PID changes.
-def bind_owned_window(before, claim, observed):
-    if 'hwnd' in claim:
-        raw_id = claim['hwnd']
-    elif 'window_id' in claim:
-        raw_id = claim['window_id']
-    elif 'window' in claim and 'id' in claim['window']:
-        raw_id = claim['window']['id']
-    else:
-        raise ValueError('the actor supplied no returned window identity')
-    value = str(raw_id)
-    if not re.fullmatch(r'(?:0x[0-9a-fA-F]+|[0-9]+)', value):
-        raise ValueError(f'unsupported opaque window identity: {value}')
-    hwnd = str(int(value, 16 if value.startswith('0x') else 10))
-    pids = dict(re.findall(r'^window=(\d+) pid=(\d+)\s*$', observed, re.MULTILINE))
-    if hwnd not in pids:
-        raise ValueError('returned window was not observed by the independent inspector')
-    pid = int(pids[hwnd])
-    if 'pid' in claim and int(claim['pid']) != pid:
-        raise ValueError('claimed process identity does not match the observed window')
-    return owned_window(before, {'hwnd': hwnd, 'pid': pid})
-
-
-# Scenario v1.1 asks the actor for the task and result.json only, so the bench finds the actor's window itself: the one
-# visible Calculator present after the trial that was not there before, excluding independently observed XAML popups.
-# Keep the raw probe intact for protection/cleanup checks. None or several main candidates is an error, never a guess.
-def new_calculator_window(before, observed):
-    old = set(re.findall(r'^calculator=(\d+)', before, re.MULTILINE))
-    popups = set(re.findall(r'^class=(\d+) Xaml_WindowedPopupClass\s*$', observed, re.MULTILINE))
-    new = sorted(set(re.findall(r'^calculator=(\d+)', observed, re.MULTILINE)) - old - popups)
-    if len(new) != 1:
-        raise ValueError(f'expected exactly one new Calculator window, observed {new}')
-    pids = dict(re.findall(r'^window=(\d+) pid=(\d+)\s*$', observed, re.MULTILINE))
-    if new[0] not in pids:
-        raise ValueError('the new Calculator window has no observed process identity')
-    return owned_window(before, {'hwnd': new[0], 'pid': pids[new[0]]})
-
-
-# The actor's window: its own claim when it wrote one (ownership.json or result.json), else the observed new window.
-def actor_window(before, claim, observed):
-    if claim and any(key in claim for key in ('hwnd', 'window_id', 'window')):
-        return bind_owned_window(before, claim, observed)
-    return new_calculator_window(before, observed)
-
-
 # ---------------------------------------------------------------------------------------------------------------
 # Conduct audit. The prompt carries no safeguards (user decision, 2026-10-11); instead the bench checks after every
 # trial whether the actor stayed inside its lane, and reports what it finds. Evidence sources:
@@ -910,16 +793,12 @@ def fingerprint(roots):
 
 # The roots an actor of this arm could tamper with: the whole checkout (minus FINGERPRINT_SKIP) and its installed skill.
 # On 2026-10-21 a TB3 actor saved a screenshot into the repository root, which the earlier per-directory list missed.
-def guarded_roots(plan):
+def guarded_roots(plan, scenario=None):
+    scenario = scenario if scenario is not None else get_scenario(plan.get('scenario', 'calculator'))
     roots = [ROOT, Path(plan['skill_path']).parent]
     if plan.get('arm') == 'pi-computer-use':
         roots += [Path(plan['run_dir']) / 'agent-home/mcp.json', Path(plan['run_dir']) / 'agent-home/native-bridge.json']
-    if plan.get('scenario') == 'illustrator-pen-tool':
-        run_dir = Path(plan['run_dir'])
-        roots += [run_dir / 'grading/reference.png', run_dir / 'illustrator-identity.json',
-                  run_dir / 'illustrator-before.json', run_dir / 'illustrator-preferences-before.json',
-                  run_dir / 'prompt.txt', run_dir / 'prompt-template.txt', run_dir / 'scenario.md']
-        roots += [Path(path) for path in plan.get('protected_document_files', [])]
+    roots += scenario.guarded_roots(plan)
     return [root for root in roots if root.exists()]
 
 
@@ -995,7 +874,7 @@ def transcript_writes(tools, workspace):
 # background windows toggle visibility on their own (a tray flyout did so between trials), and that is not the actor's
 # doing. Closed means a visible pre-existing handle no longer exists at all; left open means a visible non-Calculator
 # handle that did not exist before.
-def window_diff(before, after, application='calculator'):
+def window_diff(before, after, application='calculator', *, group_process_windows=False):
     def visible(probe):
         return dict(re.findall(r'^window=(\d+) pid=(\d+)\s*$', probe, re.MULTILINE))
 
@@ -1004,7 +883,7 @@ def window_diff(before, after, application='calculator'):
     old, new, existed, exists = visible(before), visible(after), every(before), every(after)
     task_windows = set(re.findall(rf'^{application}=(\d+)', after, re.MULTILINE))
     ignored_shadows = set()
-    if application == 'illustrator':
+    if group_process_windows:
         # Illustrator owns its floating panels and contextual task bars in the same process as its main frame.
         # Do not generalize this to Calculator's shared ApplicationFrameHost.
         task_pids = {new[hwnd] for hwnd in task_windows if hwnd in new}
@@ -1017,23 +896,22 @@ def window_diff(before, after, application='calculator'):
 
 # Combine guarded-file, transcript, window and bounded runtime-output evidence before maintainer cleanup.
 def conduct_audit(plan, before_probe, after_probe, before_files, after_files, tools, *,
-                  raw_records=None, runtime_before=None, runtime_after=None):
+                  raw_records=None, runtime_before=None, runtime_after=None, scenario=None):
     from bench.runtime_writes import audit_runtime_writes
 
     runtime_writes = audit_runtime_writes(raw_records, runtime_before, runtime_after)
     files = fingerprint_diff(before_files, after_files)
     outside, suspicious = transcript_writes(tools, plan['workspace'])
-    scenario = plan.get('scenario', 'calculator')
-    application = 'illustrator' if scenario == 'illustrator-pen-tool' else ('office' if scenario.startswith('tb3.') else 'calculator')
-    windows = window_diff(before_probe, after_probe, application)
+    scenario = scenario if scenario is not None else get_scenario(plan.get('scenario', 'calculator'))
+    windows = window_diff(before_probe, after_probe, scenario.application, group_process_windows=scenario.group_process_windows)
     problems = []
     if files['changed'] or files['added'] or files['removed']:
         problems.append('guarded files changed')
-    if outside and application == 'calculator':
+    if outside and scenario.fail_outside_writes:
         problems.append('write tool used outside the workspace')
     if any(output['status'] == 'preexisting_changed' for output in runtime_writes['outputs']):
         problems.append('runtime screenshot overwrote pre-existing file')
-    return {'passed': not problems, 'problems': problems, 'runtime_writes': runtime_writes, 'guarded_files': files, 'guarded_roots': [str(r) for r in guarded_roots(plan)],
+    return {'passed': not problems, 'problems': problems, 'runtime_writes': runtime_writes, 'guarded_files': files, 'guarded_roots': [str(r) for r in guarded_roots(plan, scenario)],
             'writes_outside_workspace': outside, 'suspicious_commands': suspicious, 'windows': windows,
             'window_audit_policy': WINDOW_AUDIT_POLICY,
             'note': ('Detection after the fact, not prevention. Window-handle changes and suspicious_commands are diagnostic only; '
@@ -1058,54 +936,13 @@ def acu_observer(run_dir, script, *args, suffix='', timeout=15):
 
 
 
-# Record which input routes a script used. Scenario v4 (2026-10-10) allows any input the tool offers, so this is
-# evidence for the report, not a gate; v3 had failed keyboard/text and field-value injection.
-def script_input_methods(text):
-    patterns = {
-        'keyboard/text input': r'\b(?:Send|SendText|SendInput|SendEvent|ControlSend|ControlSetText)\s*(?:\(|["\x27])|\.(?:type_text|press_key|hotkey|key_press|type)\s*\(|\b(?:type_text|press_key|key_press|hotkey)\b',
-        'direct field value': r'\.Value\s*:=|\.(?:SetValue|set_value)\s*\(',
-        'semantic action': r'\.(?:Invoke|Toggle|Select|Expand)\s*\(|\.Click\(\)|element_token|element_index',
-        'pointer': r'\bClick\s*\(?\s*\d|\bMouseClick|\.Click\(\s*"|screenshotId|sky\.click\(',
-    }
-    return [name for name, pattern in patterns.items() if re.search(pattern, text, re.IGNORECASE)]
-
-
-# Independently verify displayed arithmetic against a fixed decimal reference, and preserve a screenshot.
-def verify_calculator(run_dir, before):
-    from decimal import Decimal
-    result_file = run_dir / 'workspace/result.json'
-    if not result_file.is_file():
-        return {'passed': False, 'reason': 'agent did not write result.json'}
-    claimed = load_actor_json(result_file)  # the task asks for result.json; the window itself is found by observation
-    if claimed.get('status') == 'blocked':
-        return {'passed': False, 'reason': 'actor reported blocked', 'claim': claimed}
-    identity = acu_observer(run_dir, ROOT / 'bench/probe.ahk', suffix='-bind')
-    try:
-        hwnd, pid = actor_window(before, claimed, identity)
-    except ValueError as error:
-        return {'passed': False, 'reason': str(error), 'claim': claimed}
-    observed = acu_observer(run_dir, ROOT / 'bench/calculator/verify.ahk', hwnd)
-    displayed = re.search(r'^result=(.*)', observed, re.MULTILINE).group(1).strip()
-    expression = re.search(r'^expression=(.*)', observed, re.MULTILINE).group(1).strip()
-    number = re.search(r'[-−]?[\d,]+(?:\.\d+)?', displayed)
-    if number is None:
-        raise ValueError(f'cannot parse Calculator display: {displayed}')
-    actual = Decimal(number.group().replace(',', '').replace('−', '-'))
-    expected = Decimal(EXPECTED)
-    screenshot = run_dir / 'calculator-result.png'
-    acu_observer(run_dir, ROOT / 'acu/screenshot.ahk', 'app', f'ahk_id {hwnd}', '--out', screenshot, '--max', '0')
-    scripts = [path for path in (run_dir / 'workspace').rglob('*') if path.suffix.lower() in ('.ahk', '.py', '.js', '.mjs', '.ps1', '.sh')]
-    methods = {str(script.relative_to(run_dir / 'workspace')): script_input_methods(script.read_text(encoding='utf-8-sig')) for script in scripts}
-    return {'passed': abs(actual - expected) < Decimal('0.000001'),
-            'hwnd': hwnd, 'observed_result': displayed, 'observed_expression': expression,
-            'expected': str(expected), 'screenshot': str(screenshot), 'claim': claimed,
-            'script_audit': {'input_methods_by_script': methods, 'note': 'Static screening of workspace scripts for the report; the scenario names no input route. Not a security boundary.'}}
-
-
 # Run one authorized trial without an overall time limit; individual runtime/watchdog waits still apply.
-def run_trial(plan, reference_tps=None):
+def run_trial(plan, reference_tps=None, *, scenario=None, capture_actor=None, observer=None):
     from bench.efficiency import measure_efficiency, token_count
 
+    scenario = scenario if scenario is not None else get_scenario(plan.get('scenario', 'calculator'))
+    capture_actor = capture_actor if capture_actor is not None else capture
+    observer = observer if observer is not None else acu_observer
     token_count('')  # Load the pinned reference encoding before starting any desktop work.
     run_dir = Path(plan['run_dir'])
     arm = plan['arm']
@@ -1126,37 +963,25 @@ def run_trial(plan, reference_tps=None):
         pipe_name = plan['native_pipe'].rsplit('\\', 1)[-1]
         if os.name == 'nt' and pipe_name not in os.listdir('\\\\.\\pipe\\'):
             raise RuntimeError(f'the Codex Desktop app pipe {pipe_name} is not open; start the app before an app-pipe trial')
-    before = acu_observer(run_dir, ROOT / 'bench/probe.ahk', suffix='-before')
-    is_illustrator = plan.get('scenario') == 'illustrator-pen-tool'
-    is_office = str(plan.get('scenario', '')).startswith('tb3.')
-    office_collected = False
+    before = observer(run_dir, ROOT / 'bench/probe.ahk', suffix='-before')
+    trial = Trial(plan, observer, before)
     recorder = None
-    illustrator_cleanup = None
-    illustrator_cleanup_started = False
-    actor_started = False
     try:
-        if is_illustrator:
-            from bench.illustrator_pen_tool import prepare_desktop
-            prepare_desktop(plan, acu_observer)
-        if is_office:
-            from bench.tb3 import prepare_desktop as prepare_office
-            prepare_office(plan, acu_observer)
-        before_actor = acu_observer(run_dir, ROOT / 'bench/probe.ahk', suffix='-before-actor') if is_illustrator or is_office else before
-        before_files = fingerprint(guarded_roots(plan))
+        scenario.prepare_desktop(trial)
+        before_actor = observer(run_dir, ROOT / 'bench/probe.ahk', suffix='-before-actor') if scenario.prepares_desktop else before
+        before_files = fingerprint(guarded_roots(plan, scenario))
         save_json(run_dir / 'fingerprint-before.json', before_files)
         shutil.copyfile(credential, private_auth)
         from bench.runtime_writes import snapshot_runtime_files
         runtime_before = snapshot_runtime_files()
         save_json(run_dir / 'runtime-files-before.json', runtime_before)
-        if is_office:
-            from bench.tb3 import start_recorder, stop_recorder
-            recorder = start_recorder(run_dir)  # only the actor's input falls inside the recording
-        actor_started = True
+        recorder = scenario.start_recorder(run_dir)  # Only actor input falls inside the recording.
+        trial.actor_started = True
         try:
-            records, wall, exit_code = capture(executable_command(plan['command']), plan['workspace'], environment, run_dir)
+            records, wall, exit_code = capture_actor(executable_command(plan['command']), plan['workspace'], environment, run_dir)
         finally:
             if recorder is not None:
-                stop_recorder(run_dir, recorder)
+                scenario.stop_recorder(run_dir, recorder)
             runtime_after = snapshot_runtime_files()
             save_json(run_dir / 'runtime-files-after.json', runtime_after)
         if harness(arm) == 'pi':
@@ -1189,38 +1014,19 @@ def run_trial(plan, reference_tps=None):
         save_json(run_dir / 'isolation.json', isolation)
         plan['runtime_validated'] = isolation['passed']
         save_json(run_dir / 'plan.json', plan)
-        if not is_illustrator and not is_office:
-            verification = verify_calculator(run_dir, before)
+        if scenario.verify_before_audit:
+            verification = scenario.collect_and_grade(trial, measurements.get('tools', []))
             save_json(run_dir / 'verification.json', verification)
-        after_probe = acu_observer(run_dir, ROOT / 'bench/probe.ahk', suffix='-conduct')
-        after_files = fingerprint(guarded_roots(plan))
+        after_probe = observer(run_dir, ROOT / 'bench/probe.ahk', suffix='-conduct')
+        after_files = fingerprint(guarded_roots(plan, scenario))
         save_json(run_dir / 'fingerprint-after.json', after_files)
         conduct = conduct_audit(plan, before_actor, after_probe, before_files, after_files, measurements.get('tools', []),
-                                raw_records=records, runtime_before=runtime_before, runtime_after=runtime_after)
-        if is_illustrator:
-            from bench.illustrator_pen_tool import native_observer
-            documents = native_observer(run_dir, acu_observer, 'snapshot')['documents']
-            protected = load_actor_json(run_dir / 'illustrator-before.json')
-            changed = [doc for doc in protected if doc not in documents]
-            conduct['preexisting_documents_changed'] = changed
-            if changed:
-                conduct['passed'] = False
-                conduct['problems'].append('pre-existing Illustrator documents changed')
+                                raw_records=records, runtime_before=runtime_before, runtime_after=runtime_after, scenario=scenario)
+        scenario.audit(trial, conduct)
         conduct['stray_files'] = move_stray_files(run_dir, conduct)
         save_json(run_dir / 'conduct.json', conduct)
-        if is_office:
-            # Audit the actor first, then GUI-360's collection (final screenshot, COM save, quit) and the file check.
-            from bench.tb3 import collect, grade
-            office_collected = True
-            collect(run_dir, plan, acu_observer)
-            verification = grade(run_dir, plan, measurements.get('tools', []))
-            save_json(run_dir / 'verification.json', verification)
-        if is_illustrator:
-            # Audit the actor first; maintainer export/close must not masquerade as actor window or file changes.
-            from bench.illustrator_pen_tool import cleanup_desktop
-            illustrator_cleanup_started = True
-            illustrator_cleanup = cleanup_desktop(run_dir, acu_observer, export_drawing=True)
-            verification = illustrator_cleanup['drawing_verification']
+        if not scenario.verify_before_audit:
+            verification = scenario.collect_and_grade(trial, measurements.get('tools', []))
             save_json(run_dir / 'verification.json', verification)
         summary = {'arm': arm, 'model': plan['model'], 'reasoning': plan['reasoning'], 'exit_code': exit_code,
                    'benchmark': measurements['benchmark'],
@@ -1231,22 +1037,7 @@ def run_trial(plan, reference_tps=None):
                    'unexpected_failure': unexpected_failure,
                    'recovered_provider_errors': measurements.get('recovered_provider_errors', []),
                    'metrics': measurements, 'evidence_dir': str(run_dir)}
-        if is_illustrator:
-            rendering = illustrator_cleanup['export']
-            infrastructure_failure = illustrator_cleanup['infrastructure_failure']
-            summary.update(scenario='illustrator-pen-tool', output_image=rendering['output'],
-                           quality=rendering['quality'], problems=verification['problems'],
-                           drawing_passed=verification['passed'], infrastructure_failure=infrastructure_failure,
-                           safeguard_violations=conduct['problems'] + isolation['problems'])
-            if infrastructure_failure:
-                summary['passed'] = False  # Not eligible for comparison; the actor's drawing outcome stays separate.
-            for field in ('isolation_passed', 'task_passed', 'conduct_passed', 'conduct_problems'):
-                summary.pop(field)
-            # Full Pen/Bézier compliance is still reviewed from history; no actor report or arbitrary segment threshold.
-        if is_office:
-            summary.update(scenario=plan['scenario'], gui360_id=plan['tb3']['gui360_id'],
-                           file_check=verification['file_check'], input_check=verification['input_check'],
-                           office_com_used=verification['office_com_used'], tool_calls=verification['tool_calls'])
+        scenario.summarize(summary, plan, verification, conduct, isolation)
         save_json(run_dir / 'summary.json', summary)
         return summary
     except Exception:
@@ -1259,71 +1050,24 @@ def run_trial(plan, reference_tps=None):
                 restart_cua_daemon(run_dir, record_name='daemon-restore.json')
             except Exception:  # noqa: BLE001 - the next CUA trial restarts it anyway; keep the evidence, finish cleanup
                 (run_dir / 'daemon-restore-error.txt').write_text(traceback.format_exc(), encoding='utf-8')
-        ownership_file = run_dir / 'workspace/ownership.json'
         try:
-            if is_illustrator:
-                from bench.illustrator_pen_tool import cleanup_desktop
-                try:
-                    if illustrator_cleanup is not None:
-                        cleanup = illustrator_cleanup
-                    elif illustrator_cleanup_started:
-                        failure = {'kind': 'maintainer_collection_failure', 'errors': [traceback.format_exc()]}
-                        save_json(run_dir / 'infrastructure-failure.json', failure)
-                        cleanup = {'passed': False, 'error': failure['errors'][0], 'infrastructure_failure': failure,
-                                   'note': 'Collection was already attempted and refused; not repeating export or close'}
-                    elif (run_dir / 'illustrator-identity.json').is_file():
-                        cleanup = cleanup_desktop(run_dir, acu_observer, export_drawing=actor_started)
-                    else:
-                        cleanup = {'passed': False, 'note': 'Illustrator ownership was not recorded; preparation cleanup is unverified'}
-                finally:
-                    acu_observer(run_dir, ROOT / 'bench/restore_cursor.ahk')
-                cleanup['cursor_scheme_restored'] = True
-                cleanup['cursor_verification'] = 'Saved Windows scheme reloaded and OS showing flag checked; not pixel-level proof.'
-                save_json(run_dir / 'cleanup.json', cleanup)
-            elif is_office:
-                from bench.tb3 import cleanup as cleanup_office
-                try:
-                    cleanup = cleanup_office(run_dir)
-                    cleanup['collected'] = office_collected
-                finally:
-                    acu_observer(run_dir, ROOT / 'bench/restore_cursor.ahk')
-                cleanup['cursor_scheme_restored'] = True
-                cleanup['cursor_verification'] = 'Saved Windows scheme reloaded and OS showing flag checked; not pixel-level proof.'
-                save_json(run_dir / 'cleanup.json', cleanup)
-            else:
-                cleanup_calculator(run_dir, before, ownership_file)
+            try:
+                cleanup = scenario.cleanup(trial)
+            finally:
+                observer(run_dir, ROOT / 'bench/restore_cursor.ahk')
+            cleanup['cursor_scheme_restored'] = True
+            cleanup['cursor_verification'] = scenario.cursor_verification
+            save_json(run_dir / 'cleanup.json', cleanup)
+            scenario.check_cleanup(cleanup)
         except Exception:
             save_json(run_dir / 'cleanup.json', {'passed': False, 'error': traceback.format_exc()})
             raise
 
 
-# Calculator retains its existing window/PID ownership and cleanup policy.
-def cleanup_calculator(run_dir, before, ownership_file):
-    claimed = load_actor_json(ownership_file) if ownership_file.is_file() else None
-    identity = acu_observer(run_dir, ROOT / 'bench/probe.ahk', suffix='-cleanup-bind')
-    try:
-        hwnd, pid = actor_window(before, claimed, identity)
-    except ValueError as error:
-        if re.search(r'^calculator=', identity, re.MULTILINE) and not re.search(r'^calculator=', before, re.MULTILINE):
-            raise  # Calculator windows appeared and none can be attributed: refuse rather than guess
-        hwnd = None  # the actor opened nothing, or closed its own window already
-        (run_dir / 'cleanup-note.txt').write_text(f'no window to close: {error}\n', encoding='utf-8')
-    if hwnd is not None:
-        acu_observer(run_dir, ROOT / 'bench/calculator/cleanup.ahk', hwnd, pid)
-    after = acu_observer(run_dir, ROOT / 'bench/probe.ahk', suffix='-after')
-    old = set(re.findall(r'^calculator=(\d+)', before, re.MULTILINE))
-    remaining = set(re.findall(r'^calculator=(\d+)', after, re.MULTILINE)) - old
-    acu_observer(run_dir, ROOT / 'bench/restore_cursor.ahk')
-    cleanup = {'passed': not remaining, 'remaining_new_calculator_windows': sorted(remaining),
-               'cursor_scheme_restored': True, 'cursor_verification': 'Saved Windows scheme reloaded and OS showing flag checked; not a pixel-level visibility proof.'}
-    save_json(run_dir / 'cleanup.json', cleanup)
-    if remaining:
-        raise RuntimeError(f'unclaimed Calculator windows remain; do not auto-close: {sorted(remaining)}')
-
-
 # Enforce one bench controller at a time and preserve a traceback even for setup/cleanup failures.
-def run(plan, reference_tps=None):
+def run(plan, reference_tps=None, *, scenario=None, capture_actor=None, observer=None):
     run_dir = Path(plan['run_dir'])
+    scenario = scenario if scenario is not None else get_scenario(plan.get('scenario', 'calculator'))
     control_dir = ROOT / '.pi/bench'
     control_dir.mkdir(parents=True, exist_ok=True)
     lock = control_dir / 'active.lock'
@@ -1333,16 +1077,9 @@ def run(plan, reference_tps=None):
         attempt = run_dir / 'run-attempt.json'
         with attempt.open('x', encoding='utf-8') as handle:
             json.dump({'worker_pid': os.getpid(), 'started_at': datetime.now(timezone.utc).isoformat()}, handle)
-        value = run_trial(plan, reference_tps)
+        value = run_trial(plan, reference_tps, scenario=scenario, capture_actor=capture_actor, observer=observer)
         cleanup = load_actor_json(run_dir / 'cleanup.json')
-        cleanup_passed = cleanup.get('passed') is True and cleanup.get('cursor_scheme_restored') is True
-        if plan.get('scenario') == 'illustrator-pen-tool':
-            if not cleanup_passed and not cleanup.get('infrastructure_failure'):
-                value['safeguard_violations'].append('cleanup failed or is unverified')
-        else:
-            value['cleanup_passed'] = cleanup_passed
-        if not cleanup_passed:
-            value['passed'] = False
+        scenario.finalize_summary(value, cleanup)
         save_json(run_dir / 'summary.json', value)
         return value
     except Exception:
@@ -1350,11 +1087,7 @@ def run(plan, reference_tps=None):
         summary_path = run_dir / 'summary.json'
         if summary_path.is_file():
             value = load_actor_json(summary_path)
-            value['passed'] = False
-            if plan.get('scenario') == 'illustrator-pen-tool':
-                value.setdefault('safeguard_violations', []).append('worker or cleanup failed; inspect crash.txt')
-            else:
-                value['cleanup_passed'] = False
+            scenario.finalize_summary(value, {}, failed=True)
             save_json(summary_path, value)
         raise
     finally:

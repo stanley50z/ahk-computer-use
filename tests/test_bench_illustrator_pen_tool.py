@@ -10,6 +10,7 @@ import pytest
 from PIL import Image
 
 import bench.run
+import bench.illustrator_pen_tool
 from bench.run import ROOT, prepare
 from conftest import needs_cloud9_reference
 
@@ -53,7 +54,7 @@ def test_illustrator_pen_tool_prepare_freezes_png_and_resolves_task_paths(tmp_pa
         '.ahk-computer-use', 'Cloud9-Pen-Starter.ai', 'Cloud9-Reference.png', 'scratch']
     assert (directory / 'workspace/scratch').is_dir()
     for name, source in (('Cloud9-Pen-Starter.ai', ROOT / 'bench/assets/illustrator-pen-tool/Cloud9-Pen-Starter.ai'),
-                         ('Cloud9-Reference.png', bench.run.ILLUSTRATOR_REFERENCE)):
+                         ('Cloud9-Reference.png', bench.illustrator_pen_tool.ILLUSTRATOR_REFERENCE)):
         data = source.read_bytes()
         assert (directory / 'workspace' / name).read_bytes() == data
         assert plan['assets'][name] == hashlib.sha256(data).hexdigest()

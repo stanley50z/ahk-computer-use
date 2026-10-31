@@ -5,15 +5,23 @@ Numeric drawing quality is observational, without registration or a pass thresho
 """
 
 from array import array
+from copy import deepcopy
 import hashlib
 import json
 import os
 import re
+import shutil
+import traceback
 import uuid
 from pathlib import Path
-import traceback
+
+from bench.common import ROOT, TRIAL_POLICY, load_actor_json, save_json
+from bench.scenario import Scenario
 
 from PIL import Image, UnidentifiedImageError
+
+# Third-party artwork built locally from Cloud9's official icon; see bench/build_reference.py.
+ILLUSTRATOR_REFERENCE = ROOT / 'bench/assets/illustrator-pen-tool/Cloud9-Reference.png'
 
 
 EXPORT_POLICY = {
@@ -150,7 +158,6 @@ def owned_documents(before, after, workspace):
 
 # Execute trusted observer code outside actor timing, retaining generated scripts and native crash stacks.
 def native_observer(run_dir, observer, phase, **values):
-    from bench.run import ROOT
 
     run_dir = Path(run_dir)
     identity = json.loads((run_dir / 'illustrator-identity.json').read_text(encoding='utf-8'))
@@ -169,7 +176,6 @@ def native_observer(run_dir, observer, phase, **values):
 
 # Establish the shared initial document/viewport/input state, preserving a baseline before opening task artwork.
 def prepare_desktop(plan, observer):
-    from bench.run import ROOT, save_json
 
     run_dir = Path(plan['run_dir'])
     candidates = list((Path(os.environ.get('ProgramFiles', 'C:/Program Files')) / 'Adobe').glob(
@@ -198,7 +204,6 @@ def prepare_desktop(plan, observer):
 
 # Cancel recognized dialogs only when they were absent before preparation, preserving every pre-existing handle.
 def dismiss_task_dialogs(run_dir, observer):
-    from bench.run import ROOT
 
     run_dir = Path(run_dir)
     identity = json.loads((run_dir / 'illustrator-identity.json').read_text(encoding='utf-8'))
@@ -231,7 +236,6 @@ def segment_counts(paths):
 
 # Render/encode one frozen live drawing; artifact/IO retries are bounded, integrity refusals stop immediately.
 def _export_live_drawing(run_dir, observer, before, document, expected_document):
-    from bench.run import save_json
 
     output = run_dir / EXPORT_POLICY['output']
     if output.exists():
@@ -290,7 +294,6 @@ def _export_live_drawing(run_dir, observer, before, document, expected_document)
 
 # Export only the live owned document, then encode the same pixels with the frozen PNG density/encoding policy.
 def collect_drawing(run_dir, observer, before, owned):
-    from bench.run import save_json
 
     plan = json.loads((run_dir / 'plan.json').read_text(encoding='utf-8'))
     if plan.get('export_policy') != EXPORT_POLICY:
@@ -337,7 +340,6 @@ def collect_drawing(run_dir, observer, before, owned):
 
 # Collect optional drawing evidence before closing owned documents; never repair artwork or close protected resources.
 def cleanup_desktop(run_dir, observer, *, export_drawing=False):
-    from bench.run import ROOT, save_json
 
     run_dir = Path(run_dir)
     identity = json.loads((run_dir / 'illustrator-identity.json').read_text(encoding='utf-8'))
@@ -380,3 +382,98 @@ def cleanup_desktop(run_dir, observer, *, export_drawing=False):
               'application_closed': bool(identity['started']), **collection}
     save_json(run_dir / 'illustrator-cleanup.json', result)
     return result
+
+
+# One attempt's adapter retains collection state so a refused export is never repeated by final cleanup.
+class IllustratorScenario(Scenario):
+    application = 'illustrator'
+    group_process_windows = True
+
+    def __init__(self):
+        self.collection_started = False
+        self.collection = None
+
+    def validate_assets(self):
+        if not ILLUSTRATOR_REFERENCE.is_file():
+            raise SystemExit(f'{ILLUSTRATOR_REFERENCE} is not redistributed; build it once with bench/build_reference.py')
+
+    def prepare_files(self, plan):
+        run_dir, workspace = Path(plan['run_dir']), Path(plan['workspace'])
+        (workspace / 'scratch').mkdir()
+        assets = ROOT / 'bench/assets/illustrator-pen-tool'
+        plan['assets'] = {}
+        for name, source in (('Cloud9-Pen-Starter.ai', assets / 'Cloud9-Pen-Starter.ai'),
+                             ('Cloud9-Reference.png', ILLUSTRATOR_REFERENCE)):
+            shutil.copyfile(source, workspace / name)
+            plan['assets'][name] = hashlib.sha256((workspace / name).read_bytes()).hexdigest()
+        (run_dir / 'grading').mkdir()
+        shutil.copyfile(ILLUSTRATOR_REFERENCE, run_dir / 'grading/reference.png')
+        plan['grading'] = {'reference_sha256': plan['assets']['Cloud9-Reference.png'],
+                           'registration': 'none', 'shape_pass_threshold': None, 'mode': 'live-drawing'}
+        plan['actor_deliverables'] = []
+        plan['export_policy'] = deepcopy(EXPORT_POLICY)
+        plan['skill_guidance_policy'] = 'benchmark-neutral-v1'
+        plan['trial_policy'] = dict(TRIAL_POLICY)
+
+    def approved_apps(self):
+        apps = ['Illustrator.exe']
+        adobe = Path(os.environ.get('ProgramFiles', 'C:/Program Files')) / 'Adobe'
+        for executable in adobe.glob('Adobe Illustrator*/Support Files/Contents/Windows/Illustrator.exe'):
+            apps.extend([str(executable), 'process:' + str(executable)])
+        return apps
+
+    def prepare_desktop(self, trial):
+        prepare_desktop(trial.plan, trial.observer)
+
+    def guarded_roots(self, plan):
+        run_dir = Path(plan['run_dir'])
+        return [run_dir / name for name in ('grading/reference.png', 'illustrator-identity.json',
+                'illustrator-before.json', 'illustrator-preferences-before.json', 'prompt.txt',
+                'prompt-template.txt', 'scenario.md')] + [Path(path) for path in plan.get('protected_document_files', [])]
+
+    def audit(self, trial, conduct):
+        documents = native_observer(trial.run_dir, trial.observer, 'snapshot')['documents']
+        protected = load_actor_json(trial.run_dir / 'illustrator-before.json')
+        changed = [doc for doc in protected if doc not in documents]
+        conduct['preexisting_documents_changed'] = changed
+        if changed:
+            conduct['passed'] = False
+            conduct['problems'].append('pre-existing Illustrator documents changed')
+
+    def collect_and_grade(self, trial, tools):
+        self.collection_started = True
+        self.collection = cleanup_desktop(trial.run_dir, trial.observer, export_drawing=True)
+        return self.collection['drawing_verification']
+
+    def cleanup(self, trial):
+        if self.collection is not None:
+            return self.collection
+        if self.collection_started:
+            failure = {'kind': 'maintainer_collection_failure', 'errors': [traceback.format_exc()]}
+            save_json(trial.run_dir / 'infrastructure-failure.json', failure)
+            return {'passed': False, 'error': failure['errors'][0], 'infrastructure_failure': failure,
+                    'note': 'Collection was already attempted and refused; not repeating export or close'}
+        if (trial.run_dir / 'illustrator-identity.json').is_file():
+            return cleanup_desktop(trial.run_dir, trial.observer, export_drawing=trial.actor_started)
+        return {'passed': False, 'note': 'Illustrator ownership was not recorded; preparation cleanup is unverified'}
+
+    def summarize(self, summary, plan, verification, conduct, isolation):
+        rendering = self.collection['export']
+        failure = self.collection['infrastructure_failure']
+        summary.update(scenario='illustrator-pen-tool', output_image=rendering['output'],
+                       quality=rendering['quality'], problems=verification['problems'],
+                       drawing_passed=verification['passed'], infrastructure_failure=failure,
+                       safeguard_violations=conduct['problems'] + isolation['problems'])
+        if failure:
+            summary['passed'] = False
+        for field in ('isolation_passed', 'task_passed', 'conduct_passed', 'conduct_problems'):
+            summary.pop(field)
+
+    def finalize_summary(self, summary, cleanup, *, failed=False):
+        passed = not failed and cleanup.get('passed') is True and cleanup.get('cursor_scheme_restored') is True
+        if failed:
+            summary.setdefault('safeguard_violations', []).append('worker or cleanup failed; inspect crash.txt')
+        elif not passed and not cleanup.get('infrastructure_failure'):
+            summary['safeguard_violations'].append('cleanup failed or is unverified')
+        if not passed:
+            summary['passed'] = False

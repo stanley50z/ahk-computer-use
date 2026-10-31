@@ -11,13 +11,14 @@ from pathlib import Path
 from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from bench.common import TRIAL_POLICY
+from bench.run import ARMS, PI_PROVIDER, PI_RECOVERY_POLICY, CLAUDE_RECOVERY_POLICY, WINDOW_AUDIT_POLICY, actor_path, harness
 
 
 SCENARIO = 'illustrator-pen-tool'
 SCENARIO_VERSION = 'Adobe Illustrator Pen Tool v0.11'
 # Rounds recorded before the Pen Tool rename keep their original names; the actor prompt and protocol are unchanged.
 LEGACY_NAMES = {'illustrator-pen-export': SCENARIO, 'Adobe Illustrator Pen and Export v0.11': SCENARIO_VERSION}
-TRIAL_POLICY = {'attempts_per_configuration': 3, 'aggregation': 'all-successes', 'replace_failed_attempts': False}
 
 
 # Average every successful trial over one shared cohort; no token sorting or trimming.
@@ -76,7 +77,6 @@ def comparison_statistics(benchmark, quality):
 
 # Load a maintainer-authored manifest after session review; no JSON is requested from the actor.
 def aggregate_round(manifest_path):
-    from bench.run import ARMS, PI_PROVIDER, PI_RECOVERY_POLICY, CLAUDE_RECOVERY_POLICY, WINDOW_AUDIT_POLICY, actor_path, harness
     from bench.illustrator_pen_tool import EXPORT_POLICY
 
     manifest_path = Path(manifest_path).resolve()

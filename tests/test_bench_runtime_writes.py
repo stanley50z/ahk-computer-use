@@ -84,56 +84,43 @@ def test_incomplete_or_uncovered_runtime_evidence_never_proves_safety_or_blame(t
 @pytest.mark.parametrize('capture_crashes', [False, True])
 def test_run_trial_persists_bounded_snapshots_and_integrates_conduct(tmp_path, monkeypatch, capture_crashes):
     from pathlib import Path
-    import tempfile
     from bench import run
+    from test_bench_scenarios import actor_capture, fake_scenario, trial_plan
 
-    home, shared, work = [tmp_path / name for name in ('home', 'temp', 'work')]
-    for directory in (home, shared, work, tmp_path / 'agent-home'):
-        directory.mkdir()
+    plan = trial_plan(tmp_path, monkeypatch, scenario='runtime-write-fixture')
+    home, directory = tmp_path / 'home', Path(plan['run_dir'])
     sentinel = home / 'cp.png'
     sentinel.write_bytes(b'original')
     (home / 'private').mkdir()
     (home / 'private/secret.txt').write_bytes(b'not inventoried')
-    (home / 'credential').write_text('test credential', encoding='utf-8')
-    monkeypatch.setattr(Path, 'home', classmethod(lambda cls: home))
-    monkeypatch.setattr(tempfile, 'gettempdir', lambda: str(shared))
-    monkeypatch.setattr(run, 'CREDENTIALS', {'pi': ('credential', 'auth.json')})
-    monkeypatch.setattr(run, 'acu_observer', lambda *a, **kw: '')
-    monkeypatch.setattr(run, 'cleanup_calculator', lambda *a: None)
-    monkeypatch.setattr(run, 'guarded_roots', lambda plan: [])
-    monkeypatch.setattr(run, 'executable_command', lambda command: command)
-    monkeypatch.setattr(run, 'audit_pi_session', lambda *a, **kw: {'passed': True})
-    monkeypatch.setattr(run, 'verify_calculator', lambda *a: {'passed': True})
-    monkeypatch.setattr(run, 'analyse_pi', lambda *a, **kw: {'agent_completed': True, 'tools': []})
-    monkeypatch.setattr('bench.efficiency.measure_efficiency', lambda *a: {})
 
     def capture(*args):
-        assert (tmp_path / 'runtime-files-before.json').is_file()
+        assert (directory / 'runtime-files-before.json').is_file()
         sentinel.write_bytes(b'new screenshot bytes')
         if capture_crashes:
             raise RuntimeError('capture failed')
-        run.save_json(tmp_path / 'capture.json', {'passed': True})
-        return events('pi', str(sentinel)), 1.0, 0
+        records, wall, code = actor_capture(*args)
+        return events('pi', str(sentinel)) + records, wall, code
 
-    monkeypatch.setattr(run, 'capture', capture)
-    plan = {'run_dir': str(tmp_path), 'workspace': str(work), 'arm': 'pi-acu',
-            'provider': run.PI_PROVIDER, 'environment_overrides': {}, 'command': [],
-            'skill_names': ['acu'], 'skill_path': str(work / 'SKILL.md'), 'model': 'test', 'reasoning': 'low'}
+    scenario_events = []
+    dependencies = {'scenario': fake_scenario(scenario_events), 'capture_actor': capture,
+                    'observer': lambda *args, **kwargs: ''}
     if capture_crashes:
         with pytest.raises(RuntimeError, match='capture failed'):
-            run.run_trial(plan)
+            run.run_trial(plan, **dependencies)
     else:
-        summary = run.run_trial(plan)
+        summary = run.run_trial(plan, **dependencies)
         assert not summary['conduct_passed']
         assert summary['conduct_problems'] == ['runtime screenshot overwrote pre-existing file']
-        assert json.loads((tmp_path / 'conduct.json').read_text(encoding='utf-8'))['runtime_writes']['outputs'][0]['status'] == 'preexisting_changed'
-        assert sentinel.is_file() and json.loads((tmp_path / 'conduct.json').read_text(encoding='utf-8'))['stray_files'] == [], 'an overwritten pre-existing file stays put'
-    before = json.loads((tmp_path / 'runtime-files-before.json').read_text(encoding='utf-8'))
-    after = json.loads((tmp_path / 'runtime-files-after.json').read_text(encoding='utf-8'))
+        assert json.loads((directory / 'conduct.json').read_text(encoding='utf-8'))['runtime_writes']['outputs'][0]['status'] == 'preexisting_changed'
+        assert sentinel.is_file() and json.loads((directory / 'conduct.json').read_text(encoding='utf-8'))['stray_files'] == [], 'an overwritten pre-existing file stays put'
+    before = json.loads((directory / 'runtime-files-before.json').read_text(encoding='utf-8'))
+    after = json.loads((directory / 'runtime-files-after.json').read_text(encoding='utf-8'))
     assert len(before['roots']) == 2
     assert not any('secret.txt' in path for path in before['files'])
     assert before['files'] != after['files']
-    assert not (tmp_path / 'agent-home/auth.json').exists()
+    assert scenario_events[-1] == 'cleanup'
+    assert not (directory / 'agent-home/auth.json').exists()
 
 
 def test_truncated_host_tool_result_does_not_establish_runtime_write(tmp_path):
