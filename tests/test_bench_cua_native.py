@@ -14,7 +14,9 @@ state = Path(sys.argv[-1]) if sys.argv[-1].endswith('.state') else None
 args = [a for a in sys.argv[1:] if not a.endswith('.state')]
 log = state.with_suffix('.log')
 log.open('a').write(' '.join(args) + '\\n')
-if args[0] == 'status':
+if args[0] == '--version':
+    print('cua-driver 9.9.9')
+elif args[0] == 'status':
     print('Cua Driver daemon is running' if state.read_text() == 'up' else 'Cua Driver daemon is not running')
 elif args[0] == 'stop':
     state.write_text('down'); print('stopped')
@@ -61,6 +63,7 @@ def test_cua_daemon_is_stopped_and_restarted_before_a_trial_and_the_record_is_ke
     assert calls.index('stop') < calls.index('autostart kick') < calls.index('list_sessions {}')
     saved = json.loads((tmp_path / 'daemon-restart.json').read_text(encoding='utf-8'))
     assert 'is running' in saved['after'] and 'not running' not in saved['after']
+    assert saved['version'] == 'cua-driver 9.9.9'
 
 
 # A trial restarts the daemon through the bench task in its workspace; the restore uses the installed entry.

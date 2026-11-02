@@ -240,7 +240,7 @@ Synchronous equivalent:
 python bench/run.py run --arm pi-acu --desktop-approved
 ```
 
-No benchmark server or new fixed localhost port is required. CUA trials stop and restart the shared cua-driver daemon in the trial workspace, then restart its installed autostart entry after the trial. Do not run them alongside other CUA work. The bench does not stop the Codex desktop app or unrelated host services.
+No benchmark server or new fixed localhost port is required. CUA trials stop and restart the shared cua-driver daemon in the trial workspace, then restart its installed autostart entry after the trial. Do not run them alongside other CUA work. `daemon-restart.json` records the driver version. Earlier records have no version; every CUA trial through 2026-10-21 ran cua-driver 0.34.0 or older, which had no `run_steps` batch tool, so their multi-call batching is shell chaining. The driver was upgraded to 0.38.0 on 2026-11-02. The bench does not stop the Codex desktop app or unrelated host services.
 
 ## Benchmark measurements
 
@@ -303,7 +303,7 @@ Each run retains evidence for the stages it reaches:
 - screenshots and `observer-*.log` outside actor timing;
 - for Illustrator: `illustrator-prepared.json` with initial snapping read-back, `drawing-verification.json`, `export.json`, `grading/Cloud9-Recreated.png`, native/encoded attempt files and `export-attempt-*-crash.txt`; `infrastructure-failure.json` on export or collection failure;
 - for TB3: `office-identity.json`, `input-recorder.json`, `input-log.jsonl`, `collection.json`, `grading/initial.png`, `grading/final.png` and the saved `grading/<template>`; recorder failures retain `input-log.crash.txt`;
-- for CUA: `daemon-restart.json`, `daemon-restore.json` or `daemon-restore-error.txt`;
+- for CUA: `daemon-restart.json` (with the cua-driver `version`), `daemon-restore.json` or `daemon-restore-error.txt`;
 - `state.json`, `launch.json`, `capture.json`, `cleanup.json`, `finished.json`;
 - `worker.log`, `crash.txt` or `capture-crash.txt` with tracebacks on failure; `failure.json` for an observed terminal provider error, independent of later cleanup errors.
 

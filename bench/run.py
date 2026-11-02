@@ -74,7 +74,8 @@ def task_time(agent_start_s, tools: list[ToolCall], pattern, workspace):
 # restarted before every CUA trial, outside timing, so the actor meets the same empty state the first one did.
 # With cwd, the daemon restarts through the bench copy of its autostart task (bench/cua_bench_task.py) in that
 # directory, so a relative screenshot_out_file lands there instead of the home folder; without cwd, the installed
-# autostart entry restores the as-installed daemon.
+# autostart entry restores the as-installed daemon. The record keeps the driver version, since its tool set changes
+# between releases (run_steps arrived in 0.35).
 def restart_cua_daemon(run_dir, driver='cua-driver', timeout_s=30, cwd=None, record_name='daemon-restart.json'):
     from bench.cua_bench_task import BENCH_TASK, CWD_FILE, installed, start_command
 
@@ -84,7 +85,8 @@ def restart_cua_daemon(run_dir, driver='cua-driver', timeout_s=30, cwd=None, rec
     def status():
         return subprocess.run([driver, 'status'], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=30).stdout
 
-    record = {'driver': driver, 'cwd': str(cwd) if cwd else None, 'before': status()}
+    record = {'driver': driver, 'cwd': str(cwd) if cwd else None, 'before': status(),
+              'version': subprocess.run([driver, '--version'], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=30).stdout.strip()}
     record['stop'] = subprocess.run([driver, 'stop'], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=60).stdout
     deadline = time.monotonic() + timeout_s
     while 'is running' in status() and time.monotonic() < deadline:
