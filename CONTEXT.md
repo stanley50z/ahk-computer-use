@@ -94,6 +94,16 @@ The screen area a screenshot was taken from, as an origin and a size, printed wi
 Screen pixels per screenshot pixel, printed with every capture so an image point converts to a screen point.
 _Avoid_: zoom factor, ratio
 
+### Learning from the user
+
+**Recording**:
+What the tray recorder saved between Start and Stop: the user's actions and, after them, the tree and a screenshot of the window they worked in. Agents read one to learn which actions work in an app.
+_Avoid_: trace, macro, session (a session is the agent's)
+
+**Step**:
+One capture in a recording: the user's actions since the previous capture and the state after them. Step 0 has no actions. Actions that come faster than the recorder's quiet period share a step.
+_Avoid_: frame, event, snapshot
+
 ### Measuring
 
 **Calculator**:

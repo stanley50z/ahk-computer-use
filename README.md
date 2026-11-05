@@ -126,6 +126,32 @@ History reads a native Pi, Codex, or Claude Code session alongside ACU's run log
 
 New run records include `app`, captured from snippet markers before discovery expands them. It is the process name, or `null` when no marker identifies a single app. `ApplicationFrameHost.exe` does not identify an app; repeated names ignore case, and markers naming different apps remain unknown. This works even when snippet listing is disabled or the store is missing. History uses the recorded value, including `null`, without inferring a different app from captured output or script selectors. Only older records without `app` (and unmatched requests) use the legacy inference from script selectors, snippet paths, dump headers, and snippet listings. Run logs still contain no script text.
 
+### Recording what the user does
+
+```sh
+acu recorder
+```
+
+This starts a tray app under the UI Access build: a grey dot in the notification area. Click the dot to start recording; it turns red. Use your apps as usual, then click it again to stop. Its menu also opens the recordings folder and exits the app. Exiting while recording stops the recording first. A second `acu recorder` leaves the running one alone.
+
+A recording is a series of steps. Step 0 is the state when recording starts. After that, the recorder captures a step once input has been quiet for 0.6 s after a click, scroll or hotkey (a key with Ctrl, Alt or Win held), or 1.2 s after any other key. A typed word, a number or repeated arrow presses therefore produce one capture, after the last key. Actions closer together than that share a step. Mouse movement is never recorded, and neither are the clicks on the tray icon that start and stop a recording. Stopping captures the final step at once.
+
+Each recording is a folder `%LOCALAPPDATA%\ACU\recordings\<yyyyMMdd-HHmmss>\`:
+
+- `steps.jsonl` has one JSON object per step: its actions, the captured window, its focused element, and the file names below. Actions are `click` (`count` 2 is a double click), `drag`, `scroll`, `type`, `key` and `hotkey`, with keys in AutoHotkey `Send` notation such as `^s` or `{Enter}`.
+- `NNN-tree.txt` is the foreground window's tree as `tree.ahk` prints it, up to 2,000 elements.
+- `NNN.png` is a screenshot of that window's monitor, at most 1280 pixels on its longest side. The step records its source rectangle and scale.
+
+An action's `target` is the element's dump line, path first, so the same line can be found in the step's tree file. Clicks resolve against the window under the pointer and keys against the foreground window. The recorder reads that line when it processes the input, which can come after a capture finishes, so the line's value and state flags may already show the action's effect. The path, type, name and id identify the element. Typed text is rebuilt from key presses in the foreground window's keyboard layout. IME composition is not, so read the field's value in the next tree. In a password field only the length is stored.
+
+```sh
+acu recording [folder]
+```
+
+This prints a recording, the newest one by default, as a timeline for an agent to read. Each step lists its actions with their targets, followed by the tree changes since the previous capture of the same window. Changed lines are matched without their paths, so inserting one element does not mark its later siblings as changed. Each step prints at most 40 changed lines and counts the rest.
+
+The recorder listens through Raw Input, as the bench's input recorder does. An input hook would turn ACU's `SendInput` into `SendEvent` for every AutoHotkey script on the machine. Raw Input cannot tell your input from injected input, so input that ACU or another tool sends during a recording is recorded too. Only the foreground window's tree is captured: menus and popups that are separate windows appear in the screenshot and as action targets, but not in the tree file. Recordings are never pruned and contain full trees, screenshots and typed text. Review them before sharing. [ADR-0011](docs/adr/0011-user-recordings.md) records the design.
+
 ## Debugging artifacts
 
 | Artifact | Default location |
@@ -134,6 +160,9 @@ New run records include `app`, captured from snippet markers before discovery ex
 | Script errors and timeouts, with full output | `%LOCALAPPDATA%\ACU\crashes\<timestamp>-<script hash>.json` |
 | Tool failures, with Python stack traces | `%LOCALAPPDATA%\ACU\crashes\<timestamp>-tool.json` |
 | Screenshots taken without `--out`, newest 30 kept | `%LOCALAPPDATA%\ACU\shots\<timestamp>-<action>.png` |
+| Recordings from `acu recorder`, never pruned | `%LOCALAPPDATA%\ACU\recordings\<timestamp>\` |
+| Recorder failures with AutoHotkey stacks; recording continues | `%LOCALAPPDATA%\ACU\logs\recorder.log` |
+| Unexpected recorder errors, with stacks | `%LOCALAPPDATA%\ACU\crashes\<timestamp>-recorder.txt` |
 
 Set `ACU_HOME` to move these locations. Screenshots saved outside the managed shots folder are never pruned.
 

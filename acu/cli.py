@@ -1,10 +1,10 @@
-"""The acu command: run AHK scripts, or inspect snippets and history without desktop access."""
+"""The acu command: run AHK scripts, inspect snippets, history and recordings, or start the recorder."""
 
 import argparse
 import json
 import sys
 
-from . import history, snippets, tool
+from . import history, recording, snippets, tool
 from .diagnostics import failure
 
 
@@ -33,6 +33,11 @@ def main(argv=None) -> int:
                                           description=history.RULES)
     history_command.add_argument("session_file", help="Pi, Codex or Claude Code JSONL session file")
 
+    commands.add_parser("recorder", help="Start the tray app that records the user's actions and what they changed")
+    recording_command = commands.add_parser("recording", help="Print a recording as a timeline of actions and their effects",
+                                            description=recording.__doc__)
+    recording_command.add_argument("folder", nargs="?", help="Recording folder; defaults to the newest one")
+
     try:
         arguments = list(sys.argv[1:] if argv is None else argv)
         forwarded = []
@@ -41,6 +46,15 @@ def main(argv=None) -> int:
         options = parser.parse_args(arguments)
         if options.command == "history":
             print(history.summarize(options.session_file))
+            return 0
+        if options.command == "recorder":
+            try:
+                print(recording.start_recorder())
+            except SystemExit as error:
+                raise ValueError(str(error)) from error
+            return 0
+        if options.command == "recording":
+            print(recording.summarize(options.folder), end="")
             return 0
         if options.command == "snippets":
             print(snippets.list_for_app(options.app, options.keywords))

@@ -160,6 +160,8 @@ def test_prepare_claude_arm_runs_opus_low_in_safe_mode_with_only_four_tools(tmp_
 def test_prepare_pi_native_keeps_the_same_gpt_profile_and_only_native_mcp(tmp_path, scenario, allowed, forbidden):
     source_config = {'mcp_servers': {'node_repl': {'command': str(tmp_path / 'native-node.exe'), 'args': ['--fixture'],
                                                    'env': {'SKY_CUA_NATIVE_PIPE': '1', 'SKY_CUA_NATIVE_PIPE_DIRECTORY': 'old-pipe'}}}}
+    (tmp_path / 'node_modules/@oai/sky').mkdir(parents=True)
+    (tmp_path / 'node_modules/@oai/sky/package.json').write_text('{"name": "@oai/sky", "version": "0.7.17"}', encoding='utf-8')
     plan = prepare('pi-computer-use', tmp_path / 'native-run', scenario=scenario, skill=skill_fixture(tmp_path, 'computer-use'), native_config=source_config)
     config = json.loads((tmp_path / 'native-run/agent-home/mcp.json').read_text(encoding='utf-8'))
     assert list(config['mcpServers']) == ['node_repl']
@@ -181,6 +183,7 @@ def test_prepare_pi_native_keeps_the_same_gpt_profile_and_only_native_mcp(tmp_pa
     assert json.loads(native['env']['NODE_REPL_TRUSTED_SERVICES']) == {'sky': '@oai/sky/service'}
     assert native['env']['BROWSER_USE_AVAILABLE_BACKENDS'] == ''
     assert plan['skill_names'] == ['computer-use']
+    assert plan['native_sky_version'] == '0.7.17'
     settings = json.loads((tmp_path / 'native-run/agent-home/settings.json').read_text(encoding='utf-8'))
     assert settings['retry']['enabled'] and settings['compaction']['enabled']
     assert plan['recovery_policy'] == {'retry': settings['retry'], 'compaction': settings['compaction']}

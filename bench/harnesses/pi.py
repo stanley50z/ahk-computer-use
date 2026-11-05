@@ -295,6 +295,12 @@ def native_server(home, config=None, transport='sdk-helper'):
             'exposure': 'direct', 'timeout': 120}
 
 
+# The plan keeps the runtime's own version: the skill text can stay identical across Codex app releases.
+def sky_version(node_repl):
+    package = Path(node_repl).parent / 'node_modules/@oai/sky/package.json'
+    return json.loads(package.read_text(encoding='utf-8'))['version'] if package.is_file() else None
+
+
 # Build only the selected skill/runtime profile; scenario permissions arrive from the scenario adapter.
 def profile(arm, run_dir, prompt, skill, native_config, native_transport, approved_apps):
     home = run_dir / 'agent-home'
@@ -316,7 +322,7 @@ def profile(arm, run_dir, prompt, skill, native_config, native_transport, approv
     result = {'skill': skill, 'command': pi_command(run_dir, skill, prompt, native=arm.native),
               'environment_overrides': {'PI_CODING_AGENT_DIR': str(home), 'PI_OFFLINE': '1'}, 'provider': PI_PROVIDER}
     if arm.native:
-        result.update(native_transport=native_transport,
+        result.update(native_transport=native_transport, native_sky_version=sky_version(bridge['command']),
                       mcp_config_sha256=hashlib.sha256((home / 'mcp.json').read_bytes()).hexdigest(),
                       native_bridge_sha256=hashlib.sha256((home / 'native-bridge.json').read_bytes()).hexdigest())
         if native_transport == 'app-pipe':

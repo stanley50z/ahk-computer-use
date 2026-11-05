@@ -22,14 +22,9 @@ AcuTree(target, options := "") {
         throw ValueError("depth and max must be at least 1")
     if (wantedType != "" && !UIA.Type.HasOwnProp(wantedType))
         throw ValueError("type must be a UI Automation control type such as Button, Edit, or Text; got `"" wantedType "`"")
-    cachedProperties := ["Type", "Name", "AutomationId", "Value", "ValueIsReadOnly", "BoundingRectangle", "IsEnabled", "IsOffscreen"
-        , "HasKeyboardFocus", "SelectionItemIsSelected", "IsInvokePatternAvailable", "IsTogglePatternAvailable"
-        , "IsValuePatternAvailable", "IsSelectionItemPatternAvailable", "IsExpandCollapsePatternAvailable", "IsScrollPatternAvailable"]
-    actionFlags := [["invoke", "IsInvokePatternAvailable"], ["toggle", "IsTogglePatternAvailable"]
-        , ["select", "IsSelectionItemPatternAvailable"], ["expand", "IsExpandCollapsePatternAvailable"], ["scroll", "IsScrollPatternAvailable"]]
     hwnd := WinGetID(target)
-    ; One cross-process round trip fetches the whole control-view subtree with the properties above; the walk then reads memory.
-    cacheRequest := UIA.CreateCacheRequest(cachedProperties, , UIA.TreeScope.ElementDescendants, UIA.AutomationElementMode.None, UIA.ControlViewCondition)
+    ; One cross-process round trip fetches the whole control-view subtree with the dump's properties; the walk then reads memory.
+    cacheRequest := UIA.CreateCacheRequest(AcuTreeProperties(), , UIA.TreeScope.ElementDescendants, UIA.AutomationElementMode.None, UIA.ControlViewCondition)
     root := AcuTreeFetch(hwnd, cacheRequest)
     state := {count: 0, hitMax: false, hitDepth: false, lines: ""}
 
@@ -40,36 +35,6 @@ AcuTree(target, options := "") {
         if (findText != "" && !InStr(element.CachedName, findText) && !InStr(element.CachedAutomationId, findText))
             return false
         return true
-    }
-
-    ; One dump line for an element, from its cached properties only.
-    describe(element, path) {
-        line := path " " UIA.Type[element.CachedType]
-        if (element.CachedName != "")
-            line .= " `"" AcuTreeLiteral(element.CachedName) "`""
-        if (element.CachedAutomationId != "")
-            line .= " id=`"" AcuTreeLiteral(element.CachedAutomationId) "`""
-        if (element.CachedValue != "")
-            line .= " value=`"" AcuTreeLiteral(element.CachedValue) "`""
-        try
-            location := element.CachedLocation
-        catch
-            location := {x: 0, y: 0, w: 0, h: 0}
-        line .= " @" location.x "," location.y " " location.w "x" location.h
-        for pair in actionFlags
-            if element.GetCachedPropertyValue(UIA.Property.%pair[2]%)
-                line .= " " pair[1]
-        if (element.GetCachedPropertyValue(UIA.Property.IsValuePatternAvailable) && !element.GetCachedPropertyValue(UIA.Property.ValueIsReadOnly))
-            line .= " value"
-        if !element.CachedIsEnabled
-            line .= " disabled"
-        if element.CachedIsOffscreen
-            line .= " offscreen"
-        if element.CachedHasKeyboardFocus
-            line .= " focused"
-        if element.GetCachedPropertyValue(UIA.Property.SelectionItemIsSelected)
-            line .= " selected"
-        return line
     }
 
     ; Appends one line per matching element below `element`, depth first. Stops at the element budget and the
@@ -84,7 +49,7 @@ AcuTree(target, options := "") {
                     state.hitMax := true
                     return
                 }
-                state.lines .= describe(child, childPath) "`n"
+                state.lines .= AcuTreeDescribe(child, childPath) "`n"
                 state.count++
             }
             if (level < maxDepth)
@@ -97,6 +62,47 @@ AcuTree(target, options := "") {
     walk(root, "", 1)
     truncated := state.hitMax && state.hitDepth ? "max+depth" : state.hitMax ? "max" : state.hitDepth ? "depth" : "no"
     return "window=" hwnd " `"" AcuTreeLiteral(WinGetTitle(hwnd)) "`" " WinGetProcessName(hwnd) "`n" state.lines "elements=" state.count "`ntruncated=" truncated "`n"
+}
+
+; The properties a dump line reads, for a cache request that fetches them in one round trip.
+AcuTreeProperties() {
+    static properties := ["Type", "Name", "AutomationId", "Value", "ValueIsReadOnly", "BoundingRectangle", "IsEnabled", "IsOffscreen"
+        , "HasKeyboardFocus", "SelectionItemIsSelected", "IsInvokePatternAvailable", "IsTogglePatternAvailable"
+        , "IsValuePatternAvailable", "IsSelectionItemPatternAvailable", "IsExpandCollapsePatternAvailable", "IsScrollPatternAvailable"]
+    return properties
+}
+
+; One dump line for an element fetched with AcuTreeProperties cached, from its cached properties only. The recorder
+; uses it too, so a recorded target is the same line its window's dump prints.
+AcuTreeDescribe(element, path) {
+    static actionFlags := [["invoke", "IsInvokePatternAvailable"], ["toggle", "IsTogglePatternAvailable"]
+        , ["select", "IsSelectionItemPatternAvailable"], ["expand", "IsExpandCollapsePatternAvailable"], ["scroll", "IsScrollPatternAvailable"]]
+    line := path " " UIA.Type[element.CachedType]
+    if (element.CachedName != "")
+        line .= " `"" AcuTreeLiteral(element.CachedName) "`""
+    if (element.CachedAutomationId != "")
+        line .= " id=`"" AcuTreeLiteral(element.CachedAutomationId) "`""
+    if (element.CachedValue != "")
+        line .= " value=`"" AcuTreeLiteral(element.CachedValue) "`""
+    try
+        location := element.CachedLocation
+    catch
+        location := {x: 0, y: 0, w: 0, h: 0}
+    line .= " @" location.x "," location.y " " location.w "x" location.h
+    for pair in actionFlags
+        if element.GetCachedPropertyValue(UIA.Property.%pair[2]%)
+            line .= " " pair[1]
+    if (element.GetCachedPropertyValue(UIA.Property.IsValuePatternAvailable) && !element.GetCachedPropertyValue(UIA.Property.ValueIsReadOnly))
+        line .= " value"
+    if !element.CachedIsEnabled
+        line .= " disabled"
+    if element.CachedIsOffscreen
+        line .= " offscreen"
+    if element.CachedHasKeyboardFocus
+        line .= " focused"
+    if element.GetCachedPropertyValue(UIA.Property.SelectionItemIsSelected)
+        line .= " selected"
+    return line
 }
 
 ; Fetches the cached subtree, waiting while the window's accessibility provider is still waking up. A Chromium or

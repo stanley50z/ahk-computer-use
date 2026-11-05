@@ -27,7 +27,7 @@ def test_distributed_package_contains_the_launcher_and_ordinary_inspection_scrip
     with zipfile.ZipFile(next(tmp_path.glob("*.whl"))) as package:
         required = {"acu/__main__.py", "acu/cli.py", "acu/run.py", "acu/prelude.ahk",
                     "acu/tree.ahk", "acu/screenshot.ahk", "acu/lib/UIA.ahk", "acu/lib/UIA-LICENSE.txt",
-                    "acu/lib/dump.ahk", "acu/lib/capture.ahk", "acu/SKILL.md"}
+                    "acu/lib/dump.ahk", "acu/lib/capture.ahk", "acu/SKILL.md", "acu/recorder.ahk", "acu/recording.py"}
         names = set(package.namelist())
         assert required <= names, required - names
         assert "acu/capabilities.json" not in names
