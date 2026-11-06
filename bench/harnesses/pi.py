@@ -36,12 +36,16 @@ recovery_policy = PI_RECOVERY_POLICY
 model, reasoning = MODEL, REASONING
 
 
-# Bypass the Windows npm shim so prompts never pass through cmd.exe parsing.
+# Bypass the Windows .cmd shim so prompts never pass through cmd.exe parsing. The managed installer (Pi 1.4)
+# puts pi-launcher.js beside the shim; older npm installs put the package under node_modules.
 def executable_command(command):
     resolved = installed_command(command)
     if Path(resolved[0]).suffix.lower() != '.cmd':
         return resolved
-    entry = Path(resolved[0]).parent / 'node_modules/@earendil-works/pi-coding-agent/dist/cli.js'
+    shim_dir = Path(resolved[0]).parent
+    entry = shim_dir / 'pi-launcher.js'
+    if not entry.is_file():
+        entry = shim_dir / 'node_modules/@earendil-works/pi-coding-agent/dist/cli.js'
     if not entry.is_file():
         raise FileNotFoundError(entry)
     node = shutil.which('node')

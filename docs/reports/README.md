@@ -4,7 +4,7 @@ These are dated records of particular code, prompts, model configurations and be
 
 ## Latest report
 
-[Combined Illustrator and TB3.1–TB3.4 results](https://stanley50z.github.io/ahk-computer-use/reports/latest/) covers the 20–21 October 2026 rounds: 75 selected trials, original final-output comparisons, and side-by-side video playback. The public copy uses silent videos up to 720p; full-resolution clips and audio remain local.
+[Combined Illustrator and TB3.1–TB3.4 results](https://stanley50z.github.io/ahk-computer-use/reports/latest/) covers the 5 November 2026 round: 75 trials, original final-output comparisons, and side-by-side video playback. The [20–21 October report](https://stanley50z.github.io/ahk-computer-use/reports/2026-10-22/) remains at its dated address. The public copy uses silent videos up to 720p; full-resolution clips and audio remain local.
 
 The stable `reports/latest/` link points to the newest published report. GitHub Pages serves only the reviewed static bundle on the dedicated `gh-pages` branch, not this repository's `main` checkout. Local paths, raw sessions, logs and work documents are excluded from the public bundle.
 

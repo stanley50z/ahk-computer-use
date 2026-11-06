@@ -17,6 +17,16 @@ def test_interrupted_turn_exclusion_is_offline_only_and_does_not_prepare_a_trial
     assert not target.exists()
 
 
+@pytest.mark.parametrize('entry', ['pi-launcher.js', 'node_modules/@earendil-works/pi-coding-agent/dist/cli.js'])
+def test_pi_command_bypasses_the_cmd_shim_for_managed_and_npm_installs(tmp_path, monkeypatch, entry):
+    from bench.harnesses import pi
+    (tmp_path / entry).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / entry).write_text('', encoding='utf-8')
+    monkeypatch.setattr(pi, 'installed_command', lambda command: [str(tmp_path / 'pi.CMD'), *command[1:]])
+    monkeypatch.setattr(pi.shutil, 'which', lambda name: 'node.exe')
+    assert pi.executable_command(['pi', '--print', 'a & b']) == ['node.exe', str(tmp_path / entry), '--print', 'a & b']
+
+
 # Supply filesystem/config boundary fixtures so ordinary checks need no installed CUA or Codex.
 def skill_fixture(root, name):
     path = root / name
