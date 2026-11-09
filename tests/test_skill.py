@@ -57,7 +57,7 @@ def test_skill_is_self_contained_and_spends_turns_on_looking_not_ceremony():
 
     assert "guides/" not in text, "everything an agent needs before its first script lives in the skill itself"
     for required in ("one shell call", "heredoc", "AcuLaunch(command, winTitle", "AcuWaitUntil(predicate", "AcuTree(target", "AcuScreenshot({app", "acu run tree.ahk",
-                     "element.Click()", 'Click("left")', "screen-reader text", "truncated=", "scale=", "fullscreen [monitor]",
+                     "element.Click()", 'Click("left")', "query the tree for it once", "screen-reader text", "truncated=", "scale=", "fullscreen [monitor]",
                      "PrintWindow", "on-screen", "popup", "repaint", "English keyboard", "no English keyboard"):
         assert required in text, f"skill must cover {required}"
     assert "AcuKeepForeground" not in text
@@ -77,6 +77,7 @@ def test_skill_teaches_snippet_discovery_execution_and_lifecycle():
                      "~/.ahk-computer-use/snippets/<exe name>/",
                      "AcuLaunch", "--find", "--type", "A_Args",
                      "needs", "effect", "check", "tested",
+                     "locates each control when it runs", "window's current position and size",
                      "last message", "one line per snippet", "retro-acu"):
         assert required in snippets, f"snippet instructions must cover {required}"
     assert re.search(r"never delete", snippets, re.IGNORECASE)

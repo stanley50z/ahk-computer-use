@@ -26,6 +26,8 @@ def test_retro_requires_history_and_approval_before_store_changes():
         "Implement a result check last",
         "error that names the missing need",
         "error if the action had no effect",
+        "Locate each control when the snippet runs",
+        "every listed snippet that passes a literal screen coordinate to a pointer call",
     ):
         assert requirement in text
     assert re.findall(r"^  ; (\w+):", text, re.MULTILINE) == [
