@@ -200,7 +200,7 @@ It returns merged stdout/stderr followed by an `[acu]` status trailer, rather th
 
 Both record app attribution before marker expansion. Run recording finishes before formatting; a log-write failure is reported in JSON `log_error` or on stderr without replacing the script's exit code. Shutdown failures are persisted immediately while the process is still owned, as described above.
 
-`acu.run.ProcessAdapter` supplies the plain validation process and the UI Access script process. The Win32 adapter uses the existing pipe and ShellExecute transports; tests inject a fake through `run_operation(..., process_adapter=...)` to exercise deadlines, cancellation and verified shutdown without starting AutoHotkey. `Run.trailer` derives the text from the run's outcome, phase and timing facts for both formatters.
+`acu.run.ProcessAdapter` owns every Windows contact of one run: the desktop lease, the plain validation process and the UI Access script process. `Win32ProcessAdapter` holds the lease as a session mutex, uses the pipe and ShellExecute transports, and locates each AutoHotkey build when it starts that process. Both entry points (`acu.cli.main` and `acu.run.main`) and `run_operation` take a `process_adapter`; tests pass the fake in `tests/fake_process.py` to exercise deadlines, cancellation, verified shutdown and lease ordering without AutoHotkey, a process or the mutex. `Run.trailer` derives the text from the run's outcome, phase and timing facts for both formatters.
 
 Scripts do not inherit the launcher's environment through Windows ShellExecute; pass values as arguments. `ACU_HOME` is passed through explicitly.
 

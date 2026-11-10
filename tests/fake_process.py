@@ -1,7 +1,8 @@
-"""Process adapter for launcher tests; no OS process or desktop access."""
+"""Process adapter for launcher tests; no OS process, AutoHotkey installation or desktop lease."""
 
 import signal
 import subprocess
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -100,25 +101,39 @@ class FakeScript:
 
 
 class FakeProcessAdapter:
-    """Supply both process types through the launcher's public adapter seam."""
+    """Supply the lease and both process types through the launcher's adapter interface.
+
+    Set busy to model another run holding the desktop lease.
+    """
 
     def __init__(self, output=""):
         self.events = []
         self.validator = FakeValidator(self.events)
         self.script = FakeScript(self.events)
         self.output = output
+        self.busy = False
         self.interrupt_creation = None
-        self.validation_command = None
+        self.validation_arguments = None
         self.script_arguments = None
 
-    def start_validation(self, command):
+    @contextmanager
+    def desktop_lease(self):
+        if self.busy:
+            raise ValueError("busy: the fake desktop lease is held")
+        self.events.append("lease.acquired")
+        try:
+            yield
+        finally:
+            self.events.append("lease.released")
+
+    def start_validation(self, arguments):
         self.events.append("validator.start")
-        self.validation_command = command
+        self.validation_arguments = arguments
         if self.interrupt_creation == "validation":
             signal.raise_signal(signal.SIGINT)
         return self.validator
 
-    def start_script(self, exe, arguments):
+    def start_script(self, arguments):
         self.events.append("script.start")
         self.script_arguments = arguments
         output_path = next(value.removeprefix("--acu-out=") for value in arguments if value.startswith("--acu-out="))

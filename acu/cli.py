@@ -5,6 +5,7 @@ import json
 import sys
 
 from . import history, recording, snippets, tool
+from . import run as launcher
 from .diagnostics import failure
 
 
@@ -14,8 +15,8 @@ class Parser(argparse.ArgumentParser):
         raise ValueError(message)
 
 
-def main(argv=None) -> int:
-    """Dispatch read-only discovery or preserve the launcher's run/arguments contract."""
+def main(argv=None, process_adapter: launcher.ProcessAdapter | None = None) -> int:
+    """Dispatch read-only discovery or preserve the launcher's run/arguments contract; tests pass a fake adapter for run."""
     sys.stdout.reconfigure(encoding="utf-8")
     parser = Parser(prog="acu", description="Run AutoHotkey v2 scripts or list saved app snippets")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -59,7 +60,8 @@ def main(argv=None) -> int:
         if options.command == "snippets":
             print(snippets.list_for_app(options.app, options.keywords))
             return 0
-        result = tool.run(options.script, options.timeout, forwarded)
+        result = tool.run(options.script, options.timeout, forwarded,
+                          process_adapter=process_adapter or launcher.Win32ProcessAdapter())
     except ValueError as error:
         print(json.dumps({"error": str(error)}, ensure_ascii=False))
         return 2
