@@ -6,7 +6,7 @@ import uuid
 
 from bench.common import actor_path, expand_user_root, read_jsonl, executable_command
 from bench.intervals import busy_seconds
-from bench.tool_calls import tool_call
+from bench.tool_calls import Json, Request, tool_call
 
 name = 'claude'
 live = True
@@ -30,6 +30,21 @@ def claude_command(skill, prompt, session_id, *, arm='claude-acu'):
             '--permission-mode', 'bypassPermissions', '--model', model, '--effort', effort,
             '--session-id', session_id, '--output-format', 'stream-json', '--verbose',
             '--include-partial-messages', '--append-system-prompt', declaration, prompt]
+
+
+# Claude Code's tool vocabulary, from the input schemas of its Read, Write, Edit and Bash tools.
+def request(name: str, arguments: Json) -> Request:
+    match name, arguments:
+        case 'Read', dict():
+            return {'kind': 'read'}
+        case 'Write', {'file_path': str(path), 'content': str(content)}:
+            return {'kind': 'write', 'path': path, 'content': content}
+        case 'Edit', {'file_path': str(path), 'old_string': str(old), 'new_string': str(new)}:
+            return {'kind': 'edit', 'path': path, 'edits': [{'old': old, 'new': new}],
+                    'replace_all': arguments.get('replace_all') is True}
+        case 'Bash', {'command': str(command)}:
+            return {'kind': 'shell', 'command': command}
+    return {'kind': 'unknown'}
 
 
 # Claude Code stream-json carries no server-side response duration: a response is timed from the request status
@@ -91,7 +106,7 @@ def analyse_claude(records, wall_s, reference_tps=None, *, cancelled=False, excl
                     if start is not None:
                         intervals.append((start, elapsed))
                     body = block.get('content')
-                    tools.append(tool_call(block['tool_use_id'], name, arguments, start, elapsed, body, bool(block.get('is_error')),
+                    tools.append(tool_call(block['tool_use_id'], name, arguments, request(name, arguments), start, elapsed, body, bool(block.get('is_error')),
                                            matched=start is not None, truncated=isinstance(body, str) and '<persisted-output>' in body))
         elif kind == 'result':
             agent_end = elapsed
@@ -102,7 +117,7 @@ def analyse_claude(records, wall_s, reference_tps=None, *, cancelled=False, excl
                 terminal_errors = [error for error in reported if error.lstrip().lower().startswith('api error:')]
                 provider_errors.extend(terminal_errors)
                 pending_provider_errors.extend(terminal_errors)
-    tools.extend(tool_call(identity, name, arguments, start, None, None, None, completed=False)
+    tools.extend(tool_call(identity, name, arguments, request(name, arguments), start, None, None, None, completed=False)
                  for identity, (start, name, arguments) in tool_starts.items())
     if final is not None and final.get('usage'):
         usage = final['usage']

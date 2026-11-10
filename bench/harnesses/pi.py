@@ -12,7 +12,7 @@ from copy import deepcopy
 from bench.common import ROOT, read_jsonl, save_json
 from bench.common import executable_command as installed_command
 from bench.intervals import busy_seconds
-from bench.tool_calls import tool_call
+from bench.tool_calls import Json, Request, node_repl_request, tool_call
 
 name = 'pi'
 live = True
@@ -62,6 +62,25 @@ def pi_command(run_dir, skill, prompt, *, native=False):
             '--model', f'{PI_PROVIDER}/{MODEL}', '--thinking', 'low', '--offline',
             '--approve', '--session', str(run_dir / 'session.jsonl'),
             '--mode', 'json', '--print', prompt]
+
+
+# Pi's tool vocabulary, from the parameter schemas of its read, write, edit and bash tools and its node_repl MCP bridge.
+def request(name: str, arguments: Json) -> Request:
+    match name, arguments:
+        case 'read', dict():
+            return {'kind': 'read'}
+        case 'write', {'path': str(path), 'content': str(content)}:
+            return {'kind': 'write', 'path': path, 'content': content}
+        case 'edit', {'path': str(path), 'edits': list(edits)} if all(
+                isinstance(edit, dict) and isinstance(edit.get('oldText'), str) and isinstance(edit.get('newText'), str)
+                for edit in edits):
+            return {'kind': 'edit', 'path': path, 'edits': [{'old': edit['oldText'], 'new': edit['newText']} for edit in edits],
+                    'replace_all': False}
+        case 'bash', {'command': str(command)}:
+            return {'kind': 'shell', 'command': command}
+    if name.startswith('mcp__node_repl__'):
+        return node_repl_request(name.removeprefix('mcp__node_repl__'), arguments)
+    return {'kind': 'unknown'}
 
 
 # Analyse final usage once; optional offline exclusion keeps interrupted responses as separate evidence.
@@ -169,13 +188,13 @@ def analyse_pi(records, wall_s, reference_tps=None, *, cancelled=False, exclude_
                 intervals.append((start, elapsed))
             body = event.get('result')
             truncated = isinstance(body, dict) and bool((body.get('details') or {}).get('truncation', {}).get('truncated'))
-            tools.append({**tool_call(event['toolCallId'], name, arguments, start, elapsed, body, event.get('isError'),
+            tools.append({**tool_call(event['toolCallId'], name, arguments, request(name, arguments), start, elapsed, body, event.get('isError'),
                                      matched=start is not None, truncated=truncated),
                           'reported_duration_ms': event.get('durationMs')})
         elif kind == 'agent_settled':
             agent_end = elapsed
             completed = not event['aborted'] and last_stop_reason == 'stop' and not pending_recovery_errors
-    tools.extend(tool_call(identity, name, arguments, start, None, None, None, completed=False)
+    tools.extend(tool_call(identity, name, arguments, request(name, arguments), start, None, None, None, completed=False)
                  for identity, (start, name, arguments) in starts.items())
     model_s = sum(turn['duration_s'] for turn in turns) if not compactions and all(turn['duration_s'] is not None for turn in turns) else None
     if cancelled:

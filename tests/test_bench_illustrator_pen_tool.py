@@ -443,7 +443,10 @@ def test_illustrator_conduct_keeps_resource_tampering_gated_and_window_changes_d
     before = 'window=1 pid=5\n'
     clean = conduct_audit(plan, before, 'window=1 pid=5\nwindow=9 pid=8\nwindow=10 pid=8\nillustrator=9\npid=8\n', {}, {}, [])
     assert clean['passed']
-    outside = [{'name': 'write', 'text': str(tmp_path.parent / 'helper.py') + '\nprint(1)'}]
+    from bench.tool_calls import tool_call
+    helper = str(tmp_path.parent / 'helper.py')
+    outside = [tool_call('w', 'write', {'path': helper, 'content': 'print(1)'},
+                         {'kind': 'write', 'path': helper, 'content': 'print(1)'}, 1, 2, None, False)]
     scratch = conduct_audit(plan, before, 'window=1 pid=5\nwindow=9 pid=8\nillustrator=9\npid=8\n', {}, {}, outside)
     assert scratch['passed'], 'the scratch-folder hint is not a location restriction'
     assert scratch['writes_outside_workspace'], 'retain diagnostic evidence without a hidden disqualifier'

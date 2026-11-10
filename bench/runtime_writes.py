@@ -85,10 +85,7 @@ def result_destinations(value):
 
 
 # Recognize a direct capture CLI call (optionally after cd), not echoed metadata or unresolved helpers.
-def capture_requests(arguments):
-    command = arguments.get('command') if isinstance(arguments, dict) else None
-    if not isinstance(command, str):
-        return []
+def capture_requests(command: str):
     lexer = shlex.shlex(command, posix=True, punctuation_chars=';&|()<>\n')
     lexer.whitespace = ' \t\r'
     try:
@@ -127,12 +124,14 @@ def audit_runtime_writes(calls: list[ToolCall], before, after):
                                          if after['files'].get(path) != info]
     shell_calls = 0
     for call in calls:
-        if call['name'].casefold() not in ('bash', 'shell', 'unmatched'):
+        # A result whose request never arrived may have been a shell call, so it is audited and stays unverified.
+        request = call['request']
+        if request['kind'] != 'shell' and call['matched']:
             continue
-        call_id, arguments, body = call['id'], call['arguments'], call['result']
+        call_id, body = call['id'], call['result']
         failed = not call['matched'] or not call['completed'] or call['is_error'] is not False or call['truncated']
         shell_calls += 1
-        requested = capture_requests(arguments)
+        requested = capture_requests(request['command']) if request['kind'] == 'shell' else []
         destinations = list(dict.fromkeys(result_destinations(body))) if not failed else []
         if not destinations:
             result['unverified_calls'].append({'call_id': call_id, 'reason': 'failed/missing/unmatched/truncated result' if failed else 'no complete runtime destination'})

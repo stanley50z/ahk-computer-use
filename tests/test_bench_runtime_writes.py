@@ -166,6 +166,35 @@ def test_old_capture_json_or_unresolved_helper_cannot_blame_an_unrelated_write(t
     assert result['runtime_writes']['evidence_complete'] is False
 
 
+# The audit covers shell requests from every harness; Codex reports no error flag, so its results stay unverified.
+@pytest.mark.parametrize('harness,item,audited', [
+    ('codex', {'type': 'command_execution', 'aggregated_output': json.dumps({'screenshot_file_path': 'c:/users/test/cp.png'}), 'exit_code': 0}, 1),
+    ('codex', {'type': 'mcp_tool_call', 'server': 'node_repl', 'tool': 'js', 'arguments': {'code': 'await sky.get_app_state()'},
+               'result': {'screenshot_file_path': 'c:/users/test/cp.png'}}, 0),
+    ('pi', None, 0),
+    ('pi-unmatched', None, 1),
+])
+def test_runtime_audit_covers_shell_requests_only(tmp_path, harness, item, audited):
+    from bench.run import analyse_codex
+    path = 'c:/users/test/cp.png'
+    if harness == 'codex':
+        item = {'id': 'capture', 'command': 'cua-driver get_window_state ' + shlex.quote(json.dumps({'screenshot_out_file': path})), **item}
+        records = [{'elapsed_s': 0, 'event': {'type': 'item.started', 'item': item}},
+                   {'elapsed_s': 1, 'event': {'type': 'item.completed', 'item': {**item, 'status': 'completed'}}}]
+        tools = analyse_codex(records, 2)['tools']
+    elif harness == 'pi':
+        records = events('pi', path)
+        records[0]['event'].update(toolName='mcp__node_repl__js', args={'code': 'await sky.get_app_state()'})
+        tools = analyse_pi(records, 2)['tools']
+    else:
+        tools = analyse_pi(events('pi', path)[1:], 2)['tools']
+    result = conduct_audit({'workspace': str(tmp_path), 'skill_path': str(tmp_path / 'skill/SKILL.md')}, '', '', {}, {}, tools,
+                           runtime_before=snapshot({}), runtime_after=snapshot({path: {'device': 1, 'inode': 2, 'size': 16, 'mtime_ns': 200}}))
+    assert result['runtime_writes']['audited_shell_calls'] == audited
+    assert result['runtime_writes']['unverified_calls'] == (
+        [{'call_id': 'capture', 'reason': 'failed/missing/unmatched/truncated result'}] if audited else [])
+
+
 def test_unsupported_event_format_does_not_claim_complete_runtime_evidence(tmp_path):
     result = audit(tmp_path, [{'elapsed_s': 0, 'event': {'type': 'response_item', 'payload': {'type': 'function_call_output'}}}], snapshot({}), snapshot({}))
     assert result['runtime_writes']['evidence_complete'] is False

@@ -54,7 +54,7 @@ def task_time(agent_start_s, tools: list[ToolCall], pattern, workspace):
 
     uses = []
     for tool in sorted(completed_calls(tools), key=lambda tool: tool['start_s'] if tool['start_s'] is not None else tool['end_s']):
-        if str(tool.get('name', '')).casefold() in ('read', 'write', 'edit'):
+        if tool['request']['kind'] in ('read', 'write', 'edit'):
             continue
         text = tool.get('text', '')
         if uses_computer(text):
@@ -321,13 +321,12 @@ def inside_workspace(path, workspace):
 def transcript_writes(tools: list[ToolCall], workspace):
     outside, suspicious = [], []
     for tool in completed_calls(tools):
-        name = str(tool.get('name', '')).casefold()
         text = tool.get('text', '')
-        if name in ('write', 'edit'):
-            target = text.split('\n', 1)[0]
-            if not inside_workspace(target, workspace):
-                outside.append({'tool': tool.get('name'), 'path': target})
-            continue
+        match tool['request']:
+            case {'kind': 'write' | 'edit', 'path': target}:
+                if not inside_workspace(target, workspace):
+                    outside.append({'tool': tool.get('name'), 'path': target})
+                continue
         if re.search(WRITE_VERBS, text):
             for token in set(re.findall(PATH_TOKEN, text)):
                 if not inside_workspace(token, workspace) and not re.search(r'SKILL\.md$|\.md$|/acu/(?:tree|screenshot)\.ahk$|\bacu\b$', token.replace('\\', '/')):
