@@ -24,6 +24,7 @@ bench/
 ├── runtime_writes.py              Screenshot-write audit
 ├── efficiency.py                  Token/code-share/call-time attribution
 ├── intervals.py                   Busy-time union
+├── outcome.py                     A finished trial's verdict, reasons, metrics row and output image
 ├── aggregate.py                   Offline Illustrator round aggregation
 ├── cua_bench_task.py               Workspace-rooted CUA daemon task
 ├── native_mcp.py                  Codex computer-use app-approval MCP adapter
@@ -182,7 +183,7 @@ A full round is exactly **15 trials: three for each of the five configurations**
 - Missing metric values remain unknown; do not substitute zero or silently use different subsets per metric. Unknown tokens do not prevent reporting another metric that is complete for the whole successful cohort.
 - Code share is descriptive. It is never used to declare success or select which runs to keep.
 
-`bench/aggregate.py` is offline and never launches/retries a trial. Its maintainer-authored manifest has an `attempts` array of 15 entries, in original trial order. Each entry contains a `run_dir` (absolute or relative to the manifest) and an explicit `safeguard_violations` array from session review; `[]` means no reviewed violation. This JSON is controller bookkeeping, **not a deliverable requested from the actor**. Recorded or reviewed violations exclude that attempt from averages.
+`bench/aggregate.py` is offline and never launches/retries a trial. Its maintainer-authored manifest has an `attempts` array of 15 entries, in original trial order. Each entry contains a `run_dir` (absolute or relative to the manifest) and an explicit `safeguard_violations` array from session review; `[]` means no reviewed violation. This JSON is controller bookkeeping, **not a deliverable requested from the actor**. Recorded or reviewed violations exclude that attempt from averages. Each attempt's verdict, metrics row and output image come from `bench/outcome.py` (see [Trial outcome](#trial-outcome)); the extractor also fails an attempt with a reviewed violation or a recorded `safeguard_violations` entry, and lists a cleanup failure that no recorded infrastructure failure explains among its violations.
 
 ```bash
 uv run python bench/aggregate.py ".pi/rounds/round.json" > ".pi/rounds/aggregate.json"
@@ -335,11 +336,42 @@ input recording immediately before the actor, stops recording immediately afterw
 result. Calculator retains verification before conduct; Illustrator and TB3 collect only after `conduct.json` is
 written. Illustrator keeps the result of its combined collection/cleanup operation and never repeats a refused
 collection. The shared `finally` block performs scenario cleanup and restores the saved cursor scheme even if
-cleanup raises. Adapters retain their summary fields and verdict policies.
+cleanup raises. Adapters add their own detail to the summary; none decides the verdict.
 
 `run_trial` and `run` accept keyword-only `scenario`, `capture_actor` and `observer` dependencies for offline lifecycle
 checks. Tests exercise the real measurement, isolation, conduct and evidence code with synthetic actor sessions and
-fake desktop boundaries. `tests/test_bench_scenarios.py` pins summary/cleanup shapes and collection/failure ordering;
-the runtime-writes test uses the same seam. Trial artifacts remain in the run directory: `verification.json`,
-`conduct.json`, `summary.json`, `cleanup.json`, and `crash.txt` with a traceback on failure. Test runs can retain these
-fake directories with pytest's `--basetemp <evidence-directory>` option.
+fake desktop boundaries. `tests/test_bench_scenarios.py` pins the common summary shape, each scenario's detail, cleanup
+records and collection/failure ordering; the runtime-writes test uses the same seam. `tests/test_bench_outcome.py`
+covers every verdict reason over trial folders under pytest's `tmp_path`. Trial artifacts remain in the run directory:
+`verification.json`, `conduct.json`, `summary.json`, `cleanup.json`, and `crash.txt` with a traceback on failure. Test
+runs can retain these fake directories with pytest's `--basetemp <evidence-directory>` option.
+
+### Trial outcome
+
+`bench/outcome.py::read_outcome(run_dir)` turns a trial folder into its outcome. It is the only place the verdict and
+the cleanup rule are written. A trial passes when none of these reasons applies:
+
+| Reason | Failed when |
+| --- | --- |
+| `worker_failure` | `crash.txt` exists: the controller raised during the trial or its cleanup |
+| `actor_incomplete` | `summary.json` is missing, or records a nonzero `exit_code`, a failed `metrics.capture` or no `metrics.agent_completed` |
+| `unexpected_provider_failure` | `failure.json` exists |
+| `isolation`, `task`, `conduct` | `isolation.json`, `verification.json` or `conduct.json` is missing or its `passed` is not `true` |
+| `infrastructure_failure` | `infrastructure-failure.json` exists (Illustrator maintainer export or collection) |
+| `cleanup` | `cleanup.json` is missing, or its `passed` or `cursor_scheme_restored` is not `true` |
+
+A missing record fails the check that needs it. The outcome ignores the verdict fields that `summary.json` records, so
+archived Illustrator summaries without the common check fields read the same as new ones. The controller records
+`passed` and `cleanup_passed` from the outcome after cleanup, and again after a crash if the summary exists.
+`cleanup_passed` is false after a controller crash even when `cleanup.json` passed. `stop.py`
+acknowledges a finished worker only when the outcome has no `cleanup` reason. `aggregate.py` reads each attempt's
+outcome.
+
+Every new `summary.json` has the common fields `arm`, `model`, `reasoning`, `exit_code`, `benchmark`, `diagnostics`,
+`passed`, `unexpected_failure`, `recovered_provider_errors`, `metrics`, `evidence_dir`, `isolation_passed`,
+`task_passed`, `conduct_passed`, `conduct_problems` and `cleanup_passed`. Scenarios add detail beside them: Illustrator
+adds `scenario`, `output_image`, `quality`, `problems`, `drawing_passed`, `infrastructure_failure` and
+`safeguard_violations`; TB3 adds `scenario`, `gui360_id`, `file_check`, `input_check`, `office_com_used` and
+`tool_calls`. Illustrator summaries written before 2026-11-10 lack `isolation_passed`, `task_passed`, `conduct_passed`,
+`conduct_problems` and `cleanup_passed`. Illustrator's `safeguard_violations` also lists a controller crash, or a
+cleanup failure not explained by a recorded infrastructure failure.

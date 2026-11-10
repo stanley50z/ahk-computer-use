@@ -12,6 +12,9 @@ from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from bench.common import TRIAL_POLICY, actor_path
+from bench.outcome import read_outcome
+# Preserve the established import for round scripts while the metrics row lives in bench.outcome.
+from bench.outcome import comparison_statistics  # noqa: F401
 from bench.run import WINDOW_AUDIT_POLICY
 from bench.arms import ARMS, ARM_TABLE
 
@@ -55,28 +58,8 @@ def aggregate_configuration(attempts):
     return result
 
 
-# Flatten only comparison metrics; descriptive code share remains an observation, never a success criterion.
-def comparison_statistics(benchmark, quality):
-    tokens = benchmark.get('api_tokens') or {}
-    code = benchmark.get('code_tokens', {})
-    calls = benchmark.get('computer_use', {})
-    complete = benchmark.get('token_counts_complete') is True
-    result = {'total_api_tokens': tokens.get('total') if complete else None}
-    for key in ('input_uncached', 'cache_read', 'cache_write', 'output_including_reasoning', 'reasoning_subset'):
-        result[key] = tokens.get(key) if complete else None
-    result['computer_use_code_tokens_estimate'] = code.get('estimated_tokens') if not code.get('review_required') else None
-    result['code_share_percent_estimate'] = code.get('output_share_percent_estimate') if complete and not code.get('review_required') else None
-    attributable = calls.get('attribution_complete') is True
-    timed = attributable and calls.get('durations_complete') is True
-    result['computer_use_call_count'] = calls.get('call_count') if attributable else None
-    result['computer_use_busy_s'] = calls.get('busy_seconds') if timed else None
-    result['computer_use_sum_call_s'] = calls.get('sum_call_seconds') if timed else None
-    for key in ('foreground_iou', 'boundary_mean_manhattan_px', 'boundary_p95_manhattan_px'):
-        result[key] = (quality or {}).get(key)
-    return result
-
-
 # Load a maintainer-authored manifest after session review; no JSON is requested from the actor.
+# Each attempt's verdict, metrics row and output image come from bench.outcome; manifest violations also fail it.
 def aggregate_round(manifest_path):
     from bench.illustrator_pen_tool import EXPORT_POLICY
 
@@ -93,8 +76,8 @@ def aggregate_round(manifest_path):
         if not isinstance(violations, list) or not all(isinstance(item, str) for item in violations):
             raise ValueError('each reviewed attempt needs an explicit safeguard_violations array')
         plan = json.loads((run / 'plan.json').read_text(encoding='utf-8'))
-        finished = json.loads((run / 'finished.json').read_text(encoding='utf-8'))
-        if finished.get('worker_finished') is not True:
+        outcome = read_outcome(run)
+        if not outcome.finished:
             raise ValueError(f'attempt has not finished: {run}')
         scenario = LEGACY_NAMES.get(plan['scenario'], plan['scenario'])
         version = LEGACY_NAMES.get(plan.get('scenario_version'), plan.get('scenario_version'))
@@ -131,49 +114,31 @@ def aggregate_round(manifest_path):
         if plan['arm'] in identities and identities[plan['arm']] != identity:
             raise ValueError(f'unmatched model/prompt/skill/assets/policy in {plan["arm"]}')
         identities[plan['arm']] = identity
-        summary_path = run / 'summary.json'
-        summary = json.loads(summary_path.read_text(encoding='utf-8')) if summary_path.is_file() else None
-        failure_path = run / 'failure.json'
-        unexpected_failure = json.loads(failure_path.read_text(encoding='utf-8')) if failure_path.is_file() else (summary or {}).get('unexpected_failure')
-        cleanup = finished.get('cleanup', {})
-        infrastructure_path = run / 'infrastructure-failure.json'
-        infrastructure_failure = json.loads(infrastructure_path.read_text(encoding='utf-8')) if infrastructure_path.is_file() else (summary or {}).get('infrastructure_failure')
-        violations = list(violations) + ((summary or {}).get('safeguard_violations') or [])
-        if (cleanup.get('passed') is not True and not infrastructure_failure) or cleanup.get('cursor_scheme_restored') is not True:
+        summary = outcome.summary or {}
+        violations = list(violations) + (summary.get('safeguard_violations') or [])
+        if outcome.cleanup_violation:
             violations.append('cleanup failed or is unverified')
         violations = list(dict.fromkeys(violations))
-        passed = (summary is not None and summary.get('passed') is True and summary.get('drawing_passed') is True
-                  and not violations and not unexpected_failure and not infrastructure_failure)
-        output = (summary or {}).get('output_image')
-        image = Path(output).resolve() if output else None
+        passed = outcome.passed and not violations
+        image = outcome.output_image
         if image is not None and image != (run / EXPORT_POLICY['output']).resolve():
             raise ValueError('recorded image must be this run\'s canonical maintainer output')
         if passed and (not (run / 'events.jsonl').is_file() or image is None or not image.is_file()):
             raise ValueError(f'successful attempt is missing session history or its output image: {run}')
-        statistics_row, metric_error = None, None
-        metrics_path = run / 'metrics.json'
-        if metrics_path.is_file():
-            try:
-                metrics = json.loads(metrics_path.read_text(encoding='utf-8'))
-                statistics_row = comparison_statistics(metrics['benchmark'], (summary or {}).get('quality'))
-            except (json.JSONDecodeError, OSError, KeyError) as error:
-                if passed:
-                    raise ValueError(f'successful attempt has unusable extracted metrics: {run}') from error
-                metric_error = str(error)  # Failed attempts never enter the averages; retain the data-loss reason.
-        elif passed:
-            raise ValueError(f'successful attempt is missing extracted metrics: {run}')
-        else:
-            metric_error = 'failed before extracted metrics were recorded'
-        row = {'id': str(run), 'started_at': started_at, 'passed': passed, 'statistics': statistics_row,
-               'safeguard_violations': violations, 'unexpected_failure': unexpected_failure,
-               'infrastructure_failure': infrastructure_failure}
+        if passed and outcome.statistics is None:
+            raise ValueError(f'successful attempt has no usable extracted metrics ({outcome.metric_error}): {run}')
+        # Failed attempts never enter the averages; metric_error retains the data-loss reason.
+        row = {'id': str(run), 'started_at': started_at, 'passed': passed, 'statistics': outcome.statistics,
+               'safeguard_violations': violations, 'unexpected_failure': outcome.unexpected_failure,
+               'infrastructure_failure': outcome.infrastructure_failure}
         groups.setdefault(plan['arm'], []).append(row)
         attempts.append({'run_dir': str(run), 'arm': plan['arm'], 'passed': passed,
                          'output_image': str(image) if image is not None and image.is_file() else None,
-                         'statistics': statistics_row, 'metric_error': metric_error, 'safeguard_violations': violations,
-                         'unexpected_failure': unexpected_failure, 'infrastructure_failure': infrastructure_failure,
-                         'drawing_passed': (summary or {}).get('drawing_passed'),
-                         'recovered_provider_errors': (summary or {}).get('recovered_provider_errors', [])})
+                         'statistics': outcome.statistics, 'metric_error': outcome.metric_error,
+                         'safeguard_violations': violations, 'unexpected_failure': outcome.unexpected_failure,
+                         'infrastructure_failure': outcome.infrastructure_failure,
+                         'drawing_passed': summary.get('drawing_passed'),
+                         'recovered_provider_errors': summary.get('recovered_provider_errors', [])})
     if set(groups) != set(ARMS):
         raise ValueError('a full round requires all five configurations, with three attempts each')
     if len({identity['prompt_template_sha256'] for identity in identities.values()}) != 1 or len({json.dumps(identity['assets'], sort_keys=True) for identity in identities.values()}) != 1:

@@ -7,7 +7,13 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from bench.run import cleanup_finished
+from bench.outcome import Reason, read_outcome
+
+
+# A finished worker does not imply successful cleanup.
+def cleanup_verified(run_dir: Path) -> bool:
+    outcome = read_outcome(run_dir)
+    return outcome.finished and Reason.CLEANUP not in outcome.reasons
 
 
 # A run-local cancellation request lets the worker stop its child tree and perform owned-window cleanup.
@@ -20,8 +26,7 @@ def main():
     if Path(launch['run_dir']).resolve() != run_dir:
         raise ValueError('launch record does not belong to this directory')
     if (run_dir / 'finished.json').exists():
-        finished = json.loads((run_dir / 'finished.json').read_text(encoding='utf-8'))
-        if not cleanup_finished(finished):
+        if not cleanup_verified(run_dir):
             raise RuntimeError('worker finished, but cleanup failed or is unverified; inspect cleanup.json')
         print('already finished; cleanup verified')
         return
@@ -29,8 +34,7 @@ def main():
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         if (run_dir / 'finished.json').exists():
-            finished = json.loads((run_dir / 'finished.json').read_text(encoding='utf-8'))
-            if not cleanup_finished(finished):
+            if not cleanup_verified(run_dir):
                 raise RuntimeError('worker finished, but cleanup failed; inspect cleanup.json')
             print('worker finished cleanup')
             return

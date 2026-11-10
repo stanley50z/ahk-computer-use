@@ -62,6 +62,7 @@ def test_cli_reads_three_attempts_per_arm_and_keeps_safeguard_failures_out(tmp_p
     import subprocess
     import sys
     from bench.run import ARMS, ROOT, PI_RECOVERY_POLICY, actor_path
+    from test_bench_outcome import finished_trial
 
     entries = []
     template = 'Workspace: <WORKSPACE>\nScratch folder: <WORKSPACE>/scratch\nLeave the drawing open.\n'
@@ -92,25 +93,24 @@ def test_cli_reads_three_attempts_per_arm_and_keeps_safeguard_failures_out(tmp_p
                     'trial_policy':{'attempts_per_configuration':3,'aggregation':'all-successes','replace_failed_attempts':False}}
             (folder/'plan.json').write_text(json.dumps(plan),encoding='utf-8')
             (folder/'run-attempt.json').write_text(json.dumps({'started_at':f'2026-10-12T10:00:0{index}+00:00'}),encoding='utf-8')
-            (folder/'finished.json').write_text(json.dumps({'worker_finished':True,
-                'cleanup':{'passed':True,'cursor_scheme_restored':True}}),encoding='utf-8')
             (folder/'grading').mkdir()
             output = folder/'grading/Cloud9-Recreated.png'
             recovered = arm=='pi-computer-use' and index==2
-            (folder/'summary.json').write_text(json.dumps({'passed':True,'quality':{'foreground_iou':.9},
+            finished_trial(folder, summary={'quality':{'foreground_iou':.9},
                 'output_image':str(output), 'drawing_passed':True, 'infrastructure_failure':None, 'safeguard_violations':[],
-                'recovered_provider_errors':['503 recovered'] if recovered else []}),encoding='utf-8')
-            (folder/'metrics.json').write_text(json.dumps({'benchmark':{'token_counts_complete':not recovered,
+                'recovered_provider_errors':['503 recovered'] if recovered else []},
+                metrics={'benchmark':{'token_counts_complete':not recovered,
                 'api_tokens':{'total':100 if arm=='claude-cua' else (index+1)*10,'output_including_reasoning':5},
                 'code_tokens':{'estimated_tokens':2,'output_share_percent_estimate':40,'review_required':False},
                 'computer_use':{'call_count':1,'busy_seconds':index+1,'sum_call_seconds':index+1,
-                                'attribution_complete':True,'durations_complete':True}}}),encoding='utf-8')
+                                'attribution_complete':True,'durations_complete':True}}})
             (folder/'events.jsonl').write_text('{}\n',encoding='utf-8')
             (folder/'workspace').mkdir()
             output.write_bytes(b'fixture; independently checked by the collector')
             entries.append({'run_dir':str(folder.relative_to(tmp_path)), 'safeguard_violations':
                             ['Pen tool not used'] if arm=='pi-acu' and index==0 else []})
     (tmp_path/'pi-acu/0/metrics.json').write_text('{interrupted metrics', encoding='utf-8')
+    (tmp_path/'pi-acu/0/cleanup.json').write_text(json.dumps({'passed':False,'cursor_scheme_restored':True}), encoding='utf-8')
     interrupted = tmp_path/'pi-cua/0'
     (interrupted/'summary.json').unlink()
     (interrupted/'metrics.json').unlink()
@@ -122,8 +122,9 @@ def test_cli_reads_three_attempts_per_arm_and_keeps_safeguard_failures_out(tmp_p
     summary.update(passed=False, drawing_passed=True, output_image=None, infrastructure_failure=infrastructure)
     (export_failed/'summary.json').write_text(json.dumps(summary),encoding='utf-8')
     (export_failed/'infrastructure-failure.json').write_text(json.dumps(infrastructure),encoding='utf-8')
-    (export_failed/'finished.json').write_text(json.dumps({'worker_finished':True,
-        'cleanup':{'passed':False,'cursor_scheme_restored':True,'infrastructure_failure':infrastructure}}),encoding='utf-8')
+    preserved = {'passed':False,'cursor_scheme_restored':True,'infrastructure_failure':infrastructure}
+    (export_failed/'cleanup.json').write_text(json.dumps(preserved),encoding='utf-8')
+    (export_failed/'finished.json').write_text(json.dumps({'worker_finished':True,'cleanup':preserved}),encoding='utf-8')
     manifest = tmp_path/'round.json'
     manifest.write_text(json.dumps({'attempts':entries}),encoding='utf-8')
     result = subprocess.run([sys.executable,str(ROOT/'bench/aggregate.py'),str(manifest)],
@@ -134,6 +135,7 @@ def test_cli_reads_three_attempts_per_arm_and_keeps_safeguard_failures_out(tmp_p
     assert groups['pi-acu']['sample_size']==2
     assert groups['pi-acu']['averages']['total_api_tokens']==25
     assert json.loads(result.stdout)['attempts'][0]['metric_error'], 'failed attempts may lack usable metrics without blocking the successful cohort'
+    assert json.loads(result.stdout)['attempts'][0]['safeguard_violations'] == ['Pen tool not used', 'cleanup failed or is unverified']
     assert groups['pi-cua']['successes']==2
     assert groups['pi-cua']['unexpected_failure_ids']==[str(interrupted)]
     provider_row = next(row for row in json.loads(result.stdout)['attempts'] if row['run_dir']==str(interrupted))
@@ -177,6 +179,14 @@ def test_cli_reads_three_attempts_per_arm_and_keeps_safeguard_failures_out(tmp_p
     assert outside.returncode!=0 and 'maintainer output' in outside.stderr
     summary['output_image'] = recorded_output
     summary_path.write_text(json.dumps(summary), encoding='utf-8')
+    # A passing attempt cannot enter the averages without its metrics row.
+    metrics_path = tmp_path/'claude-cua/2/metrics.json'
+    recorded_metrics = metrics_path.read_text(encoding='utf-8')
+    metrics_path.write_text('{interrupted metrics', encoding='utf-8')
+    unusable=subprocess.run([sys.executable,str(ROOT/'bench/aggregate.py'),str(manifest)],
+                            capture_output=True,text=True,encoding='utf-8',timeout=20)
+    assert unusable.returncode!=0 and 'no usable extracted metrics' in unusable.stderr
+    metrics_path.write_text(recorded_metrics, encoding='utf-8')
     # Mixing prompt/model/skill revisions cannot produce a supposedly matched aggregate.
     plan_path=tmp_path/'claude-acu/2/plan.json'
     plan=json.loads(plan_path.read_text(encoding='utf-8'))
