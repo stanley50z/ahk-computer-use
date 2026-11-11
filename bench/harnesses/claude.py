@@ -43,8 +43,30 @@ def replace_all(value: Json) -> bool | None:
     return None
 
 
+# Claude Code renames argument aliases before validating them (each tool's coerceInput), and events record the raw
+# arguments. Edit: path, old_str and new_str, and replace_name standing in for replace_all. Write: path, and content
+# from exactly one of file_text or file_content.
+def renamed(name: str, arguments: dict[str, Json]) -> dict[str, Json]:
+    aliases = {'Edit': {'path': 'file_path', 'old_str': 'old_string', 'new_str': 'new_string'},
+               'Write': {'path': 'file_path'}}.get(name, {})
+    prepared = dict(arguments)
+    for alias, canonical in aliases.items():
+        if isinstance(prepared.get(alias), str) and canonical not in prepared:
+            prepared[canonical] = prepared.pop(alias)
+    if name == 'Edit' and 'replace_name' in prepared:
+        value = prepared.pop('replace_name')
+        prepared.setdefault('replace_all', value is True or value == 'true')
+    if name == 'Write' and 'content' not in prepared:
+        match [key for key in ('file_text', 'file_content') if key in prepared]:
+            case [key] if isinstance(prepared[key], str):
+                prepared['content'] = prepared.pop(key)
+    return prepared
+
+
 # Claude Code's tool vocabulary, from the input schemas of its Read, Write, Edit and Bash tools.
 def request(name: str, arguments: Json) -> Request:
+    if isinstance(arguments, dict):
+        arguments = renamed(name, arguments)
     match name, arguments:
         case 'Read', {'file_path': str()}:
             return {'kind': 'read'}

@@ -92,18 +92,42 @@ def prepare_edit(arguments: dict[str, Json]) -> dict[str, Json]:
     return prepared
 
 
+# JavaScript's String() of a JSON number, which JSON.parse reads as a double (ECMAScript Number::toString).
+def js_number(value: float) -> str:
+    if value == 0:
+        return '0'
+    if value < 0:
+        return '-' + js_number(-value)
+    # repr gives the shortest digits that round-trip, as JavaScript does; only the layout differs.
+    mantissa, _, exponent = repr(value).partition('e')
+    whole, _, fraction = mantissa.partition('.')
+    significant = (whole + fraction).lstrip('0')
+    point = len(whole) - len(whole + fraction) + len(significant) + int(exponent or 0)
+    digits = significant.rstrip('0')
+    if len(digits) <= point <= 21:
+        return digits + '0' * (point - len(digits))
+    if 0 < point <= 21:
+        return digits[:point] + '.' + digits[point:]
+    if -6 < point <= 0:
+        return '0.' + '0' * -point + digits
+    power = point - 1
+    return digits[0] + ('.' + digits[1:] if len(digits) > 1 else '') + f'e{"+" if power >= 0 else "-"}{abs(power)}'
+
+
 # Pi then validates with coercion (pi-schema's tryString): a finite number, a boolean or null given for a string
-# parameter runs as its JavaScript string. Python spells a few floats differently: below 1e-4, and integers past 2**53.
+# parameter runs as its JavaScript string.
 def as_string(value: Json) -> Json:
     match value:
         case bool():
             return 'true' if value else 'false'
         case None:
             return 'null'
-        case int():
-            return str(value)
-        case float() if math.isfinite(value):
-            return str(int(value)) if value.is_integer() and abs(value) < 1e21 else repr(value)
+        case int() | float():
+            try:
+                number = float(value)
+            except OverflowError:  # JSON.parse reads it as Infinity, which Pi does not coerce.
+                return value
+            return js_number(number) if math.isfinite(number) else value
     return value
 
 
@@ -121,7 +145,12 @@ def coerced(arguments: dict[str, Json]) -> dict[str, Json]:
 # Events record raw arguments, so the adapter first prepares and coerces them as Pi does before the tool runs.
 def request(name: str, arguments: Json) -> Request:
     if isinstance(arguments, dict):
-        arguments = coerced(prepare_edit(arguments) if name == 'edit' else arguments)
+        if name == 'edit':
+            arguments = prepare_edit(arguments)
+            # Validation wraps a single value given for the edits array before coercing its fields.
+            if 'edits' in arguments and not isinstance(arguments['edits'], list):
+                arguments['edits'] = [arguments['edits']]
+        arguments = coerced(arguments)
     match name, arguments:
         case 'read', {'path': str()}:
             return {'kind': 'read'}

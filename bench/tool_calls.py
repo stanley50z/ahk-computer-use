@@ -45,8 +45,9 @@ class JavaScriptRuntimeRequest(TypedDict):
     resets: bool
 
 
-# The adapter cannot say what was requested: an unrecognised tool, arguments that do not fit the tool's
-# parameters, or a result whose request never arrived. The raw name and arguments stay on the call as evidence.
+# The adapter cannot say what was requested: an unrecognised tool, a parameter the request is built from that is
+# missing or does not fit, or a result whose request never arrived. Other parameters are left to the harness to
+# check. The raw name and arguments stay on the call as evidence.
 class UnknownRequest(TypedDict):
     kind: Literal['unknown']
 

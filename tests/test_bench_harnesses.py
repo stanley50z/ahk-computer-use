@@ -85,6 +85,9 @@ EDIT = [{'oldText': 'Click 1', 'newText': 'Click 2'}]
     ('pi', pi_events('bash', {'command': True}), {'kind': 'shell', 'command': 'true'}),
     ('pi', pi_events('edit', {'path': 'draw.ahk', 'edits': [{'oldText': 1, 'newText': 2}]}),
      {'kind': 'edit', 'path': 'draw.ahk', 'edits': [{'old': '1', 'new': '2'}], 'replace_all': False}),
+    ('pi', pi_events('edit', {'path': 'draw.ahk', 'edits': {'oldText': 'Sleep 5', 'newText': 10}}),
+     {'kind': 'edit', 'path': 'draw.ahk', 'edits': [{'old': 'Sleep 5', 'new': '10'}], 'replace_all': False}),
+    ('pi', pi_events('write', {'path': 'result.txt', 'content': 0.00001}), {'kind': 'write', 'path': 'result.txt', 'content': '0.00001'}),
     # The legacy fields join edits only when they are already strings, as in Pi's edit tool.
     ('pi', pi_events('edit', {'path': 'draw.ahk', 'oldText': 1, 'newText': 2}), {'kind': 'unknown'}),
     ('pi', pi_events('mcp__node_repl__js', {'code': 42}), {'kind': 'javascript_cell', 'code': '42'}),
@@ -107,11 +110,20 @@ EDIT = [{'oldText': 'Click 1', 'newText': 'Click 2'}]
      {'kind': 'edit', 'path': 'draw.ahk', 'edits': [{'old': 'Click 1', 'new': 'Click 2'}], 'replace_all': False}),
     ('claude', claude_events('Edit', {'file_path': 'draw.ahk', 'old_string': 'Click 1', 'new_string': 'Click 2', 'replace_all': 1}),
      {'kind': 'unknown'}),
+    # Claude Code renames these aliases before validating Edit and Write arguments.
+    ('claude', claude_events('Edit', {'path': 'draw.ahk', 'old_str': 'Click 1', 'new_str': 'Click 2'}),
+     {'kind': 'edit', 'path': 'draw.ahk', 'edits': [{'old': 'Click 1', 'new': 'Click 2'}], 'replace_all': False}),
+    ('claude', claude_events('Edit', {'file_path': 'draw.ahk', 'old_string': 'Click 1', 'new_string': 'Click 2', 'replace_name': 'true'}),
+     {'kind': 'edit', 'path': 'draw.ahk', 'edits': [{'old': 'Click 1', 'new': 'Click 2'}], 'replace_all': True}),
+    ('claude', claude_events('Write', {'path': 'draw.ahk', 'file_text': 'Click 1'}),
+     {'kind': 'write', 'path': 'draw.ahk', 'content': 'Click 1'}),
+    ('claude', claude_events('Write', {'file_path': 'draw.ahk', 'file_text': 'Click 1', 'file_content': 'Click 1'}), {'kind': 'unknown'}),
     ('claude', claude_events('Edit', {'file_path': 'draw.ahk', 'old_string': 'Click 1', 'new_string': 'Click 2'}),
      {'kind': 'edit', 'path': 'draw.ahk', 'edits': [{'old': 'Click 1', 'new': 'Click 2'}], 'replace_all': False}),
     ('claude', claude_events('Bash', {'command': 'acu run draw.ahk', 'description': 'run'}), {'kind': 'shell', 'command': 'acu run draw.ahk'}),
     ('claude', claude_events('Glob', {'pattern': '*.ahk'}), {'kind': 'unknown'}),
-    ('claude', claude_events('Write', {'path': 'draw.ahk', 'content': 'Click 1'}), {'kind': 'unknown'}),
+    ('claude', claude_events('Write', {'path': 'draw.ahk', 'content': 'Click 1'}), {'kind': 'write', 'path': 'draw.ahk', 'content': 'Click 1'}),
+    ('claude', claude_events('Write', {'path': 'draw.ahk', 'text': 'Click 1'}), {'kind': 'unknown'}),
     ('codex', codex_events({'type': 'command_execution', 'command': 'acu run draw.ahk', 'aggregated_output': 'ok', 'exit_code': 0}),
      {'kind': 'shell', 'command': 'acu run draw.ahk'}),
     ('codex', codex_events({'type': 'mcp_tool_call', 'server': 'node_repl', 'tool': 'js', 'arguments': {'code': 'await sky.list_apps()'}}),
@@ -125,6 +137,17 @@ def test_adapters_map_their_tool_vocabulary_onto_request_kinds(harness, events, 
     host = next(arm.harness for arm in ARM_TABLE.values() if arm.harness.name == harness)
     call, = host.analyse([{'elapsed_s': elapsed, 'event': event} for elapsed, event in enumerate(events)], 5)['tools']
     assert call['request'] == expected
+
+
+# Pi runs a number given for a string parameter as JavaScript's String() of the parsed double.
+@pytest.mark.parametrize('number,text', [
+    (0, '0'), (-0.0, '0'), (42, '42'), (4.0, '4'), (-4.25, '-4.25'), (0.0001, '0.0001'), (0.00001, '0.00001'),
+    (0.000001, '0.000001'), (1e-7, '1e-7'), (1.5e-7, '1.5e-7'), (1e20, '100000000000000000000'), (1e21, '1e+21'),
+    (1.23e22, '1.23e+22'), (9007199254740993, '9007199254740992'), (1.2345678901234567e19, '12345678901234567000'),
+])
+def test_pi_coerces_numbers_as_javascript_spells_them(number, text):
+    from bench.harnesses.pi import js_number
+    assert js_number(float(number)) == text
 
 
 def test_arm_table_routes_all_current_profiles_and_archived_codex():
