@@ -8,7 +8,7 @@ import pytest
 
 import input_guard
 from conftest import pytest_runtest_setup, user32, wait_until
-from input_guard import NOTICE_TITLE, show_notice, wait_for_quiet_input
+from input_guard import NOTICE_TITLE, InputListener, keyboard_and_mouse, show_notice, wait_for_quiet_input
 
 
 class Notice:
@@ -94,6 +94,31 @@ def test_the_notice_closes_when_the_wait_is_interrupted():
     with pytest.raises(KeyboardInterrupt):
         desk.wait()
     assert desk.notices[0].closed
+
+
+def test_the_listener_registers_the_mouse_and_keyboard_only_and_hears_them_in_the_background():
+    # Usage page 1: usage 2 is the mouse, 6 the keyboard. A game controller (4, 5) or other HID device is not asked for.
+    assert keyboard_and_mouse(42) == [(1, 2, 0x100, 42), (1, 6, 0x100, 42)]  # 0x100: RIDEV_INPUTSINK
+
+
+def test_the_listener_counts_its_start_and_every_raw_input_message_as_input():
+    clock = SimpleNamespace(tick=1000)
+    listener = InputListener(lambda: clock.tick)
+    assert listener.last_input() == 1000, 'Raw Input reports nothing from before the start, so the start counts'
+    clock.tick = 2000
+    listener.on_message(0x0113)  # WM_TIMER is not input
+    assert listener.last_input() == 1000
+    listener.on_message(0x00FF)  # WM_INPUT: a key or mouse event, a move or a wheel step, injected or not
+    assert listener.last_input() == 2000
+
+
+@pytest.mark.parametrize('started_ms_ago, end_tick', [(1000, 104000), (5000, 100000)])
+def test_the_first_desktop_test_waits_silently_until_five_seconds_after_the_listener_started(started_ms_ago, end_tick):
+    desk = Desk(now=100000 - started_ms_ago, last=0)
+    listener = InputListener(desk.now)
+    desk.tick = 100000
+    wait_for_quiet_input(desk.now, listener.last_input, desk.sleep, desk.show_notice, desk.lines.append)
+    assert desk.tick == end_tick and desk.notices == []
 
 
 @pytest.mark.parametrize('desktop', [True, False])

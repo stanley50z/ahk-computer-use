@@ -44,6 +44,18 @@ def pytest_collection_modifyitems(config, items):
     config.hook.pytest_deselected(items=excluded)
 
 
+# A --desktop session listens to the keyboard and mouse from its start, so the input guard below knows how long they
+# have been quiet.
+def pytest_configure(config):
+    if config.getoption("--desktop"):
+        input_guard.start_listening()
+
+
+def pytest_unconfigure(config):
+    if input_guard.listener is not None:
+        input_guard.stop_listening()
+
+
 # Holds every desktop test, before its fixtures open windows or take focus, until the user has left the keyboard and
 # mouse alone for 5 seconds. A hook rather than a fixture, so no test can override it by name and opt out.
 @pytest.hookimpl(tryfirst=True)
