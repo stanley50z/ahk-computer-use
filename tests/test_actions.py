@@ -1,8 +1,10 @@
 """Target-bound input safety through the public CLI; only disposable task-owned GUI windows."""
 
+import subprocess
+
 import pytest
 
-from conftest import run_cli, user32
+from conftest import plain_ahk_exe, run_cli, user32
 
 pytestmark = pytest.mark.desktop
 
@@ -60,3 +62,44 @@ def test_paced_drag_aborts_and_releases_on_activation_loss(tmp_path):
         'win.Destroy()\nother.Destroy()\n', encoding='utf-8')
     result = run_cli(script)
     assert result['exit_code'] == 0, result['output']
+
+
+# Toolkits such as wxWidgets focus a control when it is set or clicked; during a UI Automation Value or Invoke call that
+# focus brings the window to the front. AcuBackground must deliver both to a window behind the user's without that
+# window ever leaving the foreground. As on a shared desktop, the user's window, the target and the script are three
+# processes, and the target focuses its controls from their handlers, as those toolkits do.
+def test_background_actions_reach_a_window_behind_the_users_without_activating_it(tmp_path):
+    marker = tmp_path / 'applied.txt'
+    target = tmp_path / 'target.ahk'
+    target.write_text(
+        '#Requires AutoHotkey v2.0\n'
+        'app := Gui(, "ACU background target")\n'
+        'claim := (control, *) => DllCall("SetFocus", "ptr", control.Hwnd)\n'
+        'app.Add("Edit", "w200 vField").OnEvent("Change", claim)\n'
+        f'app.Add("Button", , "Apply").OnEvent("Click", (control, *) => (claim(control), FileAppend(app["Field"].Value, "{marker}")))\n'
+        'app.Show("x100 y100 w300 h120 NoActivate")\n', encoding='utf-8')
+    user = tmp_path / 'user.ahk'
+    user.write_text(
+        '#Requires AutoHotkey v2.0\n'
+        'win := Gui(, "ACU user window")\nwin.Show("x150 y150 w300 h120")\nWinActivate "ahk_id " win.Hwnd\n',
+        encoding='utf-8')
+    script = tmp_path / 'background.ahk'
+    script.write_text(
+        'user := WinWait("ACU user window", , 5)\nWinActivate "ahk_id " user\n'
+        'if !WinWaitActive("ahk_id " user, , 2)\n    throw Error("user window did not activate")\n'
+        'hwnd := WinWait("ACU background target", , 5)\nroot := UIA.ElementFromHandle(hwnd)\n'
+        'lost := false\nWatch() {\n    global lost\n    if !WinActive("ahk_id " user)\n        lost := true\n}\nSetTimer Watch, 5\n'
+        'AcuBackground(hwnd, () => root.FindElement({Type:"Edit"}).Value := "typed")\n'
+        'AcuBackground(hwnd, () => root.FindElement({Type:"Button", Name:"Apply"}).Invoke())\n'
+        f'applied := AcuWaitUntil(() => FileExist("{marker}"), 3000)\n'
+        'Sleep 300\nSetTimer Watch, 0\nWatch()\n'
+        'if !applied\n    throw Error("the click never reached the target")\n'
+        'if lost\n    throw Error("the target took the foreground")\n', encoding='utf-8')
+    apps = [subprocess.Popen([str(plain_ahk_exe()), str(path)]) for path in (target, user)]
+    try:
+        result = run_cli(script, timeout=15)
+    finally:
+        for app in apps:
+            app.kill()
+    assert result['exit_code'] == 0, result['output']
+    assert marker.read_text(encoding='utf-8') == 'typed'

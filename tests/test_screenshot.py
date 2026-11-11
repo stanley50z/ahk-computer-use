@@ -1,6 +1,7 @@
 """The screenshot script: fullscreen, app, and custom captures that report their screen origin and scale."""
 
 import os
+import subprocess
 import threading
 import time
 from contextlib import contextmanager
@@ -9,7 +10,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from conftest import REPO, foreground, monitor_dpis, monitor_rects, reported, run_cli, run_launcher, system_dpi, visible_frame, wait_until
+from conftest import REPO, foreground, monitor_dpis, monitor_rects, plain_ahk_exe, reported, run_cli, run_launcher, system_dpi, visible_frame, wait_until
 
 pytestmark = pytest.mark.desktop
 
@@ -173,6 +174,20 @@ def test_acu_screenshot_captures_a_window_from_inside_a_script(open_window, tmp_
     assert reported(result.stdout, "returned") == f"{out}|{x},{y} {w}x{h}"
     with Image.open(out) as img:
         assert img.size == (w, h)
+
+
+# An agent can start a bundled script with AutoHotkey itself (`Run A_AhkPath ...`). Without the launcher's prelude it
+# must say how to run it and exit, instead of leaving AutoHotkey's warning and error dialogs on the desktop.
+@pytest.mark.parametrize("name", ["screenshot.ahk", "tree.ahk"])
+def test_bundled_script_started_without_the_launcher_explains_and_exits(name):
+    process = subprocess.Popen([str(plain_ahk_exe()), str(REPO / "acu" / name), "fullscreen"],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
+    try:
+        stdout, stderr = process.communicate(timeout=10)
+    finally:
+        process.kill()  # a script stuck on a dialog must not outlive the test
+    assert process.returncode == 2, stdout + stderr
+    assert f"acu run {name}" in stderr
 
 
 def test_on_screen_capture_contains_a_live_popup_missing_from_the_app_render(open_window, tmp_path):

@@ -66,6 +66,17 @@ def test_skill_is_self_contained_and_spends_turns_on_looking_not_ceremony():
     assert '!fe{Right}{Down}{Enter}' not in text, 'benchmark-specific menu recipes do not belong in ACU'
 
 
+def test_skill_teaches_work_behind_the_users_window_and_launcher_only_runs():
+    """Cua Driver Bench showed agents activating a background window through plain UIA calls, and starting bundled scripts
+    with AutoHotkey directly; the skill names the helper and the rule, without any benchmark's controls."""
+    text = SKILL_FILE.read_text(encoding="utf-8")
+
+    for required in ("AcuBackground(target, () =>", "ControlSetText", "leave that window in front",
+                     "never by starting AutoHotkey yourself"):
+        assert required in text, f"skill must cover {required}"
+    assert not re.search(r"BenchLab|Cua Driver Bench|Quantity", text), "the skill must not name a benchmark or its controls"
+
+
 def test_skill_teaches_snippet_discovery_execution_and_lifecycle():
     """Keep #28's snippet contract in the first-look instructions, without app recipes."""
     text = SKILL_FILE.read_text(encoding="utf-8")

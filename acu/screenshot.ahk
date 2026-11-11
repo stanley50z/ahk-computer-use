@@ -9,6 +9,13 @@
 ; Without --out the file goes to <ACU_HOME>\shots\ and only the newest 30 files there are kept.
 ; The capture itself is the prelude's AcuScreenshot, which any script can call directly; this file only parses arguments.
 #Requires AutoHotkey v2.0
+; Started by AutoHotkey directly instead of `acu run`, the prelude that defines AcuScreenshot is missing: say how to run
+; this file and exit, rather than stop on AutoHotkey's warning and error dialogs.
+#Warn VarUnset, StdOut
+if !IsSet(AcuScreenshot) {
+    FileAppend "screenshot.ahk runs only through the ACU launcher: acu run screenshot.ahk -- <arguments>, or call AcuScreenshot in a script run by acu`n", "**"
+    ExitApp 2
+}
 
 request := ParseArgs(A_Args)
 FileAppend AcuScreenshot(request.spec, request.out, request.max).text, "*"

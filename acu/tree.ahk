@@ -14,6 +14,13 @@
 ; The dump itself is the prelude's AcuTree, which any script can call directly without snippet discovery.
 ; This wrapper adds the full snippet list to unfiltered dumps, regardless of depth or element limits.
 #Requires AutoHotkey v2.0
+; Started by AutoHotkey directly instead of `acu run`, the prelude that defines AcuTree is missing: say how to run this
+; file and exit, rather than stop on AutoHotkey's warning and error dialogs.
+#Warn VarUnset, StdOut
+if !IsSet(AcuTree) {
+    FileAppend "tree.ahk runs only through the ACU launcher: acu run tree.ahk -- <arguments>, or call AcuTree in a script run by acu`n", "**"
+    ExitApp 2
+}
 
 request := ParseArgs(A_Args)
 hwnd := WinGetID(request.target)

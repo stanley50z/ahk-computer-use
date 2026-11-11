@@ -9,7 +9,7 @@ You supply the intelligence, ACU supplies the hands. Every action is a whole scr
 
 ## Call ACU
 
-Call the installed CLI through your shell tool: `acu run "<absolute script.ahk>" [--timeout 30] [-- arguments]`. Keep scripts and explicit captures in your current working directory or its subdirectories unless the user supplies another destination. Arguments after `--` reach the script in `A_Args`. There are no script IDs, inline-code input, or separate inspection operations. The bundled `tree.ahk` and `screenshot.ahk` can be named without a path: `acu run tree.ahk -- …`. If `acu` is not on PATH, report the installation prerequisite; setup is in the repository's `README.md` (resolve this skill directory's link and take its parent).
+Call the installed CLI through your shell tool: `acu run "<absolute script.ahk>" [--timeout 30] [-- arguments]`. Keep scripts and explicit captures in your current working directory or its subdirectories unless the user supplies another destination. Arguments after `--` reach the script in `A_Args`. There are no script IDs, inline-code input, or separate inspection operations. The bundled `tree.ahk` and `screenshot.ahk` can be named without a path: `acu run tree.ahk -- …`. Run every script, bundled ones included, through `acu run`, never by starting AutoHotkey yourself with `Run`: only the launcher loads the prelude; inside a script, call `AcuTree` and `AcuScreenshot` instead. If `acu` is not on PATH, report the installation prerequisite; setup is in the repository's `README.md` (resolve this skill directory's link and take its parent).
 
 A model turn costs seconds; a file write or an `acu run` costs milliseconds to a few seconds. Spend turns on looking and deciding, not on ceremony:
 
@@ -89,6 +89,16 @@ root.FindElement({Type:"Edit"}).Value := "text"               ; a control flagge
 Before clicking a control at a point read from a screenshot, query the tree for it once, such as `AcuTree(target, {find: "Save"})` inside the script that needs it. Use the screenshot point only when the query returns nothing. Canvas content has no element to find.
 
 Combine selectors or search within a parent when ids repeat. Toggle, Select, and Expand use the corresponding patterns. `element.Click()` with no argument is semantic too: it invokes, toggles, or selects. Pointer input is `element.Click("left")`, which moves the cursor to the element's center and needs the window in the foreground. Before pointer input or keys, use `AcuActivate(target)`: it requires one matching window, activates it, and refuses a same-process, owned standard (`#32770`) dialog even if the application leaves its parent frame enabled. Custom or ownerless popups can escape this check; inspect the observed state before sending input. Address the observed dialog by its own handle instead. Native `WinActivate` remains available; follow it with `WinWaitActive(target, , 2)` and throw if that returns zero. Never click into another application. **Type text with `SendText`, never `Send`.** `Send` reads `+ ^ ! #` as Shift, Control, Alt and Win and `{}` as key names, so `Send "2+3="` presses Shift+3 and Calculator shows `2^3`. `Send` is for keys and chords only: `Send "{Enter}"`, `Send "^s"`. Variable names share the namespace with functions and classes: use `field`, `target`, `box`, or `bar` rather than `edit`, `click`, `send`, `run`, `menu`, or `gui`.
+
+### Working behind the user's window
+
+When the user keeps working in another window, leave that window in front and in focus. Act on the target through UI Automation patterns, and wrap each one in `AcuBackground(target, () => …)`: many toolkits bring their window to the front when a control is set or invoked, and `AcuBackground` stops that for the length of the call while the control still receives the action. `ControlSetText` also sets an edit without activating its window. Pointer input, keys, `AcuActivate` and `WinActivate` all need the foreground, so they disturb the user; when the task cannot be done without them, say so instead of taking the focus. An application that forces itself to the front is beyond `AcuBackground`; check the foreground after each chain.
+
+```autohotkey
+root := UIA.ElementFromHandle(target)
+AcuBackground(target, () => root.FindElement({Type:"Edit", Name:"File name"}).Value := "notes.txt")
+AcuBackground(target, () => root.FindElement({Type:"Button", Name:"OK"}).Invoke())
+```
 
 ### Paced input for canvases and shortcuts
 

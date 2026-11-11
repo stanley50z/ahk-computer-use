@@ -28,6 +28,7 @@ bench/
 ├── aggregate.py                   Offline Illustrator round aggregation
 ├── cua_bench_task.py               Workspace-rooted CUA daemon task
 ├── native_mcp.py                  Codex computer-use app-approval MCP adapter
+├── cua_driver_bench/              ACU as a setup of Cua Driver Bench (its own README)
 ├── probe.ahk                      Shared desktop/window observer
 ├── restore_cursor.ahk             Shared post-trial cursor restoration
 ├── calculator/

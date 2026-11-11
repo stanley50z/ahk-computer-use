@@ -23,6 +23,26 @@ AcuActivate(winTitle, timeoutMs := 2000) {
     return hwnd
 }
 
+; Run action() while exactly one target window cannot become the active window, and return its result. Many toolkits
+; activate their window when a control is set or clicked, and UI Automation passes that on, so wrap Value, Invoke,
+; Toggle, Select and Expand calls on a window that must stay behind the user's: the control still gets the action and
+; the user's window stays in front. Removes the WS_EX_NOACTIVATE style afterwards only when this call added it.
+AcuBackground(target, action) {
+    windows := WinGetList(target)
+    if windows.Length != 1
+        throw Error("Expected exactly one background target; observed " windows.Length)
+    root := DllCall("GetAncestor", "ptr", windows[1], "uint", 2, "ptr") || windows[1]
+    added := !(WinGetExStyle("ahk_id " root) & 0x08000000)
+    if added
+        WinSetExStyle "+0x08000000", "ahk_id " root
+    try
+        return action()
+    finally {
+        if added
+            WinSetExStyle "-0x08000000", "ahk_id " root
+    }
+}
+
 ; Send keys/chords with an explicit press duration; use SendText for literal text and observe the effect afterwards.
 AcuKeys(target, keys, pressMs := 30) {
     if pressMs < 1 || pressMs > 1000
