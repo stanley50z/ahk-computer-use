@@ -80,7 +80,7 @@ def test_new_scenario_uses_the_shared_trial_lifecycle(tmp_path, monkeypatch):
         events.append('actor')
         return actor_capture(*args)
 
-    summary = run.run_trial(plan, scenario=fake_scenario(events), capture_actor=capture, observer=observer)
+    summary = run.run(plan, scenario=fake_scenario(events), capture_actor=capture, observer=observer)
     assert summary['passed'] is True
     assert events == ['probe-before', 'prepare', 'probe-before-actor', 'actor', 'probe-conduct',
                       'collect', 'cleanup', 'restore_cursor']
@@ -165,26 +165,30 @@ def test_registered_scenarios_preserve_summary_cleanup_and_collection_order(tmp_
     assert run.load_actor_json(directory / 'summary.json') == summary
     cleanup = run.load_actor_json(directory / 'cleanup.json')
     assert run.load_actor_json(directory / 'finished.json')['cleanup'] == cleanup
-    core = {'arm', 'model', 'reasoning', 'exit_code', 'benchmark', 'diagnostics', 'passed',
-            'unexpected_failure', 'recovered_provider_errors', 'metrics', 'evidence_dir'}
-    conventional = {'isolation_passed', 'task_passed', 'conduct_passed', 'conduct_problems', 'cleanup_passed'}
+    # Every scenario keeps the common fields; scenario detail only adds keys beside them.
+    common = {'arm', 'model', 'reasoning', 'exit_code', 'benchmark', 'diagnostics', 'passed', 'unexpected_failure',
+              'recovered_provider_errors', 'metrics', 'evidence_dir', 'isolation_passed', 'task_passed',
+              'conduct_passed', 'conduct_problems', 'cleanup_passed'}
+    detail = {'calculator': set(),
+              'illustrator-pen-tool': {'scenario', 'output_image', 'quality', 'problems', 'drawing_passed',
+                                       'infrastructure_failure', 'safeguard_violations'}}.get(
+        name, {'scenario', 'gui360_id', 'file_check', 'input_check', 'office_com_used', 'tool_calls'})
+    assert set(summary) == common | detail
     assert summary['diagnostics'] == {'wall_s': 1.0, 'note': 'Not a benchmark ranking metric.'}
     assert summary['unexpected_failure'] is None
     assert summary['recovered_provider_errors'] == []
     assert (summary['arm'], summary['model'], summary['reasoning'], summary['exit_code']) == ('pi-acu', 'test', 'low', 0)
     assert summary['evidence_dir'] == str(directory)
+    assert summary['isolation_passed'] and summary['conduct_passed'] and summary['cleanup_passed']
+    assert summary['conduct_problems'] == []
     if name == 'calculator':
-        assert set(summary) == core | conventional
         assert summary['passed'] is False and summary['task_passed'] is False
-        assert summary['isolation_passed'] and summary['conduct_passed'] and summary['cleanup_passed']
         assert run.load_actor_json(directory / 'verification.json') == {'passed': False, 'reason': 'agent did not write result.json'}
         assert cleanup == {'passed': True, 'remaining_new_calculator_windows': [], 'cursor_scheme_restored': True,
                            'cursor_verification': 'Saved Windows scheme reloaded and OS showing flag checked; not a pixel-level visibility proof.'}
         assert events == ['probe-before', 'actor', 'probe-conduct', 'probe-cleanup-bind', 'probe-after', 'restore_cursor']
     elif name == 'illustrator-pen-tool':
-        assert set(summary) == core | {'scenario', 'output_image', 'quality', 'problems', 'drawing_passed',
-                                      'infrastructure_failure', 'safeguard_violations'}
-        assert summary['passed'] is True and summary['drawing_passed'] is True
+        assert summary['passed'] is True and summary['drawing_passed'] is summary['task_passed'] is True
         assert summary['scenario'] == name
         assert summary['output_image'] == 'grading/Cloud9-Recreated.png'
         assert summary['quality'] == {'foreground_iou': 0.75}
@@ -196,10 +200,7 @@ def test_registered_scenarios_preserve_summary_cleanup_and_collection_order(tmp_
         assert events == ['probe-before', 'prepare', 'probe-before-actor', 'actor', 'probe-conduct',
                           'document-audit', 'collect', 'restore_cursor']
     else:
-        assert set(summary) == core | conventional | {'scenario', 'gui360_id', 'file_check', 'input_check',
-                                                       'office_com_used', 'tool_calls'}
         assert summary['passed'] is False and summary['task_passed'] is False
-        assert summary['isolation_passed'] and summary['conduct_passed'] and summary['cleanup_passed']
         assert summary['scenario'] == name
         assert summary['gui360_id'] == {'tb3.1': 'excel_4s_13432', 'tb3.2': 'word_4s_1023', 'tb3.3': None, 'tb3.4': None}[name]
         check = {'passed': False, 'sub_scores': {}, 'error': 'no saved document to check'}
@@ -274,6 +275,12 @@ def test_failure_cleans_up_and_restores_cursor_without_repeating_collection(tmp_
     assert f'{failure_at} failed' in (directory / 'crash.txt').read_text(encoding='utf-8')
     cleanup_result = run.load_actor_json(directory / 'cleanup.json')
     assert run.load_actor_json(directory / 'finished.json')['cleanup'] == cleanup_result
+    # Office cleanup runs after the summary is written; a crash there is recorded in it.
+    summary_path = directory / 'summary.json'
+    assert summary_path.is_file() is (name == 'tb3.1' and failure_at == 'cleanup')
+    if summary_path.is_file():
+        summary = run.load_actor_json(summary_path)
+        assert summary['passed'] is False and summary['cleanup_passed'] is False
     if name == 'illustrator-pen-tool':
         assert events.count('collect') + events.count('cleanup') == 1
         if failure_at in ('collect', 'cleanup'):
@@ -306,20 +313,51 @@ def test_export_infrastructure_failure_keeps_drawing_verdict_separate(tmp_path, 
     directory = Path(plan['run_dir'])
     run.save_json(directory / 'illustrator-before.json', [])
     failure = {'kind': 'maintainer_export_failure', 'errors': ['export refused']}
+
+    # Like the real export path: record the failure, preserve the drawing and report cleanup as failed.
+    def refused_export(*args, **kwargs):
+        run.save_json(directory / 'infrastructure-failure.json', failure)
+        return {'passed': False, 'drawing_verification': {'passed': True, 'problems': []},
+                'export': {'output': None, 'quality': None}, 'infrastructure_failure': failure}
+
     monkeypatch.setattr(illustrator, 'prepare_desktop', lambda *args: None)
     monkeypatch.setattr(illustrator, 'native_observer', lambda *args: {'documents': []})
-    monkeypatch.setattr(illustrator, 'cleanup_desktop', lambda *args, **kwargs: {
-        'passed': False, 'drawing_verification': {'passed': True, 'problems': []},
-        'export': {'output': None, 'quality': None}, 'infrastructure_failure': failure})
+    monkeypatch.setattr(illustrator, 'cleanup_desktop', refused_export)
     summary = run.run(plan, capture_actor=actor_capture, observer=lambda *args, **kwargs: '')
     assert summary['passed'] is False and summary['drawing_passed'] is True
     assert summary['infrastructure_failure'] == failure
-    assert summary['safeguard_violations'] == []
+    assert summary['cleanup_passed'] is False
+    assert summary['safeguard_violations'] == [], 'the preserved drawing is the infrastructure failure, not a violation'
     assert run.load_actor_json(directory / 'cleanup.json') == {
         'passed': False, 'drawing_verification': {'passed': True, 'problems': []},
         'export': {'output': None, 'quality': None}, 'infrastructure_failure': failure,
         'cursor_scheme_restored': True,
         'cursor_verification': 'Saved Windows scheme reloaded and OS showing flag checked; not pixel-level proof.'}
+
+
+def test_crash_after_the_summary_fails_it_and_lists_the_crash(tmp_path, monkeypatch):
+    from bench import illustrator_pen_tool as illustrator
+
+    plan = trial_plan(tmp_path, monkeypatch, 'illustrator-pen-tool')
+    directory = Path(plan['run_dir'])
+    run.save_json(directory / 'illustrator-before.json', [])
+    monkeypatch.setattr(illustrator, 'prepare_desktop', lambda *args: None)
+    monkeypatch.setattr(illustrator, 'native_observer', lambda *args: {'documents': []})
+    monkeypatch.setattr(illustrator, 'cleanup_desktop', lambda *args, **kwargs: {
+        'passed': True, 'drawing_verification': {'passed': True, 'problems': []},
+        'export': {'output': None, 'quality': None}, 'infrastructure_failure': None})
+
+    def observer(directory, script, *args, **kwargs):
+        if Path(script).stem == 'restore_cursor':
+            raise RuntimeError('cursor restore failed')
+        return ''
+
+    with pytest.raises(RuntimeError, match='cursor restore failed'):
+        run.run(plan, capture_actor=actor_capture, observer=observer)
+    summary = run.load_actor_json(directory / 'summary.json')
+    assert summary['passed'] is False and summary['cleanup_passed'] is False
+    assert summary['task_passed'] is summary['drawing_passed'] is True
+    assert summary['safeguard_violations'] == ['worker or cleanup failed; inspect crash.txt']
 
 
 def test_calculator_verifies_observed_result_and_closes_only_its_window(tmp_path, monkeypatch):

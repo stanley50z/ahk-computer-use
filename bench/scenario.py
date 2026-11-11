@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from bench.outcome import Outcome
 from bench.tool_calls import ToolCall
 
 
@@ -70,12 +71,10 @@ class Scenario(ABC):
     def check_cleanup(self, cleanup):
         pass
 
+    # Add scenario detail next to the common summary fields; never remove or reshape them.
     def summarize(self, summary, plan, verification, conduct, isolation):
         pass
 
-    # Final cleanup contributes to the verdict after run_trial's finally block has completed.
-    def finalize_summary(self, summary, cleanup, *, failed=False):
-        passed = not failed and cleanup.get('passed') is True and cleanup.get('cursor_scheme_restored') is True
-        summary['cleanup_passed'] = passed
-        if not passed:
-            summary['passed'] = False
+    # Add detail that depends on the verdict, after the controller recorded it from bench.outcome.read_outcome.
+    def finalize_summary(self, summary: dict, outcome: Outcome):
+        pass

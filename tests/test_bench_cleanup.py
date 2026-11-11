@@ -2,7 +2,7 @@
 
 import pytest
 
-from bench.run import owned_window, cleanup_finished
+from bench.run import owned_window
 
 
 def test_any_preexisting_window_is_protected_even_if_not_identified_as_calculator():
@@ -14,13 +14,23 @@ def test_any_preexisting_window_is_protected_even_if_not_identified_as_calculato
     assert owned_window(before, {'hwnd': '100', 'pid': 9}) == ('100', 9)
 
 
-def test_cleanup_requires_window_and_process_identity_and_does_not_trust_completion_marker():
+def test_stop_acknowledges_only_a_finished_worker_with_verified_cleanup(tmp_path):
+    from bench.stop import cleanup_verified
+    from test_bench_outcome import finished_trial
+
+    assert cleanup_verified(finished_trial(tmp_path / 'clean'))
+    assert not cleanup_verified(finished_trial(tmp_path / 'dirty', cleanup={'passed': False, 'cursor_scheme_restored': True}))
+    unfinished = finished_trial(tmp_path / 'unfinished')
+    (unfinished / 'finished.json').unlink()
+    assert not cleanup_verified(unfinished)
+    # A task, conduct or controller failure is not a cleanup failure; stop only waits for cleanup.
+    crashed = finished_trial(tmp_path / 'crashed', conduct={'passed': False, 'problems': ['x']})
+    (crashed / 'crash.txt').write_text('Traceback', encoding='utf-8')
+    assert cleanup_verified(crashed)
+
+
+def test_cleanup_requires_window_and_process_identity():
     with pytest.raises(ValueError, match='identity'):
         owned_window('', {'hwnd': '42'})
     with pytest.raises(ValueError, match='identity'):
         owned_window('', {'hwnd': '42', 'pid': 0})
-    assert not cleanup_finished({'worker_finished': True, 'cleanup': {'passed': False}})
-    assert not cleanup_finished({'worker_finished': True})
-    assert not cleanup_finished({'worker_finished': True, 'cleanup': {'passed': True}})
-    assert not cleanup_finished({'worker_finished': True, 'cleanup': {'passed': True, 'cursor_scheme_restored': False}})
-    assert cleanup_finished({'worker_finished': True, 'cleanup': {'passed': True, 'cursor_scheme_restored': True}})

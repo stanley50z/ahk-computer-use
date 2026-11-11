@@ -24,7 +24,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from bench.common import ROOT, load_actor_json, read_jsonl, save_json, actor_path, expand_user_root
 from bench.calculator import (EXPRESSION, EXPECTED, actor_window, bind_owned_window,
                               new_calculator_window, owned_window, script_input_methods)
-from bench.scenario import Trial
+from bench.outcome import read_outcome
+from bench.scenario import Scenario, Trial
 from bench.scenarios import SCENARIOS, get_scenario
 from bench.runtime import ensure_project_runtime
 from bench.tool_calls import ToolCall, completed_calls, argument_text
@@ -384,11 +385,6 @@ def conduct_audit(plan, before_probe, after_probe, before_files, after_files, to
                      'ambiguous runtime evidence stays unverified. Guarded-file and protected-document checks remain authoritative.')}
 
 
-# A finished worker does not imply successful cleanup.
-def cleanup_finished(finished):
-    cleanup = finished.get('cleanup', {})
-    return finished.get('worker_finished') is True and cleanup.get('passed') is True and cleanup.get('cursor_scheme_restored') is True
-
 # The observer runs outside agent timing and is identical for all arms; it never solves the task.
 def acu_observer(run_dir, script, *args, suffix='', timeout=15):
     command = [sys.executable, str(ROOT / 'acu/run.py'), str(script), '--timeout', str(timeout), '--', *map(str, args)]
@@ -402,6 +398,7 @@ def acu_observer(run_dir, script, *args, suffix='', timeout=15):
 
 
 # Run one authorized trial without an overall time limit; individual runtime/watchdog waits still apply.
+# The summary it writes has no verdict yet; run() records one from bench.outcome after cleanup.
 def run_trial(plan, reference_tps=None, *, scenario=None, capture_actor=None, observer=None):
     from bench.efficiency import measure_efficiency, token_count
 
@@ -481,7 +478,6 @@ def run_trial(plan, reference_tps=None, *, scenario=None, capture_actor=None, ob
                    'diagnostics': {'wall_s': wall, 'note': 'Not a benchmark ranking metric.'},
                    'isolation_passed': isolation['passed'], 'task_passed': verification['passed'], 'conduct_passed': conduct['passed'],
                    'conduct_problems': conduct['problems'],
-                   'passed': exit_code == 0 and measurements['agent_completed'] and isolation['passed'] and verification['passed'] and conduct['passed'] and measurements['capture']['passed'],
                    'unexpected_failure': unexpected_failure,
                    'recovered_provider_errors': measurements.get('recovered_provider_errors', []),
                    'metrics': measurements, 'evidence_dir': str(run_dir)}
@@ -512,6 +508,16 @@ def run_trial(plan, reference_tps=None, *, scenario=None, capture_actor=None, ob
             raise
 
 
+# Record the verdict in summary.json once cleanup has run, or after crash.txt is written, and return the summary.
+def record_outcome(run_dir: Path, scenario: Scenario) -> dict:
+    summary = load_actor_json(run_dir / 'summary.json')
+    outcome = read_outcome(run_dir)
+    summary.update(passed=outcome.passed, cleanup_passed=outcome.cleanup_passed)
+    scenario.finalize_summary(summary, outcome)
+    save_json(run_dir / 'summary.json', summary)
+    return summary
+
+
 # Enforce one bench controller at a time and preserve a traceback even for setup/cleanup failures.
 def run(plan, reference_tps=None, *, scenario=None, capture_actor=None, observer=None):
     run_dir = Path(plan['run_dir'])
@@ -525,18 +531,12 @@ def run(plan, reference_tps=None, *, scenario=None, capture_actor=None, observer
         attempt = run_dir / 'run-attempt.json'
         with attempt.open('x', encoding='utf-8') as handle:
             json.dump({'worker_pid': os.getpid(), 'started_at': datetime.now(timezone.utc).isoformat()}, handle)
-        value = run_trial(plan, reference_tps, scenario=scenario, capture_actor=capture_actor, observer=observer)
-        cleanup = load_actor_json(run_dir / 'cleanup.json')
-        scenario.finalize_summary(value, cleanup)
-        save_json(run_dir / 'summary.json', value)
-        return value
+        run_trial(plan, reference_tps, scenario=scenario, capture_actor=capture_actor, observer=observer)
+        return record_outcome(run_dir, scenario)
     except Exception:
         (run_dir / 'crash.txt').write_text(traceback.format_exc(), encoding='utf-8')
-        summary_path = run_dir / 'summary.json'
-        if summary_path.is_file():
-            value = load_actor_json(summary_path)
-            scenario.finalize_summary(value, {}, failed=True)
-            save_json(summary_path, value)
+        if (run_dir / 'summary.json').is_file():
+            record_outcome(run_dir, scenario)
         raise
     finally:
         for private_name in {arm.harness.credential[1] for arm in ARM_TABLE.values()}:
