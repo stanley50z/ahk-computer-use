@@ -12,7 +12,7 @@ from copy import deepcopy
 from bench.common import ROOT, read_jsonl, save_json
 from bench.common import executable_command as installed_command
 from bench.intervals import busy_seconds
-from bench.tool_calls import Json, Request, node_repl_request, tool_call
+from bench.tool_calls import Json, Replacement, Request, node_repl_request, tool_call
 
 name = 'pi'
 live = True
@@ -64,18 +64,42 @@ def pi_command(run_dir, skill, prompt, *, native=False):
             '--mode', 'json', '--print', prompt]
 
 
+def is_replacement(value: Json) -> bool:
+    return isinstance(value, dict) and isinstance(value.get('oldText'), str) and isinstance(value.get('newText'), str)
+
+
+# The replacements Pi's edit tool applies, or None when it would reject them. Events record the raw arguments, so
+# this repeats the edit tool's prepareEditArguments: edits sent as a JSON string or as one object, and a legacy
+# top-level oldText/newText appended to them.
+def edit_replacements(arguments: dict[str, Json]) -> list[Replacement] | None:
+    edits = arguments.get('edits')
+    if isinstance(edits, str):
+        try:
+            parsed = json.loads(edits)
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, list):
+            edits = parsed
+        elif is_replacement(parsed):
+            edits = [parsed]
+    elif is_replacement(edits):
+        edits = [edits]
+    if is_replacement(arguments):
+        edits = [*(edits if isinstance(edits, list) else []), arguments]
+    if not isinstance(edits, list) or not edits or not all(is_replacement(edit) for edit in edits):
+        return None
+    return [{'old': edit['oldText'], 'new': edit['newText']} for edit in edits]
+
+
 # Pi's tool vocabulary, from the parameter schemas of its read, write, edit and bash tools and its node_repl MCP bridge.
 def request(name: str, arguments: Json) -> Request:
     match name, arguments:
-        case 'read', dict():
+        case 'read', {'path': str()}:
             return {'kind': 'read'}
         case 'write', {'path': str(path), 'content': str(content)}:
             return {'kind': 'write', 'path': path, 'content': content}
-        case 'edit', {'path': str(path), 'edits': list(edits)} if all(
-                isinstance(edit, dict) and isinstance(edit.get('oldText'), str) and isinstance(edit.get('newText'), str)
-                for edit in edits):
-            return {'kind': 'edit', 'path': path, 'edits': [{'old': edit['oldText'], 'new': edit['newText']} for edit in edits],
-                    'replace_all': False}
+        case 'edit', {'path': str(path)} if (edits := edit_replacements(arguments)) is not None:
+            return {'kind': 'edit', 'path': path, 'edits': edits, 'replace_all': False}
         case 'bash', {'command': str(command)}:
             return {'kind': 'shell', 'command': command}
     if name.startswith('mcp__node_repl__'):

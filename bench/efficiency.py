@@ -680,7 +680,7 @@ def measure_efficiency(measurements, arm):
                     if child_route:
                         used.update(found)
         else:
-            notes.append({'call_id': identity, 'reason': f'unknown request from tool {tool["name"]}; attribution needs review'})
+            notes.append({'call_id': identity, 'reason': f'unsupported tool {tool["name"]} or unfitting arguments; attribution needs review'})
             continue
         if is_use:
             # The execution payload includes its inline script definitions; do not count their bodies twice.

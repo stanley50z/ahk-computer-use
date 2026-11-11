@@ -81,7 +81,9 @@ def node_repl_request(tool: str, arguments: Json) -> Request:
     match tool, arguments:
         case 'js', {'code': str(code)}:
             return {'kind': 'javascript_cell', 'code': code}
-        case 'js_reset' | 'js_add_node_module_dir' | 'turn_ended', dict():
+        case 'js_add_node_module_dir', {'path': str()}:
+            return {'kind': 'javascript_runtime', 'resets': False}
+        case 'js_reset' | 'turn_ended', dict():
             return {'kind': 'javascript_runtime', 'resets': tool == 'js_reset'}
     return {'kind': 'unknown'}
 

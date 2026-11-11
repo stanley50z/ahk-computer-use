@@ -564,7 +564,7 @@ def test_unknown_request_requires_review_and_names_the_raw_tool():
     unknown = tool_call('glob', 'Glob', {'pattern': '*.ahk'}, {'kind': 'unknown'}, 1, 2, None, False)
     tools = [call('skill', {'kind': 'read'}, 0, 1), unknown, call('run', shell('acu run a.ahk'), 3, 4)]
     result = measure_efficiency(metrics(tools), 'claude-acu')
-    assert result['code_tokens']['review_notes'] == [{'call_id': 'glob', 'reason': 'unknown request from tool Glob; attribution needs review'}]
+    assert result['code_tokens']['review_notes'] == [{'call_id': 'glob', 'reason': 'unsupported tool Glob or unfitting arguments; attribution needs review'}]
     assert result['code_tokens']['output_share_percent_estimate'] is None
     assert result['computer_use']['call_count'] == 1
 

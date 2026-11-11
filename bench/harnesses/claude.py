@@ -35,7 +35,7 @@ def claude_command(skill, prompt, session_id, *, arm='claude-acu'):
 # Claude Code's tool vocabulary, from the input schemas of its Read, Write, Edit and Bash tools.
 def request(name: str, arguments: Json) -> Request:
     match name, arguments:
-        case 'Read', dict():
+        case 'Read', {'file_path': str()}:
             return {'kind': 'read'}
         case 'Write', {'file_path': str(path), 'content': str(content)}:
             return {'kind': 'write', 'path': path, 'content': content}
