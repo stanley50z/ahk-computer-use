@@ -2,7 +2,7 @@
 
 import pytest
 
-from bench.run import actor_window, bind_owned_window, new_calculator_window
+from bench.calculator import actor_window, bind_owned_window, new_calculator_window
 
 
 def test_returned_numeric_or_hex_window_id_can_use_observer_pid():

@@ -7,6 +7,7 @@ import tempfile
 import pytest
 
 from bench import run
+from bench.harnesses.pi import PI_PROVIDER
 
 
 # Give real measurement/audit code a small, complete Pi session in an isolated fake home.
@@ -18,7 +19,7 @@ def trial_plan(tmp_path, monkeypatch, scenario='calculator'):
     monkeypatch.setattr(Path, 'home', classmethod(lambda cls: home))
     monkeypatch.setattr(tempfile, 'gettempdir', lambda: str(shared))
     return {'run_dir': str(directory), 'workspace': str(directory / 'workspace'), 'arm': 'pi-acu',
-            'scenario': scenario, 'provider': run.PI_PROVIDER, 'environment_overrides': {},
+            'scenario': scenario, 'provider': PI_PROVIDER, 'environment_overrides': {},
             'command': [sys.executable, '-c', 'pass'], 'skill_names': ['acu'],
             'skill_path': str(directory / 'workspace/acu/SKILL.md'), 'model': 'test', 'reasoning': 'low'}
 

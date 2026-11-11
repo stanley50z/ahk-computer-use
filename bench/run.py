@@ -22,52 +22,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from bench.common import ROOT, load_actor_json, read_jsonl, save_json, actor_path, expand_user_root
-from bench.calculator import (EXPRESSION, EXPECTED, actor_window, bind_owned_window,
-                              new_calculator_window, owned_window, script_input_methods)
 from bench.outcome import read_outcome
 from bench.scenario import Scenario, Trial
 from bench.scenarios import SCENARIOS, get_scenario
 from bench.runtime import ensure_project_runtime
-from bench.tool_calls import ToolCall, completed_calls, argument_text
+from bench.tool_calls import ToolCall, completed_calls
 
 from bench.arms import ARM_TABLE, ARMS, arm_model, uses_cua_daemon
-# Preserve the established analysis/command imports while implementation lives in each adapter.
-from bench.harnesses.pi import (MODEL, PI_PROVIDER, REASONING, PI_RECOVERY_POLICY, TOOLS, NATIVE_TOOLS,
-                                analyse_pi, audit_pi_session, pi_command, native_skill, native_server)
-from bench.harnesses.claude import CLAUDE_RECOVERY_POLICY, CLAUDE_TOOLS, analyse_claude, audit_claude_session, claude_command
-from bench.harnesses.codex import analyse_codex, audit_codex_session
+# Unused here. An untracked analysis script in the main checkout, .pi/artifacts/testbench-1-analysis/compare_acu_trials.py,
+# still imports analyse_pi from bench.run.
+from bench.harnesses.pi import analyse_pi  # noqa: F401
 
 WINDOW_AUDIT_POLICY = 'diagnostic-only-v1'
-
-
-# Historical end-to-end timing only. New benchmark scoring uses measure_efficiency; old evidence remains unchanged.
-def task_time(agent_start_s, tools: list[ToolCall], pattern, workspace):
-    helpers = set()  # names a computer-use call defined; a persistent REPL lets later calls reach the route through them
-
-    def uses_computer(text):
-        if re.search(pattern, text) or any(re.search(rf'\b{re.escape(name)}\s*\(', text) for name in helpers):
-            return True
-        for name in set(re.findall(r'[\w.-]+\.(?:py|ahk|js|mjs|ps1|sh)\b', text)):
-            script = Path(workspace) / name
-            if script.is_file() and re.search(pattern, script.read_text(encoding='utf-8-sig', errors='replace')):
-                return True
-        return False
-
-    uses = []
-    for tool in sorted(completed_calls(tools), key=lambda tool: tool['start_s'] if tool['start_s'] is not None else tool['end_s']):
-        if tool['request']['kind'] in ('read', 'write', 'edit'):
-            continue
-        text = tool.get('text', '')
-        if uses_computer(text):
-            uses.append(tool)
-            helpers.update(name for pair in re.findall(r'globalThis\.(\w+)\s*=|\b(?:const|let|var|function|def)\s+(\w+)', text) for name in pair if name)
-    definition = 'Session start (skill received) to the end of the last computer-use tool call, by receipt timestamps. Result files and the final answer are excluded.'
-    if agent_start_s is None or not uses:
-        return {'task_s': None, 'computer_use_calls': len(uses), 'definition': definition,
-                'reason': 'no session start or no computer-use call was observed'}
-    last = max(tool['end_s'] for tool in uses)
-    return {'task_s': last - agent_start_s, 'start_s': agent_start_s, 'last_computer_use_end_s': last,
-            'computer_use_calls': len(uses), 'definition': definition}
 
 
 # The shared cua-driver daemon remembers ended session labels, and every fresh CUA actor named its first session after
@@ -232,7 +198,7 @@ def capture(command, cwd, environment, run_dir):
 # trial whether the actor stayed inside its lane, and reports what it finds. Evidence sources:
 #   1. a SHA-256 fingerprint of the files an actor could tamper with, taken before and after;
 #   2. the transcript: write/edit tool calls and shell commands that name a path outside the workspace;
-#   3. the window probes: pre-existing visible windows that vanished, and new non-Calculator windows left behind;
+#   3. the window probes: pre-existing visible windows that vanished, and new windows of other applications left behind;
 #   4. bounded external-file metadata correlated with verified runtime capture requests and returned destinations.
 
 FINGERPRINT_SKIP = {'.git', '.pi', '.venv', '__pycache__', 'openwiki', 'node_modules', '.pytest_cache', 'dist', '.agents', '.claude'}
@@ -337,8 +303,9 @@ def transcript_writes(tools: list[ToolCall], workspace):
 
 # Window diff from the observer probes. A handle is pre-existing if the before probe listed it visible or hidden:
 # background windows toggle visibility on their own (a tray flyout did so between trials), and that is not the actor's
-# doing. Closed means a visible pre-existing handle no longer exists at all; left open means a visible non-Calculator
-# handle that did not exist before.
+# doing. Closed means a visible pre-existing handle no longer exists at all; left open means a visible handle that did
+# not exist before and is not the task application's. That list keeps its historical key, new_non_calculator, in every
+# scenario: conduct.json persists it under window_audit_policy.
 def window_diff(before, after, application='calculator', *, group_process_windows=False):
     def visible(probe):
         return dict(re.findall(r'^window=(\d+) pid=(\d+)\s*$', probe, re.MULTILINE))
@@ -398,7 +365,7 @@ def acu_observer(run_dir, script, *args, suffix='', timeout=15):
 
 # Run one authorized trial without an overall time limit; individual runtime/watchdog waits still apply.
 # The summary it writes has no verdict yet; run() records one from bench.outcome after cleanup.
-def run_trial(plan, reference_tps=None, *, scenario=None, capture_actor=None, observer=None):
+def run_trial(plan, *, scenario=None, capture_actor=None, observer=None):
     from bench.efficiency import measure_efficiency, token_count
 
     scenario = scenario if scenario is not None else get_scenario(plan.get('scenario', 'calculator'))
@@ -445,7 +412,7 @@ def run_trial(plan, reference_tps=None, *, scenario=None, capture_actor=None, ob
                 scenario.stop_recorder(run_dir, recorder)
             runtime_after = snapshot_runtime_files()
             save_json(run_dir / 'runtime-files-after.json', runtime_after)
-        measurements = host.analyse(records, wall, reference_tps,
+        measurements = host.analyse(records, wall,
                                     cancelled=load_actor_json(run_dir / 'capture.json').get('cancelled') is True)
         # Persist before transcript IO, grading or cleanup so a later failure cannot hide the provider error.
         unexpected_failure = measurements.get('unexpected_failure')
@@ -518,7 +485,7 @@ def record_outcome(run_dir: Path, scenario: Scenario) -> dict:
 
 
 # Enforce one bench controller at a time and preserve a traceback even for setup/cleanup failures.
-def run(plan, reference_tps=None, *, scenario=None, capture_actor=None, observer=None):
+def run(plan, *, scenario=None, capture_actor=None, observer=None):
     run_dir = Path(plan['run_dir'])
     scenario = scenario if scenario is not None else get_scenario(plan.get('scenario', 'calculator'))
     control_dir = ROOT / '.pi/bench'
@@ -530,7 +497,7 @@ def run(plan, reference_tps=None, *, scenario=None, capture_actor=None, observer
         attempt = run_dir / 'run-attempt.json'
         with attempt.open('x', encoding='utf-8') as handle:
             json.dump({'worker_pid': os.getpid(), 'started_at': datetime.now(timezone.utc).isoformat()}, handle)
-        run_trial(plan, reference_tps, scenario=scenario, capture_actor=capture_actor, observer=observer)
+        run_trial(plan, scenario=scenario, capture_actor=capture_actor, observer=observer)
         return record_outcome(run_dir, scenario)
     except Exception:
         (run_dir / 'crash.txt').write_text(traceback.format_exc(), encoding='utf-8')

@@ -598,7 +598,7 @@ def test_same_basename_does_not_overwrite_a_different_script_and_js_reassignment
 
 
 def test_codex_completion_without_start_has_unknown_duration_not_zero():
-    from bench.run import analyse_codex
+    from bench.harnesses.codex import analyse_codex
 
     events = [
         {'elapsed_s':4,'event':{'type':'item.completed','item':{'id':'t','type':'mcp_tool_call',

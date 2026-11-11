@@ -2,7 +2,7 @@
 from pathlib import Path
 import re
 
-from bench.common import read_jsonl, executable_command
+from bench.common import read_jsonl
 from bench.intervals import busy_seconds
 from bench.tool_calls import Json, Request, node_repl_request, tool_call
 
@@ -56,7 +56,7 @@ def request(name: str, arguments: Json) -> Request:
 
 
 # Codex exec exposes final aggregate usage; its stream does not expose a true decoding-rate denominator.
-def analyse_codex(records, wall_s, reference_tps=None, *, cancelled=False, exclude_interrupted_turns=False):
+def analyse_codex(records, wall_s, *, cancelled=False, exclude_interrupted_turns=False):
     if exclude_interrupted_turns:
         raise ValueError('--exclude-interrupted-turns requires per-response Pi usage; other harnesses are unsupported')
     completed = [r for r in records if r['event']['type'] == 'turn.completed']

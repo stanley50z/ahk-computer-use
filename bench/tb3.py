@@ -60,10 +60,6 @@ TASKS = {
 OFFICE_EXES = [app['exe'] for app in APPS.values()]
 
 
-def is_tb3(scenario):
-    return str(scenario).startswith('tb3.')
-
-
 # TB3 records only actor input and collects the saved Office document after the conduct audit.
 class TB3Scenario(Scenario):
     application = 'office'
@@ -351,8 +347,10 @@ def check_input(run_dir, plan):
                 'recorded_events': sum(e.get('kind') in ('mouse', 'key', 'wheel', 'hwheel') for e in events)}
     if scenario == 'tb3.3':
         matches = [d for d in drags(events, 'right') if on_window(d) and abs(d['dy']) >= MIN_DRAG_PX]
-    else:
+    elif scenario == 'tb3.4':
         matches = [d for d in drags(events, 'left') if on_window(d) and abs(d['dx']) >= MIN_DRAG_PX and d['down']['ctrl'] and d['up']['ctrl']]
+    else:
+        raise ValueError(f'no input check for {scenario}, which requires: {plan["tb3"]["required_input"]}')
     return {'passed': bool(matches), 'required': plan['tb3']['required_input'], 'matching_drags': matches[:5],
             'recorded_events': sum(e.get('kind') in ('mouse', 'key', 'wheel', 'hwheel') for e in events)}
 

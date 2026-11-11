@@ -2,7 +2,7 @@
 
 import pytest
 
-from bench.run import owned_window
+from bench.calculator import owned_window
 
 
 def test_any_preexisting_window_is_protected_even_if_not_identified_as_calculator():

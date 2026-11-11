@@ -4,7 +4,9 @@ import shlex
 
 import pytest
 
-from bench.run import analyse_claude, analyse_pi, conduct_audit
+from bench.harnesses.claude import analyse_claude
+from bench.harnesses.pi import analyse_pi
+from bench.run import conduct_audit
 
 
 def events(harness, path, *, failed=False, command=None, body=None):
@@ -175,7 +177,7 @@ def test_old_capture_json_or_unresolved_helper_cannot_blame_an_unrelated_write(t
     ('pi-unmatched', None, 1),
 ])
 def test_runtime_audit_covers_shell_requests_only(tmp_path, harness, item, audited):
-    from bench.run import analyse_codex
+    from bench.harnesses.codex import analyse_codex
     path = 'c:/users/test/cp.png'
     if harness == 'codex':
         item = {'id': 'capture', 'command': 'cua-driver get_window_state ' + shlex.quote(json.dumps({'screenshot_out_file': path})), **item}

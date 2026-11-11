@@ -2,6 +2,7 @@
 
 import ast
 from collections import Counter, defaultdict
+from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from datetime import datetime
 import hashlib
@@ -89,8 +90,9 @@ def records(path):
             yield value
 
 
-# Mirror bench/run.py's toolCall/tool_use/function_call envelopes and ID correlation.
-# Native session files contain messages rather than Pi's benchmark streaming events.
+# Read a native session file's tool requests and pair each with its result by call ID: Pi's toolCall and toolResult
+# messages, Claude Code's tool_use and tool_result blocks, and Codex's function_call and custom_tool_call items.
+# These are saved sessions, not the streamed events of benchmark trials that bench/harnesses/ reads.
 def session_calls(path):
     calls = {}
     cwd = ""
@@ -175,7 +177,9 @@ def normalized(path, cwd=""):
     return posixpath.normpath(path)
 
 
-# Separate heredoc data from executable shell text (mirrors bench/efficiency.py).
+# Separate heredoc data from executable shell text. A heredoc that cat or tee writes to a file becomes an
+# __acu_history_write__ command, so collect replays the write in order; one fed to python or apply_patch becomes that
+# command with the body as its argument; any other heredoc is dropped.
 def heredocs(command):
     files, executable = [], []
     lines = command.splitlines(keepends=True)
@@ -197,7 +201,8 @@ def heredocs(command):
         i += 1
         destination = re.search(r"\b(?:cat\s*(?:>>|>)|tee\s+(?:-a\s+)?)([^<>]+?)\s*<<", line)
         if destination:
-            files.append((destination.group(1).strip(), "".join(body), ">>" in destination.group(0)))
+            append = ">>" in destination.group(0) or bool(re.search(r"\btee\s+-a\b", destination.group(0)))
+            files.append((destination.group(1).strip(), "".join(body), append))
             executable.append(line[:destination.start()] + f"__acu_history_write__ {len(files) - 1};" + line[match.end():] + "\n")
         else:
             trailing = re.match(r'''\s*(>>?)\s*("[^"]*"|'[^']*'|[^\s;&|]+)(.*)''', line[match.end():])
@@ -216,8 +221,22 @@ def heredocs(command):
     return "".join(executable), files
 
 
-# Mirror bench/efficiency.py command-position parsing; quoted prose is not a run.
-def shell_commands(text):
+# The command `env` runs, after the words agents put before it: -i, -, --ignore-environment, -u NAME, --unset NAME,
+# --unset=NAME and NAME=value. -- ends them. Any other option stays in front, so the command is not recognised.
+def env_command(words: list[str]) -> list[str]:
+    while words and words[0] != "--":
+        if words[0] in ("-i", "-", "--ignore-environment") or re.match(r"^(?:--unset=|[A-Za-z_]\w*=)", words[0]):
+            words = words[1:]
+        elif words[0] in ("-u", "--unset"):
+            words = words[2:]
+        else:
+            return words
+    return words[1:]
+
+
+# Splits shell text into commands at command position, so quoted prose is not a run. Unlike bench/efficiency.py's
+# parser, this one reads the options agents give env; the bench keeps its own so its measurements do not change.
+def shell_commands(text: str) -> Iterator[list[str]]:
     lexer = shlex.shlex(text, posix=True, punctuation_chars=";&|\n()")
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
@@ -232,9 +251,11 @@ def shell_commands(text):
     if current:
         commands.append(current)
     for command in commands:
-        while command and (command[0] in ("do", "then", "else", "if", "while", "until", "!", "&", "env")
+        while command and (command[0] in ("do", "then", "else", "if", "while", "until", "!", "&")
                            or re.match(r"^[A-Za-z_]\w*=", command[0])):
             command = command[1:]
+        if command[:1] == ["env"]:
+            command = env_command(command[1:])
         if command:
             yield command
 
@@ -291,7 +312,9 @@ def snippet_app(path, root):
     return None
 
 
-# Replay literal Python writes like bench/efficiency.py, without executing captured code.
+# Yields (path, text) for each top-level Path(...).write_text(...) or open(...).write(...) in captured Python, without
+# running it. The text is known when it is a string literal, a variable holding one, a read_text() of a source collect
+# already has, or a .replace() of those; otherwise it is None. Code that does not parse yields nothing.
 def python_writes(text, sources, cwd):
     try:
         with warnings.catch_warnings():

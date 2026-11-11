@@ -209,6 +209,39 @@ def test_executable_names_with_plus_signs_identify_the_app(tmp_path):
     assert 'notepad++.exe: 2 runs (2 ok, 0 error, 0 timeout, 0 unknown)' in result.stdout
 
 
+# The app selector is in the first heredoc only, so the app is known only if the second one appended.
+@pytest.mark.parametrize('second_write, app', [
+    ('tee -a action.ahk', 'Editor.exe'),
+    ('cat >> action.ahk', 'Editor.exe'),
+    ('tee action.ahk', 'unknown app'),
+])
+def test_heredoc_append_keeps_the_source_written_before_it(tmp_path, second_write, app):
+    command = (f"cat > action.ahk <<'AHK'\nWinActivate(\"ahk_exe Editor.exe\")\nAHK\n"
+               f"{second_write} <<'AHK'\nSend(\"^s\")\nAHK\nacu run action.ahk")
+    result = history(tmp_path, shell_session(tmp_path, command, tmp_path), logs=[
+        {'ts': '2026-10-20T10:00:02Z', 'script': str(tmp_path / 'action.ahk'), 'outcome': 'ok'}])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f'{app}: 1 runs (1 ok, 0 error, 0 timeout, 0 unknown)' in result.stdout
+
+
+# The env options agents use before a run, and assignments; -- ends them.
+@pytest.mark.parametrize('prefix', [
+    'env -i', 'env -', 'env --ignore-environment', 'env -u PATH', 'env --unset PATH', 'env --unset=PATH',
+    'env FOO=1', 'FOO=1 env -i BAR=2', 'env -i --',
+])
+def test_env_options_and_assignments_precede_the_run(tmp_path, prefix):
+    result = history(tmp_path, shell_session(tmp_path, f'{prefix} acu run action.ahk', tmp_path), logs=[
+        {'ts': '2026-10-20T10:00:02Z', 'script': str(tmp_path / 'action.ahk'), 'outcome': 'ok'}])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert '1 runs (1 ok, 0 error, 0 timeout, 0 unknown)' in result.stdout
+
+
+def test_any_other_env_option_leaves_the_run_unrecognised(tmp_path):
+    result = history(tmp_path, shell_session(tmp_path, 'env -C sub acu run action.ahk', tmp_path))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'ACU history: 0 runs.' in result.stdout
+
+
 def test_each_run_in_a_shell_call_gets_only_its_own_result(tmp_path):
     tree = str(Path('acu/tree.ahk').resolve())
     command = 'acu run tree.ahk -- "ahk_exe Editor.exe"; acu run tree.ahk -- "ahk_exe Browser.exe"'

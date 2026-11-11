@@ -1,6 +1,6 @@
 """Native Pi isolation is checked from persisted tool declarations, not launch flags alone."""
 
-from bench.run import NATIVE_TOOLS, TOOLS, audit_pi_session
+from bench.harnesses.pi import NATIVE_TOOLS, TOOLS, audit_pi_session
 
 
 def test_native_pi_audit_accepts_only_the_selected_runtime_and_frozen_model():

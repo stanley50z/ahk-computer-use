@@ -6,6 +6,8 @@ import shutil
 import zipfile
 from xml.sax.saxutils import escape
 
+import pytest
+
 from bench.run import ROOT, actor_path, prepare
 from bench.tb3 import SENTENCES, TASKS, check_document, check_input, docx_paragraphs, grade, prompt, template_path
 
@@ -165,6 +167,19 @@ def test_ctrl_drag_requirement_needs_ctrl_held_from_press_to_release(tmp_path):
     assert input_run(tmp_path / 'b', 'tb3.4', early)['passed'] is False, 'Ctrl released before the drop moves the sheet instead'
     assert input_run(tmp_path / 'c', 'tb3.4', held[1:3])['passed'] is False
     assert input_run(tmp_path / 'd', 'tb3.1', held) is None, 'a task that names no input method has no input requirement'
+
+
+def test_input_requirement_of_an_unknown_scenario_is_not_graded_by_another_tasks_rule(tmp_path):
+    run_dir = tmp_path / 'trial'
+    plan = prepare('pi-acu', run_dir, scenario='tb3.4')
+    plan['scenario'] = 'tb3.9'
+    (run_dir / 'office-identity.json').write_text(json.dumps({'hwnd': 7}), encoding='utf-8')
+    ctrl_drag = [{'kind': 'key', 'vk': 17, 'action': 'down', 'foreground': 7},
+                 {'kind': 'mouse', 'button': 'left', 'action': 'down', 'x': 100, 'y': 900, 'window': 7},
+                 {'kind': 'mouse', 'button': 'left', 'action': 'up', 'x': 300, 'y': 900, 'window': 7}]
+    (run_dir / 'input-log.jsonl').write_text('\n'.join(map(json.dumps, ctrl_drag)), encoding='utf-8')
+    with pytest.raises(ValueError, match='tb3.9'):
+        check_input(run_dir, plan)
 
 
 def test_recorder_reads_mouse_button_flags_at_the_windows_offset():
