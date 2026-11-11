@@ -2,17 +2,16 @@
 
 import json
 import signal
-from contextlib import contextmanager
 
 import pytest
 
-from acu import run as launcher, tool
+from acu import run as launcher
 from acu.tool import RunOptions, run_operation
 
 
 @pytest.fixture
 def process_run(tmp_path, process_adapter):
-    """Use real run orchestration with isolated installation paths and a fake process adapter."""
+    """Use real run orchestration with a fake process adapter."""
     script = tmp_path / "action.ahk"
     script.write_text("ExitApp\n", encoding="utf-8")
     adapter = process_adapter
@@ -60,22 +59,11 @@ def test_timeout_requests_close_before_kill_and_verifies_exit(process_run, ignor
     assert adapter.events[-2:] == ["script.exited", "script.close_handle"]
 
 
-def test_failed_shutdown_retains_ownership_until_exit_is_verified(process_run, acu_home, monkeypatch):
+def test_failed_shutdown_retains_ownership_until_exit_is_verified(process_run, acu_home):
     adapter, execute = process_run
     adapter.script.finish = False
     adapter.script.ignore_close = True
     adapter.script.kill_failure = True
-
-    @contextmanager
-    def lease():
-        adapter.events.append("lease.acquired")
-        try:
-            yield
-        finally:
-            assert adapter.script.closed and not adapter.script.alive
-            adapter.events.append("lease.released")
-
-    monkeypatch.setattr(tool, "desktop_lease", lease)
     with pytest.raises(OSError, match="termination denied"):
         execute(lease=True)
 
@@ -85,7 +73,8 @@ def test_failed_shutdown_retains_ownership_until_exit_is_verified(process_run, a
     assert len(reports) == 1
     output = json.loads(reports[0].read_text(encoding="utf-8"))["output"]
     assert "retaining ownership" in output and "Traceback" in output
-    assert adapter.events[-2:] == ["script.close_handle", "lease.released"]
+    assert adapter.events[0] == "lease.acquired"
+    assert adapter.events[-2:] == ["script.close_handle", "lease.released"], "the lease was released before the script handle closed"
 
 
 def test_validation_timeout_uses_the_run_budget_and_persists_output(process_run):

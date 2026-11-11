@@ -1,30 +1,28 @@
 """Shared launcher behavior through both command entrypoints."""
 
 import json
-from contextlib import contextmanager
 
 import pytest
 
-from acu import cli, run as launcher, tool
+from acu import cli, run as launcher
 from fake_process import FakeProcessAdapter
 
 
-def test_both_entrypoints_resolve_bundled_scripts_and_forward_literal_arguments(tmp_path, monkeypatch, capsys, process_adapter):
+def test_both_entrypoints_resolve_bundled_scripts_and_forward_literal_arguments(tmp_path, monkeypatch, capsys):
     """The low-level command must use the same resolution and argument split as acu run."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(launcher.time, "monotonic", lambda: 0)
     adapters = [FakeProcessAdapter("hello"), FakeProcessAdapter("hello")]
-    pending = iter(adapters)
-    monkeypatch.setattr(launcher, "Win32ProcessAdapter", lambda: next(pending))
     arguments = ["tree.ahk", "--timeout", "5", "--", "alpha beta", "--timeout", "--"]
-    assert cli.main(["run", *arguments]) == 0
+    assert cli.main(["run", *arguments], process_adapter=adapters[0]) == 0
     response = json.loads(capsys.readouterr().out)
-    assert launcher.main(arguments) == 0
+    assert launcher.main(arguments, process_adapter=adapters[1]) == 0
     output = capsys.readouterr().out
     assert output == "hello\n[acu] ok 0ms\n"
     assert response["trailer"] == output.splitlines()[-1]
     for adapter in adapters:
-        assert adapter.validation_command[5:] == [str(launcher.HERE / "tree.ahk"), "alpha beta", "--timeout", "--"]
+        assert adapter.validation_arguments[:4] == ["/ErrorStdOut=UTF-8", "/validate", "/include", str(launcher.PRELUDE)]
+        assert adapter.validation_arguments[4:] == [str(launcher.HERE / "tree.ahk"), "alpha beta", "--timeout", "--"]
         assert adapter.script_arguments[3] == str(launcher.HERE / "tree.ahk")
         assert adapter.script_arguments[6:] == ["alpha beta", "--timeout", "--"]
     rows = (launcher.acu_home() / "logs" / "runs.jsonl").read_text(encoding="utf-8").splitlines()
@@ -42,7 +40,7 @@ def test_both_entrypoints_resolve_bundled_scripts_and_forward_literal_arguments(
     ("interrupt", 130, "[acu] interrupted 0ms"),
     ("validation-interrupt", 130, "[acu] interrupted during validation 0ms"),
 ])
-def test_entrypoints_preserve_exact_trailers(tmp_path, monkeypatch, capsys, process_adapter, case, code, trailer):
+def test_entrypoints_preserve_exact_trailers(tmp_path, monkeypatch, capsys, case, code, trailer):
     script = tmp_path / "action.ahk"
     script.write_text("ExitApp\n", encoding="utf-8")
     monkeypatch.setattr(launcher.time, "monotonic", lambda: 0)
@@ -66,11 +64,10 @@ def test_entrypoints_preserve_exact_trailers(tmp_path, monkeypatch, capsys, proc
             adapter.interrupt_creation = "validation"
         return adapter
 
-    monkeypatch.setattr(launcher, "Win32ProcessAdapter", create)
     arguments = [str(script), "--timeout", "5"]
-    assert cli.main(["run", *arguments]) == code
+    assert cli.main(["run", *arguments], process_adapter=create()) == code
     response = json.loads(capsys.readouterr().out)
-    assert launcher.main(arguments) == code
+    assert launcher.main(arguments, process_adapter=create()) == code
     output = capsys.readouterr().out
     assert output.splitlines()[-1] == response["trailer"] == trailer
 
@@ -80,7 +77,7 @@ def test_run_derives_trailer_from_facts():
     assert result.trailer == "[acu] ok 17ms"
 
 
-def test_entrypoints_keep_explicit_lease_timeout_and_marker_differences(tmp_path, monkeypatch, capsys, process_adapter):
+def test_entrypoints_keep_explicit_lease_timeout_and_marker_differences(tmp_path, monkeypatch, capsys):
     script = tmp_path / "action.ahk"
     script.write_text("ExitApp\n", encoding="utf-8")
     folder = tmp_path / "snippets" / "Editor.exe"
@@ -89,37 +86,30 @@ def test_entrypoints_keep_explicit_lease_timeout_and_marker_differences(tmp_path
     monkeypatch.setenv("ACU_SNIPPETS_ROOT", str(folder.parent))
     monkeypatch.setenv("ACU_SETTINGS_FILE", str(tmp_path / "settings.json"))
     monkeypatch.chdir(tmp_path)
-    adapters = []
+    adapters = [FakeProcessAdapter("[acu:snippets] Editor.exe\n") for _ in range(4)]
 
-    def create():
-        adapter = FakeProcessAdapter("[acu:snippets] Editor.exe\n")
-        adapters.append(adapter)
-        return adapter
-
-    monkeypatch.setattr(launcher, "Win32ProcessAdapter", create)
-    assert cli.main(["run", str(script)]) == 0
+    assert cli.main(["run", str(script)], process_adapter=adapters[0]) == 0
     response = json.loads(capsys.readouterr().out)
     assert response["output"] == f"snippets {folder}\naction.ahk | args:  | does: Example\n"
+    assert adapters[0].events[0] == "lease.acquired" and adapters[0].events[-1] == "lease.released"
 
-    @contextmanager
-    def busy():
-        raise ValueError("busy: test lease held")
-        yield
-
-    monkeypatch.setattr(tool, "desktop_lease", busy)
-    assert cli.main(["run", str(script)]) == 2
+    adapters[1].busy = True
+    assert cli.main(["run", str(script)], process_adapter=adapters[1]) == 2
     assert "busy" in json.loads(capsys.readouterr().out)["error"]
-    assert cli.main(["run", str(script), "--timeout", "301"]) == 2
+    assert cli.main(["run", str(script), "--timeout", "301"], process_adapter=adapters[2]) == 2
     assert "300" in json.loads(capsys.readouterr().out)["error"]
-    assert launcher.main([str(script), "--timeout", "301"]) == 0
+    assert adapters[1].events == adapters[2].events == [], "a rejected CLI request created a process"
+
+    adapters[3].busy = True
+    assert launcher.main([str(script), "--timeout", "301"], process_adapter=adapters[3]) == 0
     assert capsys.readouterr().out.startswith("[acu:snippets] Editor.exe\n[acu] ok ")
-    assert len(adapters) == 2, "a rejected CLI request created a process"
+    assert "lease.acquired" not in adapters[3].events
     rows = [json.loads(line) for line in (launcher.acu_home() / "logs/runs.jsonl").read_text(encoding="utf-8").splitlines()]
     assert [row["app"] for row in rows] == ["Editor.exe", "Editor.exe"]
     assert [row["timeout_s"] for row in rows] == [30, 301]
 
 
-def test_logging_failure_does_not_replace_either_entrypoints_exit_code(tmp_path, monkeypatch, capsys, process_adapter):
+def test_logging_failure_does_not_replace_either_entrypoints_exit_code(tmp_path, capsys):
     script = tmp_path / "action.ahk"
     script.write_text("ExitApp\n", encoding="utf-8")
     home = launcher.acu_home()
@@ -131,11 +121,26 @@ def test_logging_failure_does_not_replace_either_entrypoints_exit_code(tmp_path,
         adapter.script.code = 9
         return adapter
 
-    monkeypatch.setattr(launcher, "Win32ProcessAdapter", create)
-    assert cli.main(["run", str(script)]) == 9
+    assert cli.main(["run", str(script)], process_adapter=create()) == 9
     response = json.loads(capsys.readouterr().out)
     assert response["log_error"] and response["output"] == "error output\n"
-    assert launcher.main([str(script)]) == 9
+    assert launcher.main([str(script)], process_adapter=create()) == 9
     captured = capsys.readouterr()
     assert captured.out.startswith("error output\n[acu] exit 9 ")
     assert captured.err.startswith("[acu] log failed: ")
+
+
+def test_entrypoints_report_missing_autohotkey_as_before_without_a_run(tmp_path, monkeypatch, capsys):
+    """The Win32 adapter locates AutoHotkey when it starts the validator; nothing starts and nothing is logged."""
+    script = tmp_path / "action.ahk"
+    script.write_text("ExitApp\n", encoding="utf-8")
+    missing = tmp_path / "AutoHotkey64_UIA.exe"
+    monkeypatch.setenv("ACU_AHK", str(missing))
+    message = f"[acu] AutoHotkey not found at {missing}; install AutoHotkey v2 with its UI Access option, or set ACU_AHK"
+
+    assert cli.main(["run", str(script)]) == 2
+    assert json.loads(capsys.readouterr().out) == {"error": message}
+    with pytest.raises(SystemExit) as stopped:
+        launcher.main([str(script)])
+    assert stopped.value.code == message
+    assert not (launcher.acu_home() / "logs").exists()

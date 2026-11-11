@@ -1,9 +1,8 @@
 """Run an existing AHK script file through the CLI under the launcher protections."""
 
-import ctypes
 import math
 import re
-from contextlib import contextmanager, nullcontext
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -23,33 +22,6 @@ def resolve_script(script: str, cwd: str | None = None) -> Path:
     if path.name in BUNDLED_SCRIPTS and str(path.parent) == "." and not candidate.is_file():
         return HERE / path.name
     return candidate.resolve()
-
-
-@contextmanager
-def desktop_lease():
-    """Reject overlapping CLI runs; Windows releases the mutex if its owner dies."""
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
-    kernel32.CreateMutexW.restype = ctypes.c_void_p
-    kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint]
-    kernel32.ReleaseMutex.argtypes = [ctypes.c_void_p]
-    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
-    handle = kernel32.CreateMutexW(None, False, "Local\\ACU-script-execution")
-    if not handle:
-        raise ctypes.WinError(ctypes.get_last_error())
-    acquired = False
-    try:
-        status = kernel32.WaitForSingleObject(handle, 0)
-        if status == 258:
-            raise ValueError("busy: another ACU tool execution owns the desktop; inspect before retrying")
-        if status not in (0, 128):  # WAIT_OBJECT_0 or WAIT_ABANDONED
-            raise ctypes.WinError(ctypes.get_last_error())
-        acquired = True
-        yield
-    finally:
-        if acquired:
-            kernel32.ReleaseMutex(handle)
-        kernel32.CloseHandle(handle)
 
 
 def _expand_snippet_markers(output: str, working_folder: Path) -> str:
@@ -116,8 +88,11 @@ def split_script_args(arguments: Sequence[str]) -> tuple[list[str], list[str]]:
 
 def run_operation(script: str, timeout: float = 30, args: Sequence[str] = (), *,
                   options: RunOptions = CLI_OPTIONS,
-                  process_adapter: launcher.ProcessAdapter | None = None) -> RunResult:
-    """Own resolution, console cancellation, optional lease, execution, discovery and recording."""
+                  process_adapter: launcher.ProcessAdapter) -> RunResult:
+    """Own resolution, console cancellation, optional lease, execution, discovery and recording.
+
+    The adapter supplies every Windows contact; each entry point passes the real one unless a test passes a fake.
+    """
     if not script.strip():
         raise ValueError("script path must be non-empty")
     if options.bounded_timeout and (not math.isfinite(timeout) or not 0 < timeout <= 300):
@@ -128,8 +103,8 @@ def run_operation(script: str, timeout: float = 30, args: Sequence[str] = (), *,
     if any(not isinstance(arg, str) or "\0" in arg for arg in args):
         raise ValueError("script args must be strings without NUL characters")
     launcher.install_console_handlers()
-    with desktop_lease() if options.lease else nullcontext():
-        result = launcher.run_script(path, timeout, args, process_adapter=process_adapter)
+    with process_adapter.desktop_lease() if options.lease else nullcontext():
+        result = launcher.run_script(path, timeout, args, process_adapter)
         if options.expand_markers:
             result.output = _expand_snippet_markers(result.output, Path.cwd())
         response = RunResult(result, launcher.acu_home() / "logs" / "runs.jsonl")
@@ -140,10 +115,11 @@ def run_operation(script: str, timeout: float = 30, args: Sequence[str] = (), *,
         return response
 
 
-def run(script: str, timeout: float = 30, args: list[str] | None = None) -> dict:
+def run(script: str, timeout: float = 30, args: list[str] | None = None, *,
+        process_adapter: launcher.ProcessAdapter) -> dict:
     """Format the shared operation's result for the JSON CLI."""
     try:
-        completed = run_operation(script, timeout, [] if args is None else args)
+        completed = run_operation(script, timeout, [] if args is None else args, process_adapter=process_adapter)
     except SystemExit as error:
         raise ValueError(str(error)) from error
     result = completed.run

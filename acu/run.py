@@ -28,11 +28,11 @@ import re
 import subprocess
 import sys
 import time
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from ctypes import wintypes
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import BinaryIO, Literal, Protocol, Sequence
+from typing import BinaryIO, Iterator, Literal, Protocol, Sequence
 
 HERE = Path(__file__).resolve().parent
 PRELUDE = HERE / "prelude.ahk"
@@ -228,10 +228,16 @@ class ScriptProcess(Protocol):
 
 
 class ProcessAdapter(Protocol):
-    """Create owned validation/script processes; callers defer interrupts across these calls."""
+    """Every Windows contact of one run: the desktop lease and the two AutoHotkey processes.
 
-    def start_validation(self, command: Sequence[str]) -> ValidationProcess: ...
-    def start_script(self, exe: Path, arguments: Sequence[str]) -> ScriptProcess: ...
+    desktop_lease raises ValueError starting "busy:" while another run holds it. The start methods take
+    AutoHotkey's arguments; the adapter picks the build and raises SystemExit naming a missing one.
+    Callers defer console interrupts across the start calls and own the returned process.
+    """
+
+    def desktop_lease(self) -> AbstractContextManager[None]: ...
+    def start_validation(self, arguments: Sequence[str]) -> ValidationProcess: ...
+    def start_script(self, arguments: Sequence[str]) -> ScriptProcess: ...
 
 
 class Win32ScriptProcess:
@@ -267,19 +273,47 @@ class Win32ScriptProcess:
 
 
 class Win32ProcessAdapter:
-    """Use a pipe for the plain validator and ShellExecute for signed UI Access execution."""
+    """The real desktop: a session mutex for the lease, a pipe to the plain build for validation, and
+    ShellExecute for the signed UI Access build. Both builds are located when their process starts."""
 
-    def start_validation(self, command: Sequence[str]) -> ValidationProcess:
-        return subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    @contextmanager
+    def desktop_lease(self) -> Iterator[None]:
+        """Reject overlapping CLI runs; Windows releases the mutex if its owner dies."""
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
+        kernel32.CreateMutexW.restype = ctypes.c_void_p
+        kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+        kernel32.ReleaseMutex.argtypes = [ctypes.c_void_p]
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        handle = kernel32.CreateMutexW(None, False, "Local\\ACU-script-execution")
+        if not handle:
+            raise ctypes.WinError(ctypes.get_last_error())
+        acquired = False
+        try:
+            status = kernel32.WaitForSingleObject(handle, 0)
+            if status == 258:
+                raise ValueError("busy: another ACU tool execution owns the desktop; inspect before retrying")
+            if status not in (0, 128):  # WAIT_OBJECT_0 or WAIT_ABANDONED
+                raise ctypes.WinError(ctypes.get_last_error())
+            acquired = True
+            yield
+        finally:
+            if acquired:
+                kernel32.ReleaseMutex(handle)
+            kernel32.CloseHandle(handle)
 
-    def start_script(self, exe: Path, arguments: Sequence[str]) -> ScriptProcess:
-        return Win32ScriptProcess(exe, arguments)
+    def start_validation(self, arguments: Sequence[str]) -> ValidationProcess:
+        return subprocess.Popen([str(plain_ahk_exe()), *arguments],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+    def start_script(self, arguments: Sequence[str]) -> ScriptProcess:
+        return Win32ScriptProcess(ahk_exe(), arguments)
 
 
 def validate(script: Path, args: Sequence[str], timeout: float,
              process_adapter: ProcessAdapter) -> subprocess.CompletedProcess[bytes]:
     """Own the validator from creation through bounded communication and verified cleanup."""
-    command = [str(plain_ahk_exe()), "/ErrorStdOut=UTF-8", "/validate", "/include", str(PRELUDE), str(script), *args]
+    arguments = ["/ErrorStdOut=UTF-8", "/validate", "/include", str(PRELUDE), str(script), *args]
     started = time.monotonic()
     process = None
     output = b""
@@ -287,7 +321,7 @@ def validate(script: Path, args: Sequence[str], timeout: float,
         try:
             try:
                 with defer_console_interrupts():
-                    process = process_adapter.start_validation(command)
+                    process = process_adapter.start_validation(arguments)
                 output, _ = process.communicate(timeout=max(0, started + timeout - time.monotonic()))
             finally:
                 if process is not None:
@@ -312,7 +346,7 @@ def validate(script: Path, args: Sequence[str], timeout: float,
             # The validator has exited; drain its pipe so the timeout report keeps all diagnostics.
             failure.stdout, _ = process.communicate()
             raise
-        return subprocess.CompletedProcess(command, process.returncode, output)
+        return subprocess.CompletedProcess(arguments, process.returncode, output)
     finally:
         if process is not None and process.stdout is not None:
             process.stdout.close()
@@ -350,15 +384,12 @@ def stop_script(process: ScriptProcess) -> str:
     return "killed"
 
 
-def run_script(script: Path, timeout: float, args: Sequence[str] = (), *,
-               process_adapter: ProcessAdapter | None = None) -> Run:
+def run_script(script: Path, timeout: float, args: Sequence[str], process_adapter: ProcessAdapter) -> Run:
     """Run within one validation/execution budget; reap the script before returning or raising."""
-    adapter = Win32ProcessAdapter() if process_adapter is None else process_adapter
-
     started = time.monotonic()
     deadline = started + timeout
     try:
-        loaded = validate(script, args, max(0, deadline - time.monotonic()), adapter)
+        loaded = validate(script, args, max(0, deadline - time.monotonic()), process_adapter)
     except subprocess.TimeoutExpired as failure:
         output = (failure.stdout or b"").decode("utf-8", errors="replace")
         duration_ms = round((time.monotonic() - started) * 1000)
@@ -386,7 +417,7 @@ def run_script(script: Path, timeout: float, args: Sequence[str] = (), *,
         try:
             try:
                 with defer_console_interrupts():
-                    process = adapter.start_script(ahk_exe(), arguments)
+                    process = process_adapter.start_script(arguments)
                 timed_out = not process.wait(deadline - time.monotonic())
             except KeyboardInterrupt:
                 interrupted = True
@@ -467,8 +498,8 @@ def record(script: Path, run: Run, timeout: float) -> Path | None:
     return report
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    """Format the shared run operation as output followed by the low-level trailer."""
+def main(argv: Sequence[str] | None = None, process_adapter: ProcessAdapter | None = None) -> int:
+    """Format the shared run operation as output followed by the low-level trailer; tests pass a fake adapter."""
     import argparse
     from .tool import LOW_LEVEL_OPTIONS, run_operation, split_script_args
 
@@ -482,7 +513,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--timeout", type=float, default=30, help="seconds before the watchdog stops the script")
     args = parser.parse_args(launcher_args)
     try:
-        completed = run_operation(args.script, args.timeout, script_args, options=LOW_LEVEL_OPTIONS)
+        completed = run_operation(args.script, args.timeout, script_args, options=LOW_LEVEL_OPTIONS,
+                                  process_adapter=process_adapter or Win32ProcessAdapter())
     except ValueError as error:
         parser.error(str(error))
     run = completed.run

@@ -74,13 +74,10 @@ def acu_home(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def process_adapter(tmp_path, monkeypatch):
-    """Keep fake launcher processes independent of the machine's AutoHotkey installation."""
+def process_adapter():
+    """A fake for every Windows contact of one launcher run: no AutoHotkey, process or desktop lease."""
     from fake_process import FakeProcessAdapter
 
-    for name in ("AutoHotkey64_UIA.exe", "AutoHotkey64.exe"):
-        (tmp_path / name).touch()
-    monkeypatch.setenv("ACU_AHK", str(tmp_path / "AutoHotkey64_UIA.exe"))
     return FakeProcessAdapter()
 
 
