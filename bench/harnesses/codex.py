@@ -4,7 +4,7 @@ import re
 
 from bench.common import read_jsonl, executable_command
 from bench.intervals import busy_seconds
-from bench.tool_calls import tool_call
+from bench.tool_calls import Json, Request, node_repl_request, tool_call
 
 name = 'codex'
 live = False
@@ -45,6 +45,16 @@ def audit_codex_session(entries, expected_model='gpt-6.1-sol'):
             'problems': problems, 'evidence_kind': 'persisted native turn context and developer skill declaration'}
 
 
+# Codex exec's tool vocabulary: shell items, and MCP calls named <server>.<tool> by analyse_codex.
+def request(name: str, arguments: Json) -> Request:
+    match name, arguments:
+        case 'command_execution', {'command': str(command)}:
+            return {'kind': 'shell', 'command': command}
+    if name.startswith('node_repl.'):
+        return node_repl_request(name.removeprefix('node_repl.'), arguments)
+    return {'kind': 'unknown'}
+
+
 # Codex exec exposes final aggregate usage; its stream does not expose a true decoding-rate denominator.
 def analyse_codex(records, wall_s, reference_tps=None, *, cancelled=False, exclude_interrupted_turns=False):
     if exclude_interrupted_turns:
@@ -68,9 +78,9 @@ def analyse_codex(records, wall_s, reference_tps=None, *, cancelled=False, exclu
             # Retain native status/exit/error evidence; no Pi/Claude is_error flag is reported.
             body = ({'output': item.get('aggregated_output'), 'exit_code': item.get('exit_code')}
                     if item['type'] == 'command_execution' else item.get('result'))
-            tools.append({**tool_call(item['id'], name, arguments, start, elapsed, body, None),
+            tools.append({**tool_call(item['id'], name, arguments, request(name, arguments), start, elapsed, body, None),
                           'status': item.get('status'), 'error': item.get('error')})
-    tools.extend(tool_call(identity, name, arguments, start, None, None, None, completed=False)
+    tools.extend(tool_call(identity, name, arguments, request(name, arguments), start, None, None, None, completed=False)
                  for identity, (start, name, arguments) in starts.items())
     timing = {'agent_start_s': agent_start, 'tool_busy_s': busy_seconds(intervals), 'tools': tools, 'unfinished_tools': list(starts)}
     if not completed:

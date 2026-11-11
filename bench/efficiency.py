@@ -517,36 +517,30 @@ def measure_efficiency(measurements, arm):
 
     tools: list[ToolCall] = completed_calls(measurements['tools'])
     for tool in sorted(tools, key=lambda item: item['start_s'] if item['start_s'] is not None else item['end_s']):
-        identity, name = tool['id'], tool['name'].casefold()
-        args = tool.get('arguments')
-        if not isinstance(args, dict):
-            notes.append({'call_id': identity, 'reason': 'structured arguments unavailable; reanalyse original events'})
-            continue
-        if name == 'read':
+        identity, request = tool['id'], tool['request']
+        if request['kind'] == 'read':
             continue
         # Rejected file mutations never reached the script; do not replay or charge unapplied text.
-        if name in ('write', 'edit') and tool.get('is_error'):
+        if request['kind'] in ('write', 'edit') and tool.get('is_error'):
             continue
-        if name == 'write':
-            path = args.get('path', args.get('file_path', ''))
+        if request['kind'] == 'write':
+            path = request['path']
             if PurePosixPath(script_name(path)).suffix in SCRIPT_SUFFIXES:
                 key = binding(path, identity, create=True)
                 if key is not None:
-                    text = args.get('content', '')
+                    text = request['content']
                     scripts[key] = Script(text, {payload(identity, 'script', text, 'generated script')})
             continue
-        if name == 'edit':
-            key = binding(args.get('path', args.get('file_path', '')), identity)
+        if request['kind'] == 'edit':
+            key = binding(request['path'], identity)
             if key is None:
                 continue
-            edits = args.get('edits')
-            if edits is None:
-                edits = [{'oldText': args.get('old_string', ''), 'newText': args.get('new_string', '')}]
+            edits = request['edits']
             original, replacements, valid = scripts[key].text, [], True
             for index, edit in enumerate(edits):
-                old, new = edit['oldText'], edit['newText']
+                old, new = edit['old'], edit['new']
                 matches = list(re.finditer(re.escape(old), original)) if old else []
-                if not matches or (len(matches) != 1 and not args.get('replace_all')):
+                if not matches or (len(matches) != 1 and not request['replace_all']):
                     notes.append({'call_id': identity, 'reason': 'edit match is absent or ambiguous in captured source; attribution needs review'})
                     valid = False
                     continue
@@ -560,27 +554,25 @@ def measure_efficiency(measurements, arm):
                     original = original[:start] + new + original[end:]
                 scripts[key].text = original
                 for index, edit in enumerate(edits):
-                    scripts[key].payloads.add(payload(identity, f'edit-{index}', edit['newText'], 'generated script edit'))
+                    scripts[key].payloads.add(payload(identity, f'edit-{index}', edit['new'], 'generated script edit'))
             continue
 
-        code = args.get('code', args.get('command', ''))
-        if not isinstance(code, str):
-            notes.append({'call_id': identity, 'reason': 'no supported code/command payload'})
-            continue
         used, is_use = set(), False
-        if 'node_repl' in name:
-            if name.endswith(('js_reset', 'js_add_node_module_dir', 'turn_ended')):
-                is_use = True
-                code = json.dumps(args, ensure_ascii=False, separators=(',', ':'))
-                if name.endswith('js_reset'):
-                    helpers.clear()
-            else:
-                clean = js_code(code)
-                assigned = {value for pair in re.findall(r'globalThis\.(\w+)\s*=|\b(?:var|let|const)\s+(\w+)\s*=', clean) for value in pair if value}
-                helpers.difference_update(assigned)
-                is_use = bool(javascript_route(clean, routes) or any(re.search(rf'\b{re.escape(h)}\s*\(', clean) for h in helpers))
-                helpers.update(js_helpers(clean, helpers, routes))
-        elif name in ('bash', 'command_execution'):
+        if request['kind'] == 'javascript_runtime':
+            # The session itself is the computer-use runtime; its generated arguments are the charged payload.
+            is_use = True
+            code = json.dumps(tool['arguments'], ensure_ascii=False, separators=(',', ':'))
+            if request['resets']:
+                helpers.clear()
+        elif request['kind'] == 'javascript_cell':
+            code = request['code']
+            clean = js_code(code)
+            assigned = {value for pair in re.findall(r'globalThis\.(\w+)\s*=|\b(?:var|let|const)\s+(\w+)\s*=', clean) for value in pair if value}
+            helpers.difference_update(assigned)
+            is_use = bool(javascript_route(clean, routes) or any(re.search(rf'\b{re.escape(h)}\s*\(', clean) for h in helpers))
+            helpers.update(js_helpers(clean, helpers, routes))
+        elif request['kind'] == 'shell':
+            code = request['command']
             try:
                 executable, bodies = heredocs(code)
                 commands = shell_commands(executable)
@@ -688,7 +680,7 @@ def measure_efficiency(measurements, arm):
                     if child_route:
                         used.update(found)
         else:
-            notes.append({'call_id': identity, 'reason': f'unsupported tool {tool["name"]}; attribution needs review'})
+            notes.append({'call_id': identity, 'reason': f'unsupported tool {tool["name"]} or unfitting arguments; attribution needs review'})
             continue
         if is_use:
             # The execution payload includes its inline script definitions; do not count their bodies twice.

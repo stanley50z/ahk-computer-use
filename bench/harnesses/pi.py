@@ -1,6 +1,7 @@
 """Pi commands, isolated profiles, transcript normalization and session audit."""
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import sys
@@ -12,7 +13,7 @@ from copy import deepcopy
 from bench.common import ROOT, read_jsonl, save_json
 from bench.common import executable_command as installed_command
 from bench.intervals import busy_seconds
-from bench.tool_calls import tool_call
+from bench.tool_calls import Json, Request, node_repl_request, tool_call
 
 name = 'pi'
 live = True
@@ -62,6 +63,107 @@ def pi_command(run_dir, skill, prompt, *, native=False):
             '--model', f'{PI_PROVIDER}/{MODEL}', '--thinking', 'low', '--offline',
             '--approve', '--session', str(run_dir / 'session.jsonl'),
             '--mode', 'json', '--print', prompt]
+
+
+def is_replacement(value: Json) -> bool:
+    return isinstance(value, dict) and isinstance(value.get('oldText'), str) and isinstance(value.get('newText'), str)
+
+
+# Pi's edit tool rewrites its raw arguments before validation (prepareEditArguments): edits sent as a JSON string or
+# as one object become a list, and a legacy top-level oldText/newText moves to the end of that list.
+def prepare_edit(arguments: dict[str, Json]) -> dict[str, Json]:
+    prepared = dict(arguments)
+    edits = prepared.get('edits')
+    if isinstance(edits, str):
+        try:
+            parsed = json.loads(edits)
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, list):
+            prepared['edits'] = parsed
+        elif is_replacement(parsed):
+            prepared['edits'] = [parsed]
+    elif is_replacement(edits):
+        prepared['edits'] = [edits]
+    if is_replacement(prepared):
+        edits = prepared.get('edits')
+        legacy = {'oldText': prepared.pop('oldText'), 'newText': prepared.pop('newText')}
+        prepared['edits'] = [*(edits if isinstance(edits, list) else []), legacy]
+    return prepared
+
+
+# JavaScript's String() of a JSON number, which JSON.parse reads as a double (ECMAScript Number::toString).
+def js_number(value: float) -> str:
+    if value == 0:
+        return '0'
+    if value < 0:
+        return '-' + js_number(-value)
+    # repr gives the shortest digits that round-trip, as JavaScript does; only the layout differs.
+    mantissa, _, exponent = repr(value).partition('e')
+    whole, _, fraction = mantissa.partition('.')
+    significant = (whole + fraction).lstrip('0')
+    point = len(whole) - len(whole + fraction) + len(significant) + int(exponent or 0)
+    digits = significant.rstrip('0')
+    if len(digits) <= point <= 21:
+        return digits + '0' * (point - len(digits))
+    if 0 < point <= 21:
+        return digits[:point] + '.' + digits[point:]
+    if -6 < point <= 0:
+        return '0.' + '0' * -point + digits
+    power = point - 1
+    return digits[0] + ('.' + digits[1:] if len(digits) > 1 else '') + f'e{"+" if power >= 0 else "-"}{abs(power)}'
+
+
+# Pi then validates with coercion (pi-schema's tryString): a finite number, a boolean or null given for a string
+# parameter runs as its JavaScript string.
+def as_string(value: Json) -> Json:
+    match value:
+        case bool():
+            return 'true' if value else 'false'
+        case None:
+            return 'null'
+        case int() | float():
+            try:
+                number = float(value)
+            except OverflowError:  # JSON.parse reads it as Infinity, which Pi does not coerce.
+                return value
+            return js_number(number) if math.isfinite(number) else value
+    return value
+
+
+# Coerces top-level values and the fields of objects in top-level lists, such as edit replacements. Only string
+# parameters are read afterwards, so coercing the numeric ones too changes no request.
+def coerced(arguments: dict[str, Json]) -> dict[str, Json]:
+    def coerce(value: Json) -> Json:
+        if isinstance(value, list):
+            return [{key: as_string(field) for key, field in item.items()} if isinstance(item, dict) else item for item in value]
+        return as_string(value)
+    return {key: coerce(value) for key, value in arguments.items()}
+
+
+# Pi's tool vocabulary, from the parameter schemas of its read, write, edit and bash tools and its node_repl MCP bridge.
+# Events record raw arguments, so the adapter first prepares and coerces them as Pi does before the tool runs.
+def request(name: str, arguments: Json) -> Request:
+    if isinstance(arguments, dict):
+        if name == 'edit':
+            arguments = prepare_edit(arguments)
+            # Validation wraps a single value given for the edits array before coercing its fields.
+            if 'edits' in arguments and not isinstance(arguments['edits'], list):
+                arguments['edits'] = [arguments['edits']]
+        arguments = coerced(arguments)
+    match name, arguments:
+        case 'read', {'path': str()}:
+            return {'kind': 'read'}
+        case 'write', {'path': str(path), 'content': str(content)}:
+            return {'kind': 'write', 'path': path, 'content': content}
+        case 'edit', {'path': str(path), 'edits': list(edits)} if edits and all(is_replacement(edit) for edit in edits):
+            return {'kind': 'edit', 'path': path, 'replace_all': False,
+                    'edits': [{'old': edit['oldText'], 'new': edit['newText']} for edit in edits]}
+        case 'bash', {'command': str(command)}:
+            return {'kind': 'shell', 'command': command}
+    if name.startswith('mcp__node_repl__'):
+        return node_repl_request(name.removeprefix('mcp__node_repl__'), arguments)
+    return {'kind': 'unknown'}
 
 
 # Analyse final usage once; optional offline exclusion keeps interrupted responses as separate evidence.
@@ -169,13 +271,13 @@ def analyse_pi(records, wall_s, reference_tps=None, *, cancelled=False, exclude_
                 intervals.append((start, elapsed))
             body = event.get('result')
             truncated = isinstance(body, dict) and bool((body.get('details') or {}).get('truncation', {}).get('truncated'))
-            tools.append({**tool_call(event['toolCallId'], name, arguments, start, elapsed, body, event.get('isError'),
+            tools.append({**tool_call(event['toolCallId'], name, arguments, request(name, arguments), start, elapsed, body, event.get('isError'),
                                      matched=start is not None, truncated=truncated),
                           'reported_duration_ms': event.get('durationMs')})
         elif kind == 'agent_settled':
             agent_end = elapsed
             completed = not event['aborted'] and last_stop_reason == 'stop' and not pending_recovery_errors
-    tools.extend(tool_call(identity, name, arguments, start, None, None, None, completed=False)
+    tools.extend(tool_call(identity, name, arguments, request(name, arguments), start, None, None, None, completed=False)
                  for identity, (start, name, arguments) in starts.items())
     model_s = sum(turn['duration_s'] for turn in turns) if not compactions and all(turn['duration_s'] is not None for turn in turns) else None
     if cancelled:

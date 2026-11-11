@@ -6,7 +6,7 @@ import uuid
 
 from bench.common import actor_path, expand_user_root, read_jsonl, executable_command
 from bench.intervals import busy_seconds
-from bench.tool_calls import tool_call
+from bench.tool_calls import Json, Request, tool_call
 
 name = 'claude'
 live = True
@@ -30,6 +30,54 @@ def claude_command(skill, prompt, session_id, *, arm='claude-acu'):
             '--permission-mode', 'bypassPermissions', '--model', model, '--effort', effort,
             '--session-id', session_id, '--output-format', 'stream-json', '--verbose',
             '--include-partial-messages', '--append-system-prompt', declaration, prompt]
+
+
+# Edit's replace_all, which defaults to false; Claude Code also accepts the strings "true" and "false". None when
+# Claude Code would reject the value.
+def replace_all(value: Json) -> bool | None:
+    match value:
+        case bool():
+            return value
+        case 'true' | 'false':
+            return value == 'true'
+    return None
+
+
+# Claude Code renames argument aliases before validating them (each tool's coerceInput), and events record the raw
+# arguments. Edit: path, old_str and new_str, and replace_name standing in for replace_all. Write: path, and content
+# from exactly one of file_text or file_content.
+def renamed(name: str, arguments: dict[str, Json]) -> dict[str, Json]:
+    aliases = {'Edit': {'path': 'file_path', 'old_str': 'old_string', 'new_str': 'new_string'},
+               'Write': {'path': 'file_path'}}.get(name, {})
+    prepared = dict(arguments)
+    for alias, canonical in aliases.items():
+        if isinstance(prepared.get(alias), str) and canonical not in prepared:
+            prepared[canonical] = prepared.pop(alias)
+    if name == 'Edit' and 'replace_name' in prepared:
+        value = prepared.pop('replace_name')
+        prepared.setdefault('replace_all', value is True or value == 'true')
+    if name == 'Write' and 'content' not in prepared:
+        match [key for key in ('file_text', 'file_content') if key in prepared]:
+            case [key] if isinstance(prepared[key], str):
+                prepared['content'] = prepared.pop(key)
+    return prepared
+
+
+# Claude Code's tool vocabulary, from the input schemas of its Read, Write, Edit and Bash tools.
+def request(name: str, arguments: Json) -> Request:
+    if isinstance(arguments, dict):
+        arguments = renamed(name, arguments)
+    match name, arguments:
+        case 'Read', {'file_path': str()}:
+            return {'kind': 'read'}
+        case 'Write', {'file_path': str(path), 'content': str(content)}:
+            return {'kind': 'write', 'path': path, 'content': content}
+        case 'Edit', {'file_path': str(path), 'old_string': str(old), 'new_string': str(new)} if (
+                (every := replace_all(arguments.get('replace_all', False))) is not None):
+            return {'kind': 'edit', 'path': path, 'edits': [{'old': old, 'new': new}], 'replace_all': every}
+        case 'Bash', {'command': str(command)}:
+            return {'kind': 'shell', 'command': command}
+    return {'kind': 'unknown'}
 
 
 # Claude Code stream-json carries no server-side response duration: a response is timed from the request status
@@ -91,7 +139,7 @@ def analyse_claude(records, wall_s, reference_tps=None, *, cancelled=False, excl
                     if start is not None:
                         intervals.append((start, elapsed))
                     body = block.get('content')
-                    tools.append(tool_call(block['tool_use_id'], name, arguments, start, elapsed, body, bool(block.get('is_error')),
+                    tools.append(tool_call(block['tool_use_id'], name, arguments, request(name, arguments), start, elapsed, body, bool(block.get('is_error')),
                                            matched=start is not None, truncated=isinstance(body, str) and '<persisted-output>' in body))
         elif kind == 'result':
             agent_end = elapsed
@@ -102,7 +150,7 @@ def analyse_claude(records, wall_s, reference_tps=None, *, cancelled=False, excl
                 terminal_errors = [error for error in reported if error.lstrip().lower().startswith('api error:')]
                 provider_errors.extend(terminal_errors)
                 pending_provider_errors.extend(terminal_errors)
-    tools.extend(tool_call(identity, name, arguments, start, None, None, None, completed=False)
+    tools.extend(tool_call(identity, name, arguments, request(name, arguments), start, None, None, None, completed=False)
                  for identity, (start, name, arguments) in tool_starts.items())
     if final is not None and final.get('usage'):
         usage = final['usage']
