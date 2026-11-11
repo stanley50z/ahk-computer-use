@@ -86,4 +86,5 @@ def before_desktop_test(config) -> None:
     def report(line: str) -> None:
         with capture.global_and_fixture_disabled():
             terminal.write_line(line)
+            terminal.flush()  # Shown now, even when pytest's output goes to a pipe.
     wait_for_quiet_input(tick_now, last_input_tick, time.sleep, show_notice, report)
