@@ -32,6 +32,17 @@ def claude_command(skill, prompt, session_id, *, arm='claude-acu'):
             '--include-partial-messages', '--append-system-prompt', declaration, prompt]
 
 
+# Edit's replace_all, which defaults to false; Claude Code also accepts the strings "true" and "false". None when
+# Claude Code would reject the value.
+def replace_all(value: Json) -> bool | None:
+    match value:
+        case bool():
+            return value
+        case 'true' | 'false':
+            return value == 'true'
+    return None
+
+
 # Claude Code's tool vocabulary, from the input schemas of its Read, Write, Edit and Bash tools.
 def request(name: str, arguments: Json) -> Request:
     match name, arguments:
@@ -39,9 +50,9 @@ def request(name: str, arguments: Json) -> Request:
             return {'kind': 'read'}
         case 'Write', {'file_path': str(path), 'content': str(content)}:
             return {'kind': 'write', 'path': path, 'content': content}
-        case 'Edit', {'file_path': str(path), 'old_string': str(old), 'new_string': str(new)}:
-            return {'kind': 'edit', 'path': path, 'edits': [{'old': old, 'new': new}],
-                    'replace_all': arguments.get('replace_all') is True}
+        case 'Edit', {'file_path': str(path), 'old_string': str(old), 'new_string': str(new)} if (
+                (every := replace_all(arguments.get('replace_all', False))) is not None):
+            return {'kind': 'edit', 'path': path, 'edits': [{'old': old, 'new': new}], 'replace_all': every}
         case 'Bash', {'command': str(command)}:
             return {'kind': 'shell', 'command': command}
     return {'kind': 'unknown'}

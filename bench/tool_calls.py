@@ -81,10 +81,13 @@ def node_repl_request(tool: str, arguments: Json) -> Request:
     match tool, arguments:
         case 'js', {'code': str(code)}:
             return {'kind': 'javascript_cell', 'code': code}
-        case 'js_add_node_module_dir', {'path': str()}:
+        case 'js_add_node_module_dir', {'path': str(path)} if path:
             return {'kind': 'javascript_runtime', 'resets': False}
-        case 'js_reset' | 'turn_ended', dict():
-            return {'kind': 'javascript_runtime', 'resets': tool == 'js_reset'}
+        case 'turn_ended', {'hook_event_name': str(event), 'session_id': str(session), 'turn_id': str(turn)} if (
+                event and session and turn):
+            return {'kind': 'javascript_runtime', 'resets': False}
+        case 'js_reset', dict():
+            return {'kind': 'javascript_runtime', 'resets': True}
     return {'kind': 'unknown'}
 
 

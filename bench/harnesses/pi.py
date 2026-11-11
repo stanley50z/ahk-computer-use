@@ -1,6 +1,7 @@
 """Pi commands, isolated profiles, transcript normalization and session audit."""
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import sys
@@ -12,7 +13,7 @@ from copy import deepcopy
 from bench.common import ROOT, read_jsonl, save_json
 from bench.common import executable_command as installed_command
 from bench.intervals import busy_seconds
-from bench.tool_calls import Json, Replacement, Request, node_repl_request, tool_call
+from bench.tool_calls import Json, Request, node_repl_request, tool_call
 
 name = 'pi'
 live = True
@@ -68,38 +69,67 @@ def is_replacement(value: Json) -> bool:
     return isinstance(value, dict) and isinstance(value.get('oldText'), str) and isinstance(value.get('newText'), str)
 
 
-# The replacements Pi's edit tool applies, or None when it would reject them. Events record the raw arguments, so
-# this repeats the edit tool's prepareEditArguments: edits sent as a JSON string or as one object, and a legacy
-# top-level oldText/newText appended to them.
-def edit_replacements(arguments: dict[str, Json]) -> list[Replacement] | None:
-    edits = arguments.get('edits')
+# Pi's edit tool rewrites its raw arguments before validation (prepareEditArguments): edits sent as a JSON string or
+# as one object become a list, and a legacy top-level oldText/newText moves to the end of that list.
+def prepare_edit(arguments: dict[str, Json]) -> dict[str, Json]:
+    prepared = dict(arguments)
+    edits = prepared.get('edits')
     if isinstance(edits, str):
         try:
             parsed = json.loads(edits)
         except ValueError:
             parsed = None
         if isinstance(parsed, list):
-            edits = parsed
+            prepared['edits'] = parsed
         elif is_replacement(parsed):
-            edits = [parsed]
+            prepared['edits'] = [parsed]
     elif is_replacement(edits):
-        edits = [edits]
-    if is_replacement(arguments):
-        edits = [*(edits if isinstance(edits, list) else []), arguments]
-    if not isinstance(edits, list) or not edits or not all(is_replacement(edit) for edit in edits):
-        return None
-    return [{'old': edit['oldText'], 'new': edit['newText']} for edit in edits]
+        prepared['edits'] = [edits]
+    if is_replacement(prepared):
+        edits = prepared.get('edits')
+        legacy = {'oldText': prepared.pop('oldText'), 'newText': prepared.pop('newText')}
+        prepared['edits'] = [*(edits if isinstance(edits, list) else []), legacy]
+    return prepared
+
+
+# Pi then validates with coercion (pi-schema's tryString): a finite number, a boolean or null given for a string
+# parameter runs as its JavaScript string. Python spells a few floats differently: below 1e-4, and integers past 2**53.
+def as_string(value: Json) -> Json:
+    match value:
+        case bool():
+            return 'true' if value else 'false'
+        case None:
+            return 'null'
+        case int():
+            return str(value)
+        case float() if math.isfinite(value):
+            return str(int(value)) if value.is_integer() and abs(value) < 1e21 else repr(value)
+    return value
+
+
+# Coerces top-level values and the fields of objects in top-level lists, such as edit replacements. Only string
+# parameters are read afterwards, so coercing the numeric ones too changes no request.
+def coerced(arguments: dict[str, Json]) -> dict[str, Json]:
+    def coerce(value: Json) -> Json:
+        if isinstance(value, list):
+            return [{key: as_string(field) for key, field in item.items()} if isinstance(item, dict) else item for item in value]
+        return as_string(value)
+    return {key: coerce(value) for key, value in arguments.items()}
 
 
 # Pi's tool vocabulary, from the parameter schemas of its read, write, edit and bash tools and its node_repl MCP bridge.
+# Events record raw arguments, so the adapter first prepares and coerces them as Pi does before the tool runs.
 def request(name: str, arguments: Json) -> Request:
+    if isinstance(arguments, dict):
+        arguments = coerced(prepare_edit(arguments) if name == 'edit' else arguments)
     match name, arguments:
         case 'read', {'path': str()}:
             return {'kind': 'read'}
         case 'write', {'path': str(path), 'content': str(content)}:
             return {'kind': 'write', 'path': path, 'content': content}
-        case 'edit', {'path': str(path)} if (edits := edit_replacements(arguments)) is not None:
-            return {'kind': 'edit', 'path': path, 'edits': edits, 'replace_all': False}
+        case 'edit', {'path': str(path), 'edits': list(edits)} if edits and all(is_replacement(edit) for edit in edits):
+            return {'kind': 'edit', 'path': path, 'replace_all': False,
+                    'edits': [{'old': edit['oldText'], 'new': edit['newText']} for edit in edits]}
         case 'bash', {'command': str(command)}:
             return {'kind': 'shell', 'command': command}
     if name.startswith('mcp__node_repl__'):
