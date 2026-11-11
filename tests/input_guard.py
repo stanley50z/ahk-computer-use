@@ -3,6 +3,7 @@ input the user is still giving. conftest.py starts the listener for a --desktop 
 desktop-marked test; nothing else uses it."""
 
 import ctypes
+import os
 import subprocess
 import threading
 import time
@@ -143,10 +144,11 @@ class InputListener:
 
 
 class NoticeWindow:
-    """The pop-up asking the user to leave the keyboard and mouse alone, run by the plain AutoHotkey build."""
+    """The pop-up asking the user to leave the keyboard and mouse alone, run by the plain AutoHotkey build. It also exits
+    by itself when this process ends, in case pytest is killed before it can close the notice."""
 
     def __init__(self):
-        self.process = subprocess.Popen([str(plain_ahk_exe()), str(NOTICE_SCRIPT), NOTICE_TITLE])
+        self.process = subprocess.Popen([str(plain_ahk_exe()), str(NOTICE_SCRIPT), NOTICE_TITLE, str(os.getpid())])
 
     def close(self) -> None:
         self.process.kill()
