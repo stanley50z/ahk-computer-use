@@ -2,8 +2,6 @@
 
 import json
 
-import pytest
-
 from acu import recording
 from acu.cli import main
 

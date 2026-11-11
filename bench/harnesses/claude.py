@@ -1,10 +1,9 @@
 """Claude Code commands, isolated profiles, transcript normalization and session audit."""
 from pathlib import Path
 import json
-import re
 import uuid
 
-from bench.common import actor_path, expand_user_root, read_jsonl, executable_command
+from bench.common import actor_path, expand_user_root, read_jsonl
 from bench.intervals import busy_seconds
 from bench.tool_calls import Json, Request, tool_call
 

@@ -2,7 +2,7 @@
 from pathlib import Path
 import re
 
-from bench.common import read_jsonl, executable_command
+from bench.common import read_jsonl
 from bench.intervals import busy_seconds
 from bench.tool_calls import Json, Request, node_repl_request, tool_call
 
