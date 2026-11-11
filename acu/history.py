@@ -2,6 +2,7 @@
 
 import ast
 from collections import Counter, defaultdict
+from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from datetime import datetime
 import hashlib
@@ -10,6 +11,7 @@ import posixpath
 from pathlib import Path
 import re
 import shlex
+from typing import Literal
 import warnings
 
 from .run import acu_home, is_app_process
@@ -89,8 +91,9 @@ def records(path):
             yield value
 
 
-# Mirror bench/run.py's toolCall/tool_use/function_call envelopes and ID correlation.
-# Native session files contain messages rather than Pi's benchmark streaming events.
+# Read a native session file's tool requests and pair each with its result by call ID: Pi's toolCall and toolResult
+# messages, Claude Code's tool_use and tool_result blocks, and Codex's function_call and custom_tool_call items.
+# These are saved sessions, not the streamed events of benchmark trials that bench/harnesses/ reads.
 def session_calls(path):
     calls = {}
     cwd = ""
@@ -175,7 +178,9 @@ def normalized(path, cwd=""):
     return posixpath.normpath(path)
 
 
-# Separate heredoc data from executable shell text (mirrors bench/efficiency.py).
+# Separate heredoc data from executable shell text. A heredoc that cat or tee writes to a file becomes an
+# __acu_history_write__ command, so collect replays the write in order; one fed to python or apply_patch becomes that
+# command with the body as its argument; any other heredoc is dropped.
 def heredocs(command):
     files, executable = [], []
     lines = command.splitlines(keepends=True)
@@ -197,7 +202,8 @@ def heredocs(command):
         i += 1
         destination = re.search(r"\b(?:cat\s*(?:>>|>)|tee\s+(?:-a\s+)?)([^<>]+?)\s*<<", line)
         if destination:
-            files.append((destination.group(1).strip(), "".join(body), ">>" in destination.group(0)))
+            append = ">>" in destination.group(0) or bool(re.search(r"\btee\s+-a\b", destination.group(0)))
+            files.append((destination.group(1).strip(), "".join(body), append))
             executable.append(line[:destination.start()] + f"__acu_history_write__ {len(files) - 1};" + line[match.end():] + "\n")
         else:
             trailing = re.match(r'''\s*(>>?)\s*("[^"]*"|'[^']*'|[^\s;&|]+)(.*)''', line[match.end():])
@@ -216,8 +222,73 @@ def heredocs(command):
     return "".join(executable), files
 
 
-# Mirror bench/efficiency.py command-position parsing; quoted prose is not a run.
-def shell_commands(text):
+# env's options as `env --help` (GNU coreutils) lists them, with the value each takes: "required", "optional" (only as
+# --name=VALUE) or "none".
+ENV_OPTIONS: dict[str, Literal["required", "optional", "none"]] = {
+    "ignore-environment": "none", "null": "none", "unset": "required", "chdir": "required", "split-string": "required",
+    "block-signal": "optional", "default-signal": "optional", "ignore-signal": "optional",
+    "list-signal-handling": "none", "debug": "none", "help": "none", "version": "none"}
+ENV_SHORT = {"i": "ignore-environment", "0": "null", "u": "unset", "C": "chdir", "S": "split-string", "v": "debug"}
+
+
+# Reads the words after `env` as `env [OPTION]... [-] [NAME=VALUE]... [COMMAND [ARG]...]`, the way GNU env does, and
+# returns the command env runs with the directory its -C gives it. None means env runs nothing: no command, --help,
+# --version, --null together with a command, an empty -C directory, an unclosed quote in -S, or an option env rejects.
+# Long options may be abbreviated to a unique prefix. -S splits its value with shell rules, which is how agents use it,
+# not env's full escape syntax.
+def env_command(words: list[str]) -> tuple[list[str], str | None] | None:
+    words, directory, null = list(words), None, False
+    while words and words[0].startswith("-") and words[0] != "-":
+        word = words.pop(0)
+        if word == "--":
+            break
+        settings = []
+        if word.startswith("--"):
+            name, equals, value = word[2:].partition("=")
+            prefixed = [option for option in ENV_OPTIONS if option.startswith(name)]  # No name prefixes another.
+            option = prefixed[0] if len(prefixed) == 1 else None
+            if option is None or (equals and ENV_OPTIONS[option] == "none"):
+                return None
+            if ENV_OPTIONS[option] == "required" and not equals:
+                if not words:
+                    return None
+                value = words.pop(0)
+            settings.append((option, value))
+        else:
+            letters = word[1:]
+            while letters:
+                option, letters, value = ENV_SHORT.get(letters[0]), letters[1:], ""
+                if option is None:
+                    return None
+                if ENV_OPTIONS[option] == "required":
+                    if not letters and not words:
+                        return None
+                    value, letters = letters or words.pop(0), ""
+                settings.append((option, value))
+        for option, value in settings:
+            if option in ("help", "version"):
+                return None
+            null = null or option == "null"
+            if option == "chdir":
+                if not value:
+                    return None
+                directory = value
+            if option == "split-string":
+                try:
+                    words[:0] = shlex.split(value)
+                except ValueError:  # An unclosed quote: env reports it and runs nothing.
+                    return None
+    if words[:1] == ["-"]:
+        words.pop(0)
+    while words and "=" in words[0]:
+        words.pop(0)
+    return (words, directory) if words and not null else None
+
+
+# Splits shell text into commands at command position, so quoted prose is not a run. Each command comes with the
+# directories env -C changed into on the way to it, outermost first. Unlike bench/efficiency.py's parser, this one
+# reads env's options; the bench keeps its own so its measurements do not change.
+def shell_commands(text: str) -> Iterator[tuple[list[str], list[str]]]:
     lexer = shlex.shlex(text, posix=True, punctuation_chars=";&|\n()")
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
@@ -232,11 +303,16 @@ def shell_commands(text):
     if current:
         commands.append(current)
     for command in commands:
-        while command and (command[0] in ("do", "then", "else", "if", "while", "until", "!", "&", "env")
+        while command and (command[0] in ("do", "then", "else", "if", "while", "until", "!", "&")
                            or re.match(r"^[A-Za-z_]\w*=", command[0])):
             command = command[1:]
+        directories = []
+        while command and command[0] == "env":
+            command, directory = env_command(command[1:]) or ([], None)
+            if directory is not None:
+                directories.append(directory)
         if command:
-            yield command
+            yield command, directories
 
 
 @dataclass
@@ -402,10 +478,13 @@ def collect(calls, root):
             command = " ".join(command)
         executable, files = heredocs(command)
         cwd = call.cwd
-        for words in shell_commands(executable):
+        for words, directories in shell_commands(executable):
+            here = cwd  # env -C runs only its own command elsewhere; cd moves the shell.
+            for directory in directories:
+                here = normalized(directory, here)
             if words[0] == "__acu_history_write__":
                 destination, source, append = files[int(words[1])]
-                path = normalized(destination, cwd)
+                path = normalized(destination, here)
                 previous = sources.get(path.casefold())
                 sources[path.casefold()] = (previous + source if previous is not None else None) if append else source
                 mark_changed(path, call)
@@ -416,21 +495,21 @@ def collect(calls, root):
             if re.fullmatch(r"(?:python(?:\d+(?:\.\d+)?)?|py)(?:\.exe)?", name) and "-c" in words:
                 code_index = words.index("-c") + 1
                 if code_index < len(words):
-                    for path, source in python_writes(words[code_index], sources, cwd):
-                        path = normalized(path, cwd)
+                    for path, source in python_writes(words[code_index], sources, here):
+                        path = normalized(path, here)
                         sources[path.casefold()] = source
                         mark_changed(path, call)
             if name == "apply_patch" and len(words) > 1 and call.succeeded:
-                for path, source in patch_writes(words[1], sources, cwd):
-                    path = normalized(path, cwd)
+                for path, source in patch_writes(words[1], sources, here):
+                    path = normalized(path, here)
                     sources[path.casefold()] = source
                     mark_changed(path, call)
             if name not in ("acu", "acu.exe") or len(words) < 3 or words[1] != "run":
                 continue
             if words[2] in BUNDLED_SCRIPTS:
-                path = normalized(resolve_script(words[2], normalized(cwd)))
+                path = normalized(resolve_script(words[2], normalized(here)))
             else:
-                path = normalized(words[2], cwd)
+                path = normalized(words[2], here)
             run = Run(path, call, sources.get(path.casefold()), " ".join(words[3:]))
             runs.append(run)
     return runs, changed

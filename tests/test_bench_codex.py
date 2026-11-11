@@ -1,6 +1,6 @@
 """Codex audit checks against persisted turn context rather than its launch flags alone."""
 
-from bench.run import audit_codex_session
+from bench.harnesses.codex import audit_codex_session
 
 
 def test_codex_runtime_audit_rejects_polluted_skills_and_wrong_model_or_reasoning():

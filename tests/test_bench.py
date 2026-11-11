@@ -2,7 +2,7 @@
 
 import pytest
 
-from bench.run import analyse_pi, audit_pi_session, pi_command
+from bench.harnesses.pi import analyse_pi, audit_pi_session, pi_command
 
 
 def test_pi_launch_exposes_only_selected_skill_with_fixed_model_and_reasoning(tmp_path):
@@ -32,13 +32,12 @@ def test_metrics_count_final_usage_once_and_do_not_double_count_reasoning():
         {'elapsed_s': 6, 'event': {'type': 'tool_execution_end', 'toolCallId': 'a', 'toolName': 'bash', 'isError': False}},
         {'elapsed_s': 7, 'event': {'type': 'agent_settled', 'aborted': False}},
     ]
-    result = analyse_pi(records, wall_s=8, reference_tps=10)
+    result = analyse_pi(records, wall_s=8)
     assert result['tokens'] == {'input_uncached': 100, 'cache_read': 50, 'cache_write': 0, 'output_including_reasoning': 20, 'reasoning_subset': 5, 'total': 170}
     assert result['model_response_s'] == 2
     assert result['tool_busy_s'] == 2  # union, not 3 seconds summed across concurrent tools
     assert result['agent_elapsed_s'] == 6
     assert result['effective_output_tps'] == 10
-    assert result['estimated_wall_at_reference_tps_s'] == 8
     assert result['model_turns'][0]['first_visible_delta_s'] == 1
 
 
@@ -117,13 +116,12 @@ def test_pi_compaction_usage_is_counted_once_and_missing_usage_stays_unknown(exc
                 'stopReason': 'stop', 'durationMs': 1000,
                 'usage': {'input': 10, 'output': 2, 'reasoning': 1, 'totalTokens': 12}}}},
                {'elapsed_s': 5, 'event': {'type': 'agent_settled', 'aborted': False}}]
-    result = analyse_pi(records, wall_s=5, reference_tps=10, exclude_interrupted_turns=exclude_interrupted_turns)
+    result = analyse_pi(records, wall_s=5, exclude_interrupted_turns=exclude_interrupted_turns)
     assert result['agent_completed'] and result['token_counts_complete']
     assert result['tokens'] == {'input_uncached': 17, 'cache_read': 3, 'cache_write': 0,
                                'output_including_reasoning': 7, 'reasoning_subset': 3, 'total': 27}
     assert result['compactions'] == 1 and len(result['recovery_events']) == 2
     assert result['model_response_s'] is None, 'unexposed summarization timing must not produce a misleading model rate'
-    assert result['estimated_wall_at_reference_tps_s'] is None
     summary_retry = [{'elapsed_s': .5, 'event': {'type': 'summarization_retry_scheduled', 'attempt': 1, 'errorMessage': '503'}}]
     retried = analyse_pi(records[:1] + summary_retry + records[1:], wall_s=5, exclude_interrupted_turns=exclude_interrupted_turns)
     assert retried['agent_completed'] and not retried['token_counts_complete']
@@ -199,6 +197,7 @@ def test_controller_preserves_actor_outcome_and_separates_maintainer_export_fail
     import json
     import sys
     from bench import run as bench
+    from bench.harnesses.pi import TOOLS
 
     executable = tmp_path / 'programs/Adobe/Adobe Illustrator Fixture/Support Files/Contents/Windows/Illustrator.exe'
     executable.parent.mkdir(parents=True)
@@ -212,7 +211,7 @@ def test_controller_preserves_actor_outcome_and_separates_maintainer_export_fail
     entries = [{'type': 'model_change', 'provider': 'openai-codex', 'modelId': 'gpt-6-astra'},
                {'type': 'thinking_level_change', 'thinkingLevel': 'low'},
                {'type': 'message', 'message': {'role': 'system', 'sections': {'skills': '<name>acu</name>'},
-                'toolsAdded': [{'name': name} for name in bench.TOOLS]}}]
+                'toolsAdded': [{'name': name} for name in TOOLS]}}]
     transcript = '\n'.join(json.dumps(entry) for entry in entries) if recovered else '{truncated transcript'
     (directory / 'session.jsonl').write_text(transcript, encoding='utf-8')
     error = 'OpenAI Responses stream ended before a terminal response event'
@@ -320,11 +319,10 @@ def test_model_timing_includes_wait_before_pi_emits_message_start():
         {'elapsed_s': 3, 'event': {'type': 'message_update', 'assistantMessageEvent': {'type': 'text_delta'}}},
         {'elapsed_s': 4, 'event': {'type': 'message_end', 'message': {'role': 'assistant', 'content': [], 'stopReason': 'stop', 'durationMs': 4000, 'usage': {'input': 100, 'output': 20, 'totalTokens': 120}}}},
     ]
-    result = analyse_pi(records, wall_s=5, reference_tps=10)
+    result = analyse_pi(records, wall_s=5)
     assert result['model_response_s'] == 4
     assert result['effective_output_tps'] == 5
     assert result['model_turns'][0]['first_visible_delta_s'] == 3
-    assert result['estimated_wall_at_reference_tps_s'] == 3
 
 
 def test_isolation_audit_rejects_extra_skills_context_wrong_reasoning_and_wrong_provider():

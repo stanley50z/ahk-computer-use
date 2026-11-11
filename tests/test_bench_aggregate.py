@@ -61,7 +61,8 @@ def test_cli_reads_three_attempts_per_arm_and_keeps_safeguard_failures_out(tmp_p
     import json
     import subprocess
     import sys
-    from bench.run import ARMS, ROOT, PI_RECOVERY_POLICY, actor_path
+    from bench.harnesses.pi import PI_RECOVERY_POLICY
+    from bench.run import ARMS, ROOT, actor_path
     from test_bench_outcome import finished_trial
 
     entries = []

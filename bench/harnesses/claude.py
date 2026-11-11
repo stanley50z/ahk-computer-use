@@ -82,7 +82,7 @@ def request(name: str, arguments: Json) -> Request:
 
 # Claude Code stream-json carries no server-side response duration: a response is timed from the request status
 # event to message_stop receipt. Token totals come from the final result; per-message usage is deduplicated by id.
-def analyse_claude(records, wall_s, reference_tps=None, *, cancelled=False, exclude_interrupted_turns=False):
+def analyse_claude(records, wall_s, *, cancelled=False, exclude_interrupted_turns=False):
     if exclude_interrupted_turns:
         raise ValueError('--exclude-interrupted-turns requires per-response Pi usage; other harnesses are unsupported')
     tokens = dict(input_uncached=0, cache_read=0, cache_write=0,
@@ -181,12 +181,6 @@ def analyse_claude(records, wall_s, reference_tps=None, *, cancelled=False, excl
                                     if pending_provider_errors and not cancelled else None,
               'unfinished_tools': list(tool_starts), 'token_counts_complete': final is not None and bool(final.get('usage')) and not provider_errors,
               'timing_basis': 'Receipt intervals from the request status event to message_stop; Claude Code exposes no per-response server duration.'}
-    if reference_tps is not None:
-        if reference_tps <= 0:
-            raise ValueError('reference throughput must be positive')
-        result['reference_tps'] = reference_tps
-        result['estimated_wall_at_reference_tps_s'] = wall_s - model_s + tokens['output_including_reasoning'] / reference_tps if model_s is not None else None
-        result['normalization_method'] = 'Whole-response effective-rate counterfactual, including prefill/queueing; not pure decoding speed.'
     return result
 
 

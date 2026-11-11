@@ -209,6 +209,59 @@ def test_executable_names_with_plus_signs_identify_the_app(tmp_path):
     assert 'notepad++.exe: 2 runs (2 ok, 0 error, 0 timeout, 0 unknown)' in result.stdout
 
 
+# The app selector is in the first heredoc only, so the app is known only if the second one appended.
+@pytest.mark.parametrize('second_write, app', [
+    ('tee -a action.ahk', 'Editor.exe'),
+    ('cat >> action.ahk', 'Editor.exe'),
+    ('tee action.ahk', 'unknown app'),
+])
+def test_heredoc_append_keeps_the_source_written_before_it(tmp_path, second_write, app):
+    command = (f"cat > action.ahk <<'AHK'\nWinActivate(\"ahk_exe Editor.exe\")\nAHK\n"
+               f"{second_write} <<'AHK'\nSend(\"^s\")\nAHK\nacu run action.ahk")
+    result = history(tmp_path, shell_session(tmp_path, command, tmp_path), logs=[
+        {'ts': '2026-10-20T10:00:02Z', 'script': str(tmp_path / 'action.ahk'), 'outcome': 'ok'}])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f'{app}: 1 runs (1 ok, 0 error, 0 timeout, 0 unknown)' in result.stdout
+
+
+# Options and assignments follow `env --help` (GNU coreutils): env [OPTION]... [-] [NAME=VALUE]... [COMMAND [ARG]...]
+@pytest.mark.parametrize('command', [
+    *(f'{prefix} acu run action.ahk' for prefix in [
+        'env -i', 'env - FOO=1 BAR=x=y', 'env A-B=1', 'FOO=1 env -i BAR=2', 'env -- -', 'env -v',
+        'env -uPATH', 'env -iu PATH', 'env --unset=PATH', 'env --unset PATH', 'env --ignore-env',
+        'env --block-signal', 'env --block-signal --default-signal=PIPE --ignore-signal=INT,TERM', 'env env -i']),
+    # -S splits its string into arguments that env then reads as if they had been given separately.
+    'env -S "-i FOO=1 acu" run action.ahk', 'env --split-string="acu run" action.ahk',
+])
+def test_env_options_and_assignments_precede_the_run(tmp_path, command):
+    result = history(tmp_path, shell_session(tmp_path, command, tmp_path), logs=[
+        {'ts': '2026-10-20T10:00:02Z', 'script': str(tmp_path / 'action.ahk'), 'outcome': 'ok'}])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert '1 runs (1 ok, 0 error, 0 timeout, 0 unknown)' in result.stdout
+
+
+@pytest.mark.parametrize('prefix, folder', [
+    ('env -C sub', 'sub'), ('env --chdir=sub', 'sub'), ('env -C other -C sub', 'sub'), ('env -C sub env -C inner', 'sub/inner'),
+])
+def test_env_chdir_resolves_the_script_in_that_directory(tmp_path, prefix, folder):
+    result = history(tmp_path, shell_session(tmp_path, f'{prefix} acu run action.ahk; acu run action.ahk', tmp_path), logs=[
+        {'ts': '2026-10-20T10:00:02Z', 'script': str(tmp_path / folder / 'action.ahk'), 'outcome': 'ok'}])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert '2 runs (1 ok, 0 error, 0 timeout, 1 unknown)' in result.stdout
+    assert f'unmatched: {tmp_path.as_posix()}/action.ahk' in result.stdout, 'the next command keeps the shell directory'
+
+
+# env runs nothing for these, so no run was requested: help output, a rejected or ambiguous option, --null, which env
+# refuses together with a command, an empty -C directory, an unclosed -S quote, or a command named -i (options end at -).
+@pytest.mark.parametrize('prefix', ['env --help', 'env -x', 'env --i', 'env --unset', 'env -u', 'env --debug=1',
+                                    'env -v --null', "env -C ''", 'env --chdir=', """env -S "'a\"""", 'env - -i'])
+def test_env_that_runs_no_command_requests_no_run(tmp_path, prefix):
+    suffix = '' if prefix.endswith(('--unset', '-u')) else ' acu run action.ahk'
+    result = history(tmp_path, shell_session(tmp_path, prefix + suffix, tmp_path))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'ACU history: 0 runs.' in result.stdout
+
+
 def test_each_run_in_a_shell_call_gets_only_its_own_result(tmp_path):
     tree = str(Path('acu/tree.ahk').resolve())
     command = 'acu run tree.ahk -- "ahk_exe Editor.exe"; acu run tree.ahk -- "ahk_exe Browser.exe"'

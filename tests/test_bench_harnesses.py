@@ -1,7 +1,8 @@
 """Harness transcripts share one result-bearing tool-call contract."""
 import pytest
 
-from bench.run import analyse_claude, analyse_pi
+from bench.harnesses.claude import analyse_claude
+from bench.harnesses.pi import analyse_pi
 
 
 @pytest.mark.parametrize('analyse,name,events', [

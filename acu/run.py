@@ -4,6 +4,8 @@ Usage: python acu/run.py SCRIPT.ahk [--timeout SECONDS] [-- ARG ...]
 
 Arguments after -- are passed to the script and arrive in its A_Args. Prints the script's stdout and stderr followed by one "[acu] ..." trailer line, then exits with the
 script's exit code, 124 when the shared validation/execution budget expires, or 130 on Ctrl+C.
+Exit code 3 can also come from the prelude before the script runs: the launcher's two internal arguments were missing,
+or the output file could not be opened, so there is no output to report it in.
 On timeout or interruption the script is first asked to close (WM_CLOSE to its main window, which
 runs its exit handlers) and killed if it is still running one second later. Shutdown is verified
 before returning or raising. Force-killing the launcher bypasses this cleanup.

@@ -286,7 +286,7 @@ ProcessQueue() {
 OnButton(event) {
     rec.lone := 0
     if event.down {
-        rec.open[event.button] := {x: event.x, y: event.y, ms: event.ms, target: DescribeAt(event.x, event.y)}
+        rec.open[event.button] := {x: event.x, y: event.y, ms: event.ms, target: DescribeAt(event.x, event.y), upLastTick: false}
         return
     }
     if !rec.open.Has(event.button)  ; the release of the click that started the recording
@@ -312,14 +312,20 @@ AddClick(button, start) {
     AddAction(Map("kind", "click", "button", button, "count", 1, "ms", start.ms, "x", start.x, "y", start.y, "target", start.target), SETTLE_MS)
 }
 
-; A drag whose button was released while its WM_INPUT was lost counts as a click where it was pressed.
+; A drag whose button was released while its WM_INPUT was lost counts as a click where it was pressed. Tick calls it
+; after ProcessQueue. A release during that Tick shows in GetAsyncKeyState before AutoHotkey's next message check
+; dispatches its WM_INPUT, so a button counts as lost only when it is up, and its press still unmatched, at two
+; consecutive ticks; by the second, a late release has been queued and processed.
 ReleaseLostButtons() {
     static keys := Map("left", 1, "right", 2, "middle", 4, "x1", 5, "x2", 6)
     for button, start in rec.open.Clone()
-        if !(DllCall("GetAsyncKeyState", "int", keys[button], "short") & 0x8000) {
+        if (DllCall("GetAsyncKeyState", "int", keys[button], "short") & 0x8000)
+            start.upLastTick := false
+        else if start.upLastTick {
             rec.open.Delete(button)
             AddClick(button, start)
-        }
+        } else
+            start.upLastTick := true
 }
 
 ; Consecutive wheel notches on one axis add up into one scroll.

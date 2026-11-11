@@ -167,7 +167,7 @@ def request(name: str, arguments: Json) -> Request:
 
 
 # Analyse final usage once; optional offline exclusion keeps interrupted responses as separate evidence.
-def analyse_pi(records, wall_s, reference_tps=None, *, cancelled=False, exclude_interrupted_turns=False):
+def analyse_pi(records, wall_s, *, cancelled=False, exclude_interrupted_turns=False):
     tokens = dict(input_uncached=0, cache_read=0, cache_write=0,
                   output_including_reasoning=0, reasoning_subset=None, total=0)
     turns, tools, intervals, errors = [], [], [], []
@@ -297,19 +297,6 @@ def analyse_pi(records, wall_s, reference_tps=None, *, cancelled=False, exclude_
                       full_request_consumption_complete=completed and not usage_unknown and not excluded_turns)
     if compactions:
         result['timing_limitation'] = 'Compaction usage is included, but its provider-response duration is not exposed; model-rate diagnostics are unknown.'
-    if reference_tps is not None:
-        if reference_tps <= 0:
-            raise ValueError('reference throughput must be positive')
-        result['reference_tps'] = reference_tps
-        result['estimated_wall_at_reference_tps_s'] = wall_s - model_s + tokens['output_including_reasoning'] / reference_tps if model_s is not None else None
-        result['normalization_method'] = 'Whole-response effective-rate counterfactual, including prefill/queueing; not pure decoding speed.'
-        visible_turns = [turn for turn in turns if turn['duration_s'] is not None and turn['first_visible_delta_s'] is not None]
-        if not compactions and len(visible_turns) == len(turns):
-            post_delta_s = sum(turn['duration_s'] - turn['first_visible_delta_s'] for turn in visible_turns)
-            visible_output = sum(turn['output_tokens'] - (turn['usage'].get('reasoning') or 0) for turn in visible_turns)
-            result['estimated_wall_preserving_first_delta_at_reference_visible_tps_s'] = wall_s - post_delta_s + visible_output / reference_tps
-        else:
-            result['estimated_wall_preserving_first_delta_at_reference_visible_tps_s'] = None
     return result
 
 

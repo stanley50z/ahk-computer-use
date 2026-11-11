@@ -16,9 +16,11 @@ class Parser(argparse.ArgumentParser):
 
 
 def main(argv=None, process_adapter: launcher.ProcessAdapter | None = None) -> int:
-    """Dispatch read-only discovery or preserve the launcher's run/arguments contract; tests pass a fake adapter for run."""
+    """Dispatch run with the launcher's run/arguments contract, the read-only snippets, history and recording commands,
+    or recorder, which starts the tray app; tests pass a fake adapter for run."""
     sys.stdout.reconfigure(encoding="utf-8")
-    parser = Parser(prog="acu", description="Run AutoHotkey v2 scripts or list saved app snippets")
+    parser = Parser(prog="acu", description="Run AutoHotkey v2 scripts, list saved app snippets, summarize ACU activity "
+                    "in a session, start the recorder or print a recording")
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser("run", help="Run an existing AHK script file")
     run.add_argument("script", help="Path to the script file")

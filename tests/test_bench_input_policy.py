@@ -1,6 +1,6 @@
 """Scenario v4 allows any input route; the bench records which routes a script used instead of failing it."""
 
-from bench.run import script_input_methods
+from bench.calculator import script_input_methods
 
 
 def test_input_routes_are_recognised_for_the_report():

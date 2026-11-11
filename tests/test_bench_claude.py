@@ -1,8 +1,9 @@
-"""Claude Code arm: stream-json measurement, isolation audit from the init event and transcript, and task time."""
+"""Claude Code arm: stream-json measurement and isolation audit from the init event and transcript."""
 
 import pytest
 
-from bench.run import ARMS, analyse_claude, audit_claude_session, task_time
+from bench.harnesses.claude import analyse_claude, audit_claude_session
+from bench.run import ARMS
 
 INIT = {'type': 'system', 'subtype': 'init', 'model': 'claude-opus-5-5', 'tools': ['Bash', 'Edit', 'Read', 'Write'],
         'mcp_servers': [], 'skills': [], 'slash_commands': []}
@@ -41,7 +42,7 @@ def test_claude_metrics_time_responses_from_request_to_stop_and_count_final_usag
                                    'usage': {'input_tokens': 3, 'cache_creation_input_tokens': 105, 'cache_read_input_tokens': 100,
                                              'output_tokens': 25, 'output_tokens_details': {'thinking_tokens': 2}}}},
     ]
-    result = analyse_claude(records, wall_s=10, reference_tps=10)
+    result = analyse_claude(records, wall_s=10)
     assert result['agent_start_s'] == 1
     assert result['model_response_s'] == pytest.approx(3.5)  # request status to message_stop, both responses
     assert result['model_turns'][0]['first_visible_delta_s'] == pytest.approx(1.5)
@@ -51,7 +52,6 @@ def test_claude_metrics_time_responses_from_request_to_stop_and_count_final_usag
                                 'output_including_reasoning': 25, 'reasoning_subset': 2, 'total': 233}
     assert result['agent_completed'] and result['token_counts_complete']
     assert result['reported_api_duration_s'] == 3.5
-    assert result['estimated_wall_at_reference_tps_s'] == pytest.approx(10 - 3.5 + 2.5)
 
 
 def test_claude_run_without_a_final_result_is_incomplete_not_zero():
@@ -134,30 +134,3 @@ def test_claude_skill_audit_accepts_user_root_alias_without_allowing_another_ski
     assert not audit_claude_session(records, entries, selected)['passed']
     entries[0]['message']['content'][0]['input']['file_path'] = '~/.agents/skills/cua-driver/../other/SKILL.md'
     assert not audit_claude_session(records, entries, selected)['passed']
-
-
-def test_task_time_ends_at_the_last_computer_use_call_not_the_evidence_write(tmp_path):
-    (tmp_path / 'helper.py').write_text("subprocess.run(['cua-driver', 'click'])", encoding='utf-8')
-    tools = [
-        {'request': {'kind': 'read'}, 'start_s': 2, 'end_s': 2.1, 'text': '{"path": "~/.agents/skills/cua-driver/SKILL.md"}'},
-        {'request': {'kind': 'shell', 'command': 'acu run "C:/w/launch.ahk"'}, 'start_s': 5, 'end_s': 6, 'text': '{"command": "acu run \\"C:/w/launch.ahk\\""}'},
-        {'request': {'kind': 'shell', 'command': 'python helper.py One Two'}, 'start_s': 10, 'end_s': 14, 'text': '{"command": "python helper.py One Two"}'},
-        {'request': {'kind': 'write', 'path': 'result.json', 'content': 'acu run cua-driver'}, 'start_s': 20, 'end_s': 20.1,
-         'text': '{"path": "result.json", "content": "acu run cua-driver"}'},
-        {'request': {'kind': 'shell', 'command': 'cat result.json'}, 'start_s': 21, 'end_s': 21.5, 'text': '{"command": "cat result.json"}'},
-    ]
-    assert task_time(1, tools, r'\bacu run\b', tmp_path)['task_s'] == 5
-    assert task_time(1, tools, r'cua-driver', tmp_path) | {'definition': None} == {
-        'task_s': 13, 'start_s': 1, 'last_computer_use_end_s': 14, 'computer_use_calls': 1, 'definition': None}
-    assert task_time(None, tools, r'cua-driver', tmp_path)['task_s'] is None
-    assert task_time(1, tools, r'\bsky\.', tmp_path)['task_s'] is None
-
-
-def test_task_time_follows_helpers_a_computer_use_cell_defined_in_a_persistent_repl(tmp_path):
-    cells = [
-        {'request': {'kind': 'javascript_cell', 'code': 'globalThis.tap=async(x,y)=>{await sky.click({x,y}); state=await sky.get_window_state({})}; await tap(1,2);'}, 'start_s': 10, 'end_s': 13, 'text': '{"code": "globalThis.tap=async(x,y)=>{await sky.click({x,y}); state=await sky.get_window_state({})}; await tap(1,2);"}'},
-        {'request': {'kind': 'javascript_cell', 'code': 'await tap(3,4);'}, 'start_s': 20, 'end_s': 23, 'text': '{"code": "await tap(3,4);"}'},
-        {'request': {'kind': 'javascript_cell', 'code': "await fs.writeFile(nodeRepl.cwd+'/result.json', JSON.stringify({window_id: targetWindow.id}));"}, 'start_s': 30, 'end_s': 30.1, 'text': '{"code": "await fs.writeFile(nodeRepl.cwd+\'/result.json\', JSON.stringify({window_id: targetWindow.id}));"}'},
-    ]
-    result = task_time(1, cells, r'\bsky\.', tmp_path)
-    assert result['task_s'] == 22 and result['computer_use_calls'] == 2
