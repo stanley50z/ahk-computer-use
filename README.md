@@ -176,7 +176,7 @@ uv run pytest -q
 uv build
 ```
 
-The default tests do not run AutoHotkey or interact with the desktop. Desktop integration tests require `--desktop` and can open windows, move the cursor, and change focus. Run them on an available desktop, choosing only the checks relevant to your change:
+The default tests do not run AutoHotkey or interact with the desktop. Desktop integration tests require `--desktop` and can open windows, move the cursor, and change focus. Each one starts only after 5 seconds without keyboard or mouse input; if you keep typing or moving the mouse, a pop-up asks you to stop until the test can begin. Run them on an available desktop, choosing only the checks relevant to your change:
 
 ```sh
 uv run pytest --desktop tests/test_tool.py -q

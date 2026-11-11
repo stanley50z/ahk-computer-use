@@ -17,6 +17,7 @@ SCRIPTS = Path(__file__).resolve().parent / "scripts"
 
 sys.path.insert(0, str(REPO))
 from acu.run import plain_ahk_exe  # noqa: E402
+import input_guard  # noqa: E402
 
 user32 = ctypes.windll.user32
 # Per-monitor-v2 awareness so cursor and window coordinates read here match what the prelude sees.
@@ -41,6 +42,14 @@ def pytest_collection_modifyitems(config, items):
     excluded = [item for item in items if item.get_closest_marker("desktop")]
     items[:] = [item for item in items if not item.get_closest_marker("desktop")]
     config.hook.pytest_deselected(items=excluded)
+
+
+# Holds every desktop test, before its fixtures open windows or take focus, until the user has left the keyboard and
+# mouse alone for 5 seconds. A hook rather than a fixture, so no test can override it by name and opt out.
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item):
+    if item.get_closest_marker("desktop"):
+        input_guard.before_desktop_test(item.config)
 
 
 CLOUD9_REFERENCE = REPO / "bench/assets/illustrator-pen-tool/Cloud9-Reference.png"
