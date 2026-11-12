@@ -130,6 +130,42 @@ def test_task_windows_move_onto_the_chosen_display(tmp_path):
     assert cdb.CdbTask().descriptor["apps"][0]["window"]["bounds"] == {"x": 3860, "y": -170, "width": 980}
 
 
+def test_making_a_display_primary_moves_every_display_by_its_offset():
+    from bench.cua_driver_bench import display
+    layout = [{"display": "D1", "position": [0, 0]}, {"display": "D2", "position": [3840, 116]}]
+    assert display.primary_positions(layout, "D2") == {"D1": (-3840, -116), "D2": (0, 0)}
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows processes")
+def test_abort_finds_a_session_and_the_script_loop_that_started_it():
+    from bench.cua_driver_bench import abort
+    session_py = str(abort.HERE / "session.py")
+    # A loop script (python -c) whose child names session.py, as a trial's process would.
+    loop = subprocess.Popen([sys.executable, "-c", "import subprocess, sys; subprocess.run([sys.executable, '-c', "
+                             f"'import time; time.sleep(60)', {session_py!r}, '--bench', 'B'])"])
+    try:
+        for _ in range(50):
+            procs, benches = abort.bench_processes()
+            if procs:
+                break
+            subprocess.run(["ping", "-n", "1", "-w", "100", "192.0.2.1"], capture_output=True)
+        assert "B" in benches
+        for proc in procs:
+            abort.kill_tree(proc.pid)
+        assert loop.wait(timeout=10) is not None  # the loop is stopped too, not only its current child
+    finally:
+        abort.kill_tree(loop.pid)
+
+
+def test_abort_reads_the_task_workspaces_from_the_launch_descriptors(tmp_path, monkeypatch):
+    from bench.cua_driver_bench import abort
+    descriptor = tmp_path / "cdb" / "taskpack" / "tasks" / "shared" / "cdb-s02" / "platform" / "launch.windows.json"
+    descriptor.parent.mkdir(parents=True)
+    descriptor.write_text(json.dumps({"workspace_root": "${USERPROFILE}\\cdb-s02"}))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    assert abort.workspaces(tmp_path / "cdb" / "automated-eval" / "macos_bench") == [tmp_path / "cdb-s02"]
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows process cleanup")
 def test_g04_cleanup_stops_the_task_chrome_and_spares_the_users(tmp_path):
     """The bench stops every chrome.exe of the session by name, which closed the user's own browser."""

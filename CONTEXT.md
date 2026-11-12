@@ -118,6 +118,10 @@ _Avoid_: Testbench 2, TB2 or "Pen and Export" in current naming; treating one ar
 The official names of the live Office tasks (scenario ids `tb3.1` … `tb3.4`), run in GUI-360's environment: a fresh Office instance on a copied template, the task request and a COM save after the actor stops. TB3.1 is a GUI-360 task, TB3.2 is adapted from one, and TB3.3 and TB3.4 are the bench's own input tasks. A programmatic OOXML check of the saved document decides the task, and for TB3.2 (mouse only), TB3.3 and TB3.4 the input the prompt names must also appear in the recorded input; there is no LLM judge.
 _Avoid_: calling them Testbench 3; comparing TB3 results with GUI-360's LLM-judged success rates
 
+**TB4**:
+Cua's [Cua Driver Bench](https://github.com/trycua/cua/tree/main/libs/cua-driver-bench) v2 run with ACU as the driver: its ten Windows tasks (seven BenchLab tasks and the multi-app tasks CDB-G02 to G04), five trials each, in the foreground and, where the bench defines one, the background condition (50 + 40 trials). It runs one configuration, Claude Code with ACU through `bench/cua_driver_bench/`, and compares it with the other drivers' published runs rather than with this bench's five arms. The bench's own checker, GUI-only guard and eight user-undisturbed criteria decide each trial, plus `score.py`'s AutoHotkey GUI-only scan.
+_Avoid_: calling it Testbench 4 or CDB; treating a background "done" (checker only) as a pass
+
 **Outcome**:
 A finished trial's verdict, pass or fail, together with every reason it failed: the task, the actor's conduct, its isolation, cleanup, an infrastructure failure, an unexpected provider failure, a controller crash, or an actor that did not finish normally. A trial passes only when it has no reason. Reviewers can still reject a passing trial for a safeguard violation the automatic checks cannot see.
 _Avoid_: result (the actor's own claim), status, score

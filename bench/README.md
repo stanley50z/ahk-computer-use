@@ -2,6 +2,8 @@
 
 The scenarios are **Calculator** (`calculator`, the default), **Adobe Illustrator Pen Tool** (`illustrator-pen-tool`, drawing-only since v0.11), and the Office tasks **TB3.1–TB3.4** (`tb3.1` … `tb3.4`). Each scenario supports the five configurations below. An individual configuration is an arm; a request to run a benchmark means fresh sequential trials of all five arms unless the user explicitly selects a subset. Each CLI invocation prepares or runs one trial, not a whole comparison round.
 
+**TB4** is Cua Driver Bench run with ACU as the driver. It has its own harness in [`cua_driver_bench/`](cua_driver_bench/README.md), runs only the Claude Code + ACU configuration, and compares against the bench's published runs of other drivers.
+
 Historical reports call Calculator "Testbench 1" and Illustrator "Testbench 2", "TB2" or "Adobe Illustrator Pen and Export" (`illustrator-pen-export`). Those are historical aliases, not current CLI identifiers; `--scenario testbench-2` and `--scenario illustrator-pen-export` are no longer accepted. Rounds recorded under the old Pen and Export names still aggregate: the rename (2026-10-23) changed only the identifier, file names and the prompt file's title line, which the actor never receives, so the v0.11 prompt body and fingerprints are unchanged. Report titles and prose use the descriptive names; report filenames, recorded trial IDs, evidence paths and measurements retain their historical values. Saved trial evidence is unchanged. The Illustrator rename changes its human-readable heading and scenario identifier, not the v0.3 actor prompt body or input-file bytes.
 
 ## File structure

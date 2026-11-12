@@ -27,8 +27,8 @@ ADAPTER = Path(__file__).resolve().with_name("acu_mcp.py")
 sys.path.insert(0, str(ADAPTER.parent))
 from acu_mcp import skill_file  # noqa: E402
 # The bench's MACOS_SYSTEM_PROMPT (claude_arms.py) with the platform words its Windows notes give, then the
-# bench's GUI-only rule. The other drivers have no way around the GUI, so the bench never states the rule; an
-# ACU script can run programs, read files and fetch URLs, and without this sentence agents did all three.
+# bench's GUI-only rule. The bench never states the rule because its own drivers can't leave the GUI; an ACU
+# script can run programs, read files and fetch URLs, so the prompt has to say it.
 SYSTEM_PROMPT = (
     "You are an autonomous computer-use agent operating a Windows desktop through the tools provided. "
     "No human is available to answer questions or confirm actions; every action the task requires is "

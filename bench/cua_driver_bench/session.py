@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import importlib.util
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -25,6 +26,9 @@ import psutil
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from display import mode  # noqa: E402
+
+# The bench checkout of the latest session, so abort.py can find the task workspaces after the run ended.
+LAST_BENCH = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "cdb-bench" / "last-bench.txt"
 
 
 def shifted(frame: tuple[int, ...], dx: int, dy: int) -> tuple[int, ...]:
@@ -77,6 +81,8 @@ def main() -> int:
     parser.add_argument("--bench", type=Path, required=True)
     parser.add_argument("--display")
     args = parser.parse_args(sys.argv[1:split])
+    LAST_BENCH.parent.mkdir(parents=True, exist_ok=True)
+    LAST_BENCH.write_text(str(args.bench.resolve()), encoding="utf-8")
     spec = importlib.util.spec_from_file_location("windows_session", args.bench / "launch" / "windows_session.py")
     session = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(session)

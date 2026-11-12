@@ -1,15 +1,17 @@
-"""Show, switch and restore one display's resolution and scaling for a Cua Driver Bench run.
+"""Show, switch and restore a display's resolution, scaling and primary role for a Cua Driver Bench run.
 
-The bench's Windows windows are placed in physical pixels and assume a 1920 x 1080 display at 100%:
+The bench's Windows windows are placed in physical pixels and assume a 1920 x 1080 primary at 100%:
 
     python display.py show
-    python display.py set \\\\.\\DISPLAY2 1920 1080 --scale 100 --save display-state.json
-    python display.py restore display-state.json
+    python display.py set \\\\.\\DISPLAY2 1920 1080 --scale 100 --primary
+    python display.py restore
 
-`set` saves the display's current mode, position and scaling to the state file (it refuses to overwrite
-an existing one, so a second `set` cannot lose the original), then applies the new mode and scaling.
-`restore` puts the saved values back. Scaling goes through the DisplayConfig DPI calls that Windows'
-own Settings page uses; they are undocumented, so `set` reads the scaling back and reports it.
+The state file defaults to %LOCALAPPDATA%\\cdb-bench\\display-state.json, where abort.py also looks. `set` saves every display's mode, position, scaling and primary role to the state file (it refuses to
+overwrite an existing one, so a second `set` cannot lose the original), then applies the new mode and
+scaling. `--primary` also makes the display the primary at desktop origin (0, 0) and moves the others by
+the same offset, so the arrangement stays as it was. `restore` puts the saved layout back. Scaling goes
+through the DisplayConfig DPI calls that Windows' own Settings page uses; they are undocumented, so `set`
+reads the scaling back and reports it.
 """
 
 from __future__ import annotations
@@ -17,15 +19,20 @@ from __future__ import annotations
 import argparse
 import ctypes
 import json
+import os
 import sys
 from ctypes import wintypes as w
 from pathlib import Path
 
+STATE = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "cdb-bench" / "display-state.json"
+
 ctypes.windll.shcore.SetProcessDpiAwareness(2)
 user32 = ctypes.windll.user32
 SCALES = (100, 125, 150, 175, 200, 225, 250, 300, 350, 400, 450, 500)
-DM_POSITION, DM_PELSWIDTH, DM_PELSHEIGHT, DM_DISPLAYFREQUENCY = 0x20, 0x80000, 0x100000, 0x400000
-CDS_UPDATEREGISTRY = 0x1
+PRIMARY_DEVICE = 0x4
+QDC_ONLY_ACTIVE_PATHS, MODE_SOURCE = 2, 1
+# SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_SAVE_TO_DATABASE | SDC_ALLOW_CHANGES
+SDC_APPLY_LAYOUT = 0x80 | 0x20 | 0x200 | 0x400
 
 
 class DEVMODE(ctypes.Structure):
@@ -60,7 +67,18 @@ class DPI_SET(ctypes.Structure):
 
 
 class PATH(ctypes.Structure):  # DISPLAYCONFIG_PATH_INFO; only the source part is read
-    _fields_ = [("sourceAdapterId", LUID), ("sourceId", ctypes.c_uint32), ("_rest", ctypes.c_byte * 60)]
+    _fields_ = [("sourceAdapterId", LUID), ("sourceId", ctypes.c_uint32), ("sourceModeInfoIdx", ctypes.c_uint32),
+                ("_rest", ctypes.c_byte * 56)]
+
+
+class SOURCE_MODE(ctypes.Structure):  # DISPLAYCONFIG_SOURCE_MODE: the desktop size and position of a display
+    _fields_ = [("width", ctypes.c_uint32), ("height", ctypes.c_uint32), ("pixelFormat", ctypes.c_uint32),
+                ("x", ctypes.c_int32), ("y", ctypes.c_int32)]
+
+
+class MODE(ctypes.Structure):  # DISPLAYCONFIG_MODE_INFO; `source` is valid when infoType is MODE_SOURCE
+    _fields_ = [("infoType", ctypes.c_uint32), ("id", ctypes.c_uint32), ("adapterId", LUID),
+                ("source", SOURCE_MODE), ("_rest", ctypes.c_byte * 28)]
 
 
 # The current mode and desktop position of one display, e.g. \\.\DISPLAY2.
@@ -72,35 +90,66 @@ def mode(name: str) -> DEVMODE:
     return m
 
 
-def displays() -> list[str]:
+# The attached displays as (name, is primary).
+def attached() -> list[tuple[str, bool]]:
     class DD(ctypes.Structure):
         _fields_ = [("cb", w.DWORD), ("DeviceName", w.WCHAR * 32), ("DeviceString", w.WCHAR * 128),
                     ("StateFlags", w.DWORD), ("DeviceID", w.WCHAR * 128), ("DeviceKey", w.WCHAR * 128)]
-    names, i = [], 0
+    found, i = [], 0
     while True:
         d = DD()
         d.cb = ctypes.sizeof(d)
         if not user32.EnumDisplayDevicesW(None, i, ctypes.byref(d), 0):
-            return names
+            return found
         i += 1
         if d.StateFlags & 1:
-            names.append(d.DeviceName)
+            found.append((d.DeviceName, bool(d.StateFlags & PRIMARY_DEVICE)))
+
+
+def displays() -> list[str]:
+    return [name for name, _ in attached()]
+
+
+# The active DisplayConfig paths and modes, as Windows' Settings page reads them.
+def query() -> tuple[ctypes.Array, ctypes.Array]:
+    paths, modes = ctypes.c_uint32(), ctypes.c_uint32()
+    user32.GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, ctypes.byref(paths), ctypes.byref(modes))
+    path_buf, mode_buf = (PATH * paths.value)(), (MODE * modes.value)()
+    if user32.QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, ctypes.byref(paths), path_buf, ctypes.byref(modes),
+                                 mode_buf, None):
+        raise SystemExit("QueryDisplayConfig failed")
+    return path_buf, mode_buf
+
+
+# The GDI name (\\.\DISPLAY2) of a path's source.
+def gdi_name(path: PATH) -> str:
+    q = SOURCE_NAME()
+    q.header = HEADER(1, ctypes.sizeof(SOURCE_NAME), path.sourceAdapterId, path.sourceId)
+    return "" if user32.DisplayConfigGetDeviceInfo(ctypes.byref(q)) else q.viewGdiDeviceName
 
 
 # The DisplayConfig source (adapter, id) that shows display NAME.
 def source(name: str) -> tuple[LUID, int]:
-    paths, modes = ctypes.c_uint32(), ctypes.c_uint32()
-    user32.GetDisplayConfigBufferSizes(2, ctypes.byref(paths), ctypes.byref(modes))
-    path_buf = (PATH * paths.value)()
-    mode_buf = (ctypes.c_byte * (64 * modes.value))()
-    if user32.QueryDisplayConfig(2, ctypes.byref(paths), path_buf, ctypes.byref(modes), mode_buf, None):
-        raise SystemExit("QueryDisplayConfig failed")
-    for p in path_buf[: paths.value]:
-        q = SOURCE_NAME()
-        q.header = HEADER(1, ctypes.sizeof(SOURCE_NAME), p.sourceAdapterId, p.sourceId)
-        if not user32.DisplayConfigGetDeviceInfo(ctypes.byref(q)) and q.viewGdiDeviceName == name:
+    for p in query()[0]:
+        if gdi_name(p) == name:
             return p.sourceAdapterId, p.sourceId
     raise SystemExit(f"no DisplayConfig source for {name}")
+
+
+# Give each named display a desktop size and position in one SetDisplayConfig call, which changes nothing
+# if it fails. The display at (0, 0) is the primary. Displays not named keep their mode.
+def apply_layout(targets: dict[str, tuple[int, int, int, int]]) -> None:
+    path_buf, mode_buf = query()
+    for p in path_buf:
+        name = gdi_name(p)
+        if name in targets:
+            m = mode_buf[p.sourceModeInfoIdx]
+            if m.infoType != MODE_SOURCE:
+                raise SystemExit(f"no source mode for {name}")
+            m.source.width, m.source.height, m.source.x, m.source.y = targets[name]
+    result = user32.SetDisplayConfig(len(path_buf), path_buf, len(mode_buf), mode_buf, SDC_APPLY_LAYOUT)
+    if result:
+        raise SystemExit(f"SetDisplayConfig returned {result}")
 
 
 # (current scale %, recommended scale %, allowed scales) of display NAME.
@@ -125,24 +174,22 @@ def set_scale(name: str, percent: int) -> None:
         raise SystemExit(f"setting {name} to {percent}% failed")
 
 
-def apply_mode(name: str, width: int, height: int, position: tuple[int, int] | None = None,
-               frequency: int | None = None) -> None:
-    m = mode(name)
-    m.dmPelsWidth, m.dmPelsHeight, m.dmFields = width, height, DM_PELSWIDTH | DM_PELSHEIGHT
-    if position is not None:
-        (m.dmPositionX, m.dmPositionY), m.dmFields = position, m.dmFields | DM_POSITION
-    if frequency is not None:
-        m.dmDisplayFrequency, m.dmFields = frequency, m.dmFields | DM_DISPLAYFREQUENCY
-    result = user32.ChangeDisplaySettingsExW(name, ctypes.byref(m), None, CDS_UPDATEREGISTRY, None)
-    if result != 0:
-        raise SystemExit(f"ChangeDisplaySettingsEx({name}) returned {result}")
+# Desktop positions that make TARGET the primary at (0, 0): every display moves by the same offset.
+def primary_positions(layout: list[dict], target: str) -> dict[str, tuple[int, int]]:
+    tx, ty = next(d["position"] for d in layout if d["display"] == target)
+    return {d["display"]: (d["position"][0] - tx, d["position"][1] - ty) for d in layout}
 
 
-def describe(name: str) -> dict:
+def describe(name: str, primary: bool) -> dict:
     m = mode(name)
     current, recommended, _ = scale(name)
     return {"display": name, "width": m.dmPelsWidth, "height": m.dmPelsHeight, "frequency": m.dmDisplayFrequency,
-            "position": [m.dmPositionX, m.dmPositionY], "scale": current, "recommended_scale": recommended}
+            "position": [m.dmPositionX, m.dmPositionY], "scale": current, "recommended_scale": recommended,
+            "primary": primary}
+
+
+def layout() -> list[dict]:
+    return [describe(name, primary) for name, primary in attached()]
 
 
 def main() -> None:
@@ -154,28 +201,52 @@ def main() -> None:
     s.add_argument("width", type=int)
     s.add_argument("height", type=int)
     s.add_argument("--scale", type=int, default=100)
-    s.add_argument("--save", type=Path, required=True)
+    s.add_argument("--primary", action="store_true")
+    s.add_argument("--save", type=Path, default=STATE)
     r = sub.add_parser("restore")
-    r.add_argument("state", type=Path)
+    r.add_argument("state", type=Path, nargs="?", default=STATE)
     args = parser.parse_args()
     if args.command == "show":
-        for name in displays():
-            print(json.dumps(describe(name)))
+        for d in layout():
+            print(json.dumps(d))
     elif args.command == "set":
         if args.save.exists():
             raise SystemExit(f"{args.save} exists: restore it first, or remove it if it is stale")
-        args.save.write_text(json.dumps(describe(args.display)), encoding="utf-8")
-        apply_mode(args.display, args.width, args.height)
-        set_scale(args.display, args.scale)
-        print(json.dumps(describe(args.display)))
+        if args.display not in displays():
+            raise SystemExit(f"no display {args.display}")
+        saved = layout()
+        args.save.parent.mkdir(parents=True, exist_ok=True)
+        args.save.write_text(json.dumps({"displays": saved}), encoding="utf-8")
+        positions = primary_positions(saved, args.display) if args.primary else {
+            d["display"]: tuple(d["position"]) for d in saved}
+        targets = {d["display"]: (d["width"], d["height"], *positions[d["display"]]) for d in saved}
+        targets[args.display] = (args.width, args.height, *positions[args.display])
+        try:
+            apply_layout(targets)
+            set_scale(args.display, args.scale)
+        except SystemExit:
+            restore(args.save)
+            raise
+        for d in layout():
+            print(json.dumps(d))
     else:
-        saved = json.loads(args.state.read_text(encoding="utf-8"))
-        apply_mode(saved["display"], saved["width"], saved["height"], tuple(saved["position"]), saved["frequency"])
-        set_scale(saved["display"], saved["scale"])
-        now = describe(saved["display"])
-        print(json.dumps(now))
-        if (now["width"], now["height"], now["scale"]) == (saved["width"], saved["height"], saved["scale"]):
-            args.state.unlink()
+        restore(args.state)
+
+
+# Put back the layout saved in STATE and delete the file once every display matches it. Returns whether it did.
+def restore(state: Path = STATE) -> bool:
+    saved = json.loads(state.read_text(encoding="utf-8"))["displays"]
+    apply_layout({d["display"]: (d["width"], d["height"], *d["position"]) for d in saved})
+    for d in saved:
+        set_scale(d["display"], d["scale"])
+    now = layout()
+    for d in now:
+        print(json.dumps(d))
+    keys = ("display", "width", "height", "position", "scale", "primary")
+    if [{k: d[k] for k in keys} for d in now] != [{k: d[k] for k in keys} for d in saved]:
+        return False
+    state.unlink()
+    return True
 
 
 if __name__ == "__main__":
