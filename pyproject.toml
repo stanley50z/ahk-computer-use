@@ -19,6 +19,7 @@ dev = [
     "pytest>=8",
     "Pillow>=11",
     "tiktoken>=0.12",
+    "psutil>=7",
     "pywin32>=306 ; sys_platform == 'win32'",
 ]
 

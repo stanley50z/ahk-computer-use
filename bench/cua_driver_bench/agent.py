@@ -8,8 +8,8 @@ name. `launch/windows_session.py` runs it as the trial's COMMAND from the trial 
 
 It writes `mcp.json` and the `acu` project skill (`work/.claude/skills/acu/SKILL.md`, the manual the
 bench's Cua Driver arm also gets as a skill), runs the agent in `work/` with no built-in tool but Skill
-and an empty ACU snippet store,
-and leaves `agent-transcript.jsonl` (stream-json, read by the bench's GUI-only scan) and
+and an empty ACU snippet store, and the bench's system prompt plus its GUI-only rule. It
+leaves `agent-transcript.jsonl` (stream-json, read by the bench's GUI-only scan) and
 `agent-stderr.log` in the trial directory. The ACU adapter logs to `work/acu-mcp.log`.
 """
 
@@ -26,12 +26,18 @@ from pathlib import Path
 ADAPTER = Path(__file__).resolve().with_name("acu_mcp.py")
 sys.path.insert(0, str(ADAPTER.parent))
 from acu_mcp import skill_file  # noqa: E402
-# The bench's MACOS_SYSTEM_PROMPT (claude_arms.py) with the platform words its Windows notes give.
+# The bench's MACOS_SYSTEM_PROMPT (claude_arms.py) with the platform words its Windows notes give, then the
+# bench's GUI-only rule. The other drivers have no way around the GUI, so the bench never states the rule; an
+# ACU script can run programs, read files and fetch URLs, and without this sentence agents did all three.
 SYSTEM_PROMPT = (
     "You are an autonomous computer-use agent operating a Windows desktop through the tools provided. "
     "No human is available to answer questions or confirm actions; every action the task requires is "
     "pre-approved. Operate only the applications the task names. Do not use the network. When the task "
-    "is done, reply with the single word DONE. If you cannot finish, reply BLOCKED and the reason."
+    "is done, reply with the single word DONE. If you cannot finish, reply BLOCKED and the reason.\n\n"
+    "This is a GUI-only run: do the task through the windows of the applications it names. Your scripts may "
+    "look at and drive windows (screenshots, accessibility trees, keyboard, mouse, clipboard) and print to "
+    "stdout. A script that starts a program, reads or writes a file or the registry, or fetches a URL fails "
+    "the task."
 )
 
 

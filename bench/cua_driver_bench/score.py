@@ -8,7 +8,7 @@ row says `passed` (checker passed, no GUI-only violation); a background trial wh
 
 The bench's guard scans tool inputs for shell and Node/Python patterns but knows no AutoHotkey, so this
 also scans every script the agent sent through ACU for AutoHotkey commands that reach processes, files
-or the registry outside the GUI. A hit fails the trial and is listed with its evidence. Writing output
+or the registry outside the GUI, or fetch URLs. A hit fails the trial and is listed with its evidence. Writing output
 with `FileAppend ..., "*"` (stdout) is the skill's normal reporting and is not a hit.
 """
 
@@ -21,19 +21,21 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
-# AutoHotkey v2 commands that leave the GUI: start processes, touch files or the registry. Matched on
-# code with string literals blanked, so the words inside printed text do not count.
+# AutoHotkey v2 commands that leave the GUI: start processes, touch files or the registry, or fetch URLs.
+# Matched on code with string literals blanked, so the words inside printed text do not count.
 AHK_COMMANDS = re.compile(
     r"\b(Run|RunWait|FileRead|FileOpen|FileCopy|FileMove|FileDelete|FileRecycle|FileSetAttrib|FileGetAttrib"
-    r"|FileExist|DirCreate|DirCopy|DirDelete|DirMove|DirExist|IniRead|IniWrite|IniDelete|RegRead|RegWrite"
-    r"|RegDelete|RegCreateKey)\b(?!\s*:=)"
+    r"|FileExist|FileGetSize|FileGetTime|FileSetTime|FileGetVersion|FileCreateShortcut|FileGetShortcut"
+    r"|FileInstall|DirCreate|DirCopy|DirDelete|DirMove|DirExist|IniRead|IniWrite|IniDelete|RegRead|RegWrite"
+    r"|RegDelete|RegCreateKey|Download)\b(?!\s*:=)"
     r"|\bLoop\s+(Files|Reg|Read)\b",
     re.IGNORECASE,
 )
 # The same through COM or the Win32 API, matched on the raw code because the name is a string.
 AHK_INDIRECT = re.compile(
-    r"ComObject\(\s*[\"'](WScript\.Shell|Shell\.Application|Scripting\.FileSystemObject)"
-    r"|DllCall\(\s*[\"'][^\"']*(CreateProcess|ShellExecute|WinExec|CreateFile)",
+    r"ComObject\(\s*[\"'](WScript\.Shell|Shell\.Application|Scripting\.FileSystemObject|WinHttp\.WinHttpRequest"
+    r"|MSXML2\.(Server)?XMLHTTP|ADODB\.Stream)"
+    r"|DllCall\(\s*[\"'][^\"']*(CreateProcess|ShellExecute|WinExec|CreateFile|URLDownloadToFile)",
     re.IGNORECASE,
 )
 STRING = re.compile(r"\"(?:[^\"`]|`.)*\"|'(?:[^'`]|`.)*'")

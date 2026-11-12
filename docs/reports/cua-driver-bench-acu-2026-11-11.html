@@ -42,68 +42,80 @@ tr:last-child td { border-bottom: 0; }
 .old td { color: var(--muted); }
 code { font: 13px ui-monospace, "Cascadia Code", Consolas, monospace; }
 .note { color: var(--muted); font-size: 13px; }
+td.wrap { white-space: normal; min-width: 180px; }
 </style>
 </head>
 <body>
 <main>
 <h1>ACU on Cua Driver Bench</h1>
-<p class="sub">Seven BenchLab tasks of Bench v2 on Windows, Claude Sonnet 5.5, 60 scored trials · final run 2026-11-11 on the owner's desktop PC</p>
+<p class="sub">All ten Bench v2 tasks on Windows, Claude Sonnet 5.5, 90 scored trials · run 2026-11-11 on the owner's desktop PC</p>
 
 <div class="stats">
-  <div class="stat"><b>34/35</b><span>foreground full pass (97%, Wilson 85–99%)</span></div>
-  <div class="stat"><b>9/25</b><span>background full pass (36%, 20–55%)</span></div>
-  <div class="stat"><b>23/25</b><span>background tasks done</span></div>
-  <div class="stat"><b>$5.54</b><span>model cost for 60 trials; median 10–11 turns and 21–23 s per trial</span></div>
+  <div class="stat"><b>40/50</b><span>foreground full pass (80%, Wilson 67–89%)</span></div>
+  <div class="stat"><b>9/40</b><span>background full pass (23%, 12–38%)</span></div>
+  <div class="stat"><b>17/30</b><span>multi-app trials that reached files, processes or URLs through AutoHotkey (GUI-only failures)</span></div>
+  <div class="stat"><b>$17.68</b><span>list-price estimate for 90 trials ($5.54 BenchLab, $12.14 multi-app), from Claude Code's <code>total_cost_usd</code>; the trials ran on a Claude subscription login, so nothing was billed per token</span></div>
 </div>
 
 <h2>Result next to the published Windows setups</h2>
-<p>Same seven tasks, model, prompts and limits. The other rows are Scale AI's runs on AgentEnv (a Windows VM with a 1920 x 1080 primary at 100%), from the <a href="https://huggingface.co/datasets/earakely-scale/CuaDriverBench-AgentEnv">CuaDriverBench-AgentEnv dataset</a>, restricted to the BenchLab tasks. ACU's rows were run with the bench's own launcher on a 1920 x 1080 secondary display at 100% of a desktop PC. The runners differ, so gaps of a trial or two are noise.</p>
+<p>Same ten tasks, model, prompts and limits (360 s, 45 turns). The other rows are Scale AI's runs on AgentEnv (a Windows VM with a 1920 x 1080 primary at 100%), from the <a href="https://huggingface.co/datasets/earakely-scale/CuaDriverBench-AgentEnv">CuaDriverBench-AgentEnv dataset</a>, which publishes the bench's own trials. ACU ran through the bench's own launcher on a 1920 x 1080 secondary display at 100% of a desktop PC. The runners differ, so gaps of a trial or two are noise.</p>
 <div class="scroll"><table>
 <tr><th>Setup (Windows, Sonnet 5.5)</th><th>Run by</th><th>Foreground</th><th>Background</th></tr>
-<tr class="ours"><td>ACU with <code>AcuBackground</code>, full skill</td><td>us</td><td class="good">34/35</td><td>9/25</td></tr>
-<tr><td>cua-driver</td><td>Scale</td><td>33/35</td><td>11/25</td></tr>
-<tr><td>agent-desktop</td><td>Scale</td><td>34/35</td><td class="bad">0/25</td></tr>
-<tr><td>Codex Computer Use</td><td>Scale</td><td>33/35</td><td>not run (foreground only on Windows)</td></tr>
-<tr class="old"><td>ACU first run, skill truncated (superseded)</td><td>us</td><td>32/35</td><td>0/25</td></tr>
+<tr class="ours"><td>ACU with <code>AcuBackground</code>, full skill</td><td>us</td><td class="good">40/50</td><td>9/40</td></tr>
+<tr><td>agent-desktop</td><td>Scale</td><td>37/50</td><td class="bad">0/40</td></tr>
+<tr><td>cua-driver</td><td>Scale</td><td>35/50</td><td>11/40</td></tr>
+<tr><td>Codex Computer Use</td><td>Scale</td><td>35/50</td><td class="wrap">not run (foreground only on Windows)</td></tr>
+<tr class="old"><td>ACU first run, skill truncated, BenchLab tasks only (superseded)</td><td>us</td><td>32/35</td><td>0/25</td></tr>
 </table></div>
+<p>ACU's foreground lead comes from CDB-G02, which it passed cleanly 5 of 5 times against at most 2 of 5 for any published setup. Its background score is the BenchLab score: no setup, ACU included, has a background full pass on the multi-app tasks.</p>
 
-<h2>Per task, final run</h2>
+<h2>Per task</h2>
 <div class="scroll"><table>
-<tr><th>Task</th><th>What the agent does</th><th>Foreground full / done</th><th>Background full / done</th><th>cua-driver bg (Scale)</th></tr>
-<tr><td>MB-09</td><td>Reorder a list by drag and drop</td><td class="good">5/5 · 5/5</td><td class="warn">2/5 · 5/5</td><td>5/5</td></tr>
-<tr><td>MB-10</td><td>Reveal a hover-only toolbar, click one action</td><td class="good">5/5 · 5/5</td><td>foreground only</td><td>–</td></tr>
-<tr><td>MB-11</td><td>Read a tooltip and type its code</td><td class="good">5/5 · 5/5</td><td>foreground only</td><td>–</td></tr>
-<tr><td>IR-01</td><td>Two-step form through a permission prompt</td><td class="good">5/5 · 5/5</td><td class="bad">0/5 · 5/5</td><td>0/5</td></tr>
-<tr><td>IR-02</td><td>Apply settings under a covering banner</td><td class="good">5/5 · 5/5</td><td class="good">5/5 · 5/5</td><td>5/5</td></tr>
-<tr><td>IR-03</td><td>Edit two notes through a save prompt</td><td class="good">5/5 · 5/5</td><td class="bad">1/5 · 5/5</td><td>0/5</td></tr>
-<tr><td>IR-04</td><td>Sign up through a cookie-consent overlay</td><td class="warn">4/5 · 4/5</td><td class="bad">1/5 · 3/5</td><td>1/5</td></tr>
+<tr><th>Task</th><th>What the agent does</th><th>ACU fg full / done</th><th>ACU bg full / done</th><th>Scale fg: cua-driver · agent-desktop · Codex</th><th>Scale bg: cua-driver</th></tr>
+<tr><td>CDB-G02</td><td class="wrap">Replan a schedule across mail, chat, calendar and a Calc workbook</td><td class="good">5/5 · 5/5</td><td class="bad">0/5 · 4/5</td><td>0 · 1 · 2</td><td>0/5</td></tr>
+<tr><td>CDB-G03</td><td class="wrap">Reconcile payables across mail, a Calc workbook and a GnuCash book</td><td class="bad">1/5 · 2/5</td><td class="bad">0/5 · 0/5</td><td>0 · 0 · 0</td><td>0/5</td></tr>
+<tr><td>CDB-G04</td><td class="wrap">Triage duplicate support cases with a tracker, a manual, an archive site in Chrome and a log</td><td class="bad">0/5 · 5/5</td><td class="bad">0/5 · 5/5</td><td>2 · 2 · 0</td><td>0/5</td></tr>
+<tr><td>MB-09</td><td class="wrap">Reorder a list by drag and drop</td><td class="good">5/5 · 5/5</td><td class="warn">2/5 · 5/5</td><td>–</td><td>5/5</td></tr>
+<tr><td>MB-10</td><td class="wrap">Reveal a hover-only toolbar, click one action</td><td class="good">5/5 · 5/5</td><td>foreground only</td><td>–</td><td>–</td></tr>
+<tr><td>MB-11</td><td class="wrap">Read a tooltip and type its code</td><td class="good">5/5 · 5/5</td><td>foreground only</td><td>–</td><td>–</td></tr>
+<tr><td>IR-01</td><td class="wrap">Two-step form through a permission prompt</td><td class="good">5/5 · 5/5</td><td class="bad">0/5 · 5/5</td><td>–</td><td>0/5</td></tr>
+<tr><td>IR-02</td><td class="wrap">Apply settings under a covering banner</td><td class="good">5/5 · 5/5</td><td class="good">5/5 · 5/5</td><td>–</td><td>5/5</td></tr>
+<tr><td>IR-03</td><td class="wrap">Edit two notes through a save prompt</td><td class="good">5/5 · 5/5</td><td class="bad">1/5 · 5/5</td><td>–</td><td>0/5</td></tr>
+<tr><td>IR-04</td><td class="wrap">Sign up through a cookie-consent overlay</td><td class="warn">4/5 · 4/5</td><td class="bad">1/5 · 3/5</td><td>–</td><td>1/5</td></tr>
 </table></div>
-<p class="note">"Done" is the task checker alone. "Full" also needs GUI-only and, in the background, all eight user-undisturbed criteria. On Windows, IR-01, IR-03 and IR-04 open dialogs that take the user's keyboard as they open, for every published setup. ACU's remaining IR-01 and IR-03 misses are that moment. Its three MB-09 misses fell back to <code>AcuDrag</code>, which needs the real pointer.</p>
+<p class="note">"Done" is the task checker alone. "Full" also needs GUI-only and, in the background, all eight user-undisturbed criteria. The Scale page publishes full passes per task for the multi-app tasks; for the BenchLab tasks this table keeps only cua-driver's background column, which the first version of this report compared. Scale's BenchLab foreground totals are 33/35 (cua-driver, Codex) and 34/35 (agent-desktop).</p>
+
+<h2>Multi-app tasks: what went wrong</h2>
+<ol>
+<li><b>AutoHotkey side doors.</b> An ACU script is a full AutoHotkey program, so it can read files, start processes and rewrite data that the other drivers can't reach at all. The bench fails any trial whose tool input "contains code that runs outside the GUI or touches files", and nothing in the brief or the bench's system prompt tells the agent so. In 17 of the 30 multi-app trials the agent took a side door. In CDB-G04 all ten agents finished the task, and all ten read <code>logs\archive-access.log</code> with <code>FileRead</code>, the log the brief tells them to use, instead of opening it in an app. Five also read the archive site's <code>records.json</code> or the cases store, and one fetched the site's pages with AutoHotkey's <code>Download</code>. In CDB-G03 agents edited the GnuCash book's XML directly, and unzipped and rewrote the Calc workbook through PowerShell, once while Calc still had it open. The bench's own guard caught the PowerShell in five of these trials; <code>score.py</code>'s AutoHotkey scan caught all 17. All of CDB-G02's foreground passes stayed in the GUI. After this run, <code>agent.py</code> started adding the GUI-only rule to the bench's system prompt for this bench only; <code>acu/</code> is unchanged. No trial in this report ran with that prompt.</li>
+<li><b>Background disturbance.</b> All 15 background multi-app trials disturbed the user: the agents activated the Electron apps, Calc or Chrome and used the real pointer and keys. <code>AcuBackground</code> keeps UIA actions behind the user's window, but these apps' trees are sparse enough that the agents fell back to pointer and keyboard input. The other setups also have no background multi-app pass.</li>
+<li><b>CDB-G03 is long.</b> All three foreground trials that stayed in the GUI and missed hit the 45-turn limit before they finished reconciling the workbook.</li>
+</ol>
 
 <h2>What changed between the runs</h2>
 <ol>
 <li><b>The skill now reaches the agent whole.</b> The first run passed <code>acu/SKILL.md</code> as MCP server instructions, and Claude Code cut them off after "Reuse snippets". The agent never saw the loop, the Act section or the screenshot guidance. That explains the first run's MB-11 misses: three agents started <code>screenshot.ahk</code> with <code>Run</code>, which the GUI-only scan fails. The adapter now installs the skill as a project skill, which is how the bench's Cua Driver arm gets its own.</li>
 <li><b>New helper <code>AcuBackground(target, action)</code></b> in <code>acu/lib/actions.ahk</code>, with a general "Working behind the user's window" section in the skill. A scripted IR-02 trial showed that UIA <code>.Value :=</code> and <code>Invoke()</code> bring a wx window to the front. <code>ControlClick</code>, <code>BM_CLICK</code> and MSAA <code>DoDefaultAction</code> do too, and only <code>ControlSetText</code> doesn't. The helper adds <code>WS_EX_NOACTIVATE</code> to the target's top-level window for the length of the call, as cua-driver's <code>NoActivateGuard</code> does. A desktop regression test covers it (red without the guard, green with it). It doesn't stop an application that calls <code>SetForegroundWindow</code> on itself: the user's window then loses focus to nothing.</li>
 <li><b>Bundled scripts no longer raise dialogs.</b> <code>screenshot.ahk</code> and <code>tree.ahk</code> started by AutoHotkey directly, without the prelude, now print how to run them and exit with code 2. Before, they left modal <code>#Warn</code> and error dialogs on the desktop. The skill now also says to run every script through <code>acu run</code>.</li>
-<li><b>Scorer fix.</b> <code>FileAppend</code> with no Filename writes no file and no longer counts as a GUI-only hit. That removed two false hits in the final run.</li>
+<li><b>Scorer fixes.</b> <code>FileAppend</code> with no Filename writes no file and no longer counts as a GUI-only hit. That removed two false hits in the BenchLab run. The scan also now flags <code>Download</code>, the file-metadata commands and the HTTP and stream COM objects; that changed no verdict.</li>
+<li><b>Multi-app tasks added.</b> <code>session.py</code> moves their window bounds onto the trial display and keeps the owner's Chrome open (below). <code>run.py</code> now runs all ten v2 tasks by default.</li>
 </ol>
-
-<h2>GUI-only</h2>
-<p>The bench's guard knows no AutoHotkey. Our scorer also scans every script the agent sent for AutoHotkey process, file and registry commands. The final run has no hits.</p>
 
 <h2>Setup and disclosures</h2>
 <ul>
-<li>Agent: Claude Code 2.1.322, <code>claude -p</code>, Claude Sonnet 5.5, medium effort, 16 000 thinking tokens, 45 turns and 360 s per trial. The only built-in tool was Skill, and the system prompt was the bench's, with "a Windows desktop".</li>
+<li>Agent: Claude Code 2.1.322, <code>claude -p</code>, Claude Sonnet 5.5, medium effort, 16 000 thinking tokens, 45 turns and 360 s per trial. The only built-in tool was Skill, and the system prompt was the bench's, with "a Windows desktop". Median per trial: 10 turns and 22 s on BenchLab, 26 turns and 90 s on the multi-app tasks.</li>
 <li>Driver: ACU through <code>bench/cua_driver_bench/acu_mcp.py</code>. Its one tool is <code>run</code>, taking script text or a bundled file and returning screenshots as images. The <code>acu</code> project skill is <code>acu/SKILL.md</code> unmodified after a short note mapping its shell calls onto the tool. The snippet store was empty.</li>
-<li>Machine: Windows 11 desktop PC. The primary is 3840 x 2160 at 200%, which breaks MB-10 and IR-03 even for the bench's scripted oracle. Trials ran on the secondary, switched to 1920 x 1080 at 100% for each run and restored afterwards. <code>session.py</code> moved the bench's four fixed screen positions there and made the launcher DPI-aware. The oracle passed all seven tasks there, a do-nothing background trial held all eight criteria, and a deliberate disturbance tripped six.</li>
+<li>Machine: Windows 11 desktop PC. The primary is 3840 x 2160 at 200%, which breaks MB-10 and IR-03 even for the bench's scripted oracle. Trials ran on the secondary, switched to 1920 x 1080 at 100% for each batch and restored afterwards. <code>session.py</code> moved the bench's fixed screen positions there and made the launcher DPI-aware.</li>
+<li>Multi-app software: LibreOffice 26.8.2, GnuCash 5.17, the owner's Google Chrome, Node 24.14, and Electron 43.8.1 in the four task apps, at the paths the task descriptors name.</li>
+<li>Validation: the BenchLab oracle passed all seven tasks on the trial display. The multi-app oracle passed CDB-G04 live; for CDB-G02 and G03 it writes the workbook directly and Windows refused the write while Calc had it open, so those two were validated by the bench's own desktop-free <code>tests/test_windows_cdb.py</code> (passed). Do-nothing background trials held all eight criteria on every task, and a deliberate disturbance tripped six.</li>
+<li>The owner's Chrome: CDB-G04's cleanup stops every <code>chrome.exe</code> in the session by name before and after each trial. <code>session.py</code> narrows that to Chrome processes whose command line names the task workspace, where the trial's <code>--user-data-dir</code> lives. A unit test covers it, and the owner's browser, open since 7 November, stayed open through all 12 G04 sessions. This changes cleanup only, not scoring.</li>
 <li>Guard exemptions: <code>Cua Spaces.exe</code> (starts PowerShell every 10 s) and <code>svchost.exe</code> (scheduled tasks), via the launcher's own <code>--tool-exe</code>.</li>
-<li>Reruns: none in the final run. The first run had six guard kills caused by shells neither the agent nor ACU started. Those were rerun with the same seed, and their evidence is kept in <code>results\acu-sonnet-5-5-invalid\</code>.</li>
-<li>Not run: the three multi-app tasks. CDB-G02 and G03 need LibreOffice and GnuCash, which aren't installed. CDB-G04's cleanup kills <code>chrome.exe</code> by name and would have closed the owner's browser.</li>
-<li>Final-image evidence: none. The bench records state files and event logs, not final screenshots, so there are no images to compare.</li>
+<li>Reruns: one. The guard stopped foreground CDB-G03 r4 for PowerShell that the owner's herdr <code>SessionStart</code> hook started when another agent session opened on the machine (Windows PowerShell log, event 400). The trial's agent loads no user hooks, and none of its scripts names PowerShell. It was rerun with the same seed; its evidence is in <code>results\acu-sonnet-5-5-v2-invalid\</code>. The first BenchLab run's six kills of the same kind are in <code>results\acu-sonnet-5-5-invalid\</code>.</li>
+<li>Final-image evidence: none. The bench records state files, event logs and (for the multi-app tasks) the final workspace, not final screenshots, so there are no images to compare.</li>
 </ul>
 
 <h2>Evidence</h2>
-<p>The final run is in <code>C:\Users\13982\cdb-bench\results\acu-sonnet-5-5-v2\&lt;condition&gt;\&lt;task&gt;-r&lt;index&gt;\</code>. Each folder holds <code>row.json</code>, <code>agent-transcript.jsonl</code>, <code>sentinel.jsonl</code>, <code>events.jsonl</code>, <code>work\acu-scripts\</code> and <code>work\acu-mcp.log</code>, with <code>scores.json</code>, <code>cost.json</code> and <code>run.log</code> beside them. The superseded runs (<code>acu-sonnet-5-5</code> and <code>acu-sonnet-5-5-background-v2</code>, truncated skill) are kept unchanged, each with a <code>NOTE.md</code>. The harness is <code>bench/cua_driver_bench/</code>.</p>
+<p>The run is in <code>C:\Users\13982\cdb-bench\results\acu-sonnet-5-5-v2\&lt;condition&gt;\&lt;task&gt;-r&lt;index&gt;\</code>. Each folder holds <code>row.json</code>, <code>agent-transcript.jsonl</code>, <code>sentinel.jsonl</code>, <code>work\acu-scripts\</code> and <code>work\acu-mcp.log</code>; BenchLab trials add <code>events.jsonl</code>, and multi-app trials add <code>workspace-final.zip</code>, <code>cdb-result.json</code> and the apps' logs. <code>scores.json</code> (with every side-door line), <code>cost.json</code> and <code>run.log</code> sit beside them. The superseded runs (<code>acu-sonnet-5-5</code> and <code>acu-sonnet-5-5-background-v2</code>, truncated skill) are kept unchanged, each with a <code>NOTE.md</code>. The harness is <code>bench/cua_driver_bench/</code>.</p>
 </main>
 </body>
 </html>

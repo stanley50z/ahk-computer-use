@@ -1,8 +1,14 @@
 import base64
 import json
+import os
+import shutil
+import subprocess
 import sys
+import types
 
-from bench.cua_driver_bench import acu_mcp, run, score
+import pytest
+
+from bench.cua_driver_bench import acu_mcp, run, score, session
 
 PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="
@@ -70,10 +76,13 @@ def test_ahk_scan_flags_side_doors_but_not_printing():
         'FileAppend "x", "C:\\out.txt"',
         'shell := ComObject("WScript.Shell")',
         '; Run "notepad" in a comment',
+        'Download("http://127.0.0.1:4184/inspect?record=v", p)',  # an agent read the task's web app this way
+        'http := ComObject("WinHttp.WinHttpRequest.5.1")',
     ])
     assert score.ahk_hits(script) == [
         'Run "cmd.exe"', 'text := FileRead("C:\\bench\\state.json")', 'FileAppend "x", "C:\\out.txt"',
-        'shell := ComObject("WScript.Shell")',
+        'shell := ComObject("WScript.Shell")', 'Download("http://127.0.0.1:4184/inspect?record=v", p)',
+        'http := ComObject("WinHttp.WinHttpRequest.5.1")',
     ]
 
 
@@ -86,15 +95,60 @@ def test_file_append_counts_only_with_a_file_target():
     assert [line for line in writing if score.ahk_hits(line)] == writing
 
 
-def test_schedule_runs_each_benchlab_task_in_its_manifest_conditions(tmp_path):
+def test_schedule_runs_each_windows_task_in_its_manifest_conditions(tmp_path):
     manifest = tmp_path / "cdb" / "taskpack" / "v2-taskset.json"
     manifest.parent.mkdir(parents=True)
     manifest.write_text(json.dumps({"tasks": [
         {"id": "CDB-G02", "conditions": ["foreground", "background"], "apps": ["Mail", "Calc"], "os": ["windows"]},
+        {"id": "MAC-01", "conditions": ["foreground"], "apps": ["Finder"], "os": ["macos"]},
         {"id": "MB-10", "conditions": ["foreground"], "apps": ["BenchLab"], "os": ["windows"]},
-        {"id": "IR-02", "conditions": ["foreground", "background"], "apps": ["BenchLab"], "os": ["windows"]},
     ]}))
     bench = tmp_path / "cdb" / "automated-eval" / "macos_bench"
     plan = run.schedule(bench, None, ["foreground", "background"], 2)
-    assert plan == [("MB-10", "foreground", 0), ("IR-02", "foreground", 0), ("IR-02", "background", 0),
-                    ("MB-10", "foreground", 1), ("IR-02", "foreground", 1), ("IR-02", "background", 1)]
+    assert plan == [("CDB-G02", "foreground", 0), ("MB-10", "foreground", 0), ("CDB-G02", "background", 0),
+                    ("CDB-G02", "foreground", 1), ("MB-10", "foreground", 1), ("CDB-G02", "background", 1)]
+    assert run.schedule(bench, ["MB-10"], ["foreground", "background"], 1) == [("MB-10", "foreground", 0)]
+
+
+# A stand-in for the bench's windows/cdb.py: CDB-G04's descriptor, whose by-name cleanup stops every chrome.exe.
+def fake_cdb(workspace):
+    class CdbTask:
+        def __init__(self):
+            self.workspace = workspace
+            self.descriptor = {"apps": [{"id": "cases", "window": {"bounds": {"x": 20, "y": 30, "width": 980}}},
+                                        {"id": "archive", "kind": "service"}]}
+
+        def clear_leftovers(self):
+            pass
+
+    return types.SimpleNamespace(CdbTask=CdbTask, process_names=lambda d: {"chrome.exe", "rillwatch cases.exe"})
+
+
+def test_task_windows_move_onto_the_chosen_display(tmp_path):
+    cdb = fake_cdb(tmp_path)
+    session.move_task_windows(cdb, 3840, -200)
+    assert cdb.CdbTask().descriptor["apps"][0]["window"]["bounds"] == {"x": 3860, "y": -170, "width": 980}
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows process cleanup")
+def test_g04_cleanup_stops_the_task_chrome_and_spares_the_users(tmp_path):
+    """The bench stops every chrome.exe of the session by name, which closed the user's own browser."""
+    chrome = tmp_path / "bin" / "chrome.exe"
+    chrome.parent.mkdir()
+    shutil.copy(os.path.join(os.environ["SystemRoot"], "System32", "cmd.exe"), chrome)
+    workspace = tmp_path / "cdb-s04"
+
+    def start(profile):
+        return subprocess.Popen([str(chrome), "/d", "/c", f"ping -n 60 127.0.0.1 >nul & rem --user-data-dir={profile}"],
+                                creationflags=subprocess.CREATE_NO_WINDOW)
+
+    task, users = start(f"{workspace}/.runtime/browser"), start(tmp_path / "User Data")
+    try:
+        cdb = fake_cdb(workspace)
+        session.spare_users_chrome(cdb)
+        assert cdb.process_names(None) == {"rillwatch cases.exe"}
+        cdb.CdbTask().clear_leftovers()
+        assert task.wait(timeout=10) is not None and users.poll() is None
+    finally:
+        for proc in (task, users):
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True)

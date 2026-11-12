@@ -5,8 +5,8 @@ r"""Run Cua Driver Bench's Windows tasks against ACU, one trial at a time, resum
         [--tasks MB-09 ...] [--conditions foreground background] [--runs 5] [--model claude-sonnet-5-5] \
         [--display \\.\DISPLAY2] [--tool-exe "Cua Spaces.exe" ...]
 
-Without --tasks it runs the Bench v2 tasks whose only app is BenchLab, in manifest order; each task runs
-in the conditions the manifest lists for it, with run indexes 0 to runs-1 (the bench's seeds). A trial
+Without --tasks it runs every Bench v2 task the manifest lists for Windows, in manifest order; each task
+runs in the conditions the manifest lists for it, with run indexes 0 to runs-1 (the bench's seeds). A trial
 lands in <out>/<condition>/<task>-r<index>/ with the bench's row.json, the agent transcript and the
 adapter log. --display runs the trials on that display instead of the primary (session.py moves the
 bench's fixed window positions there; display.py switches it to the 1920 x 1080 at 100% the bench
@@ -32,14 +32,13 @@ SESSION = Path(__file__).resolve().with_name("session.py")
 
 
 # The (task, conditions) pairs of the bench's manifest that run on Windows, in schedule order.
-def manifest_tasks(bench: Path) -> list[tuple[str, list[str], list[str]]]:
+def manifest_tasks(bench: Path) -> list[tuple[str, list[str]]]:
     manifest = json.loads((bench.parents[1] / "taskpack" / "v2-taskset.json").read_text(encoding="utf-8"))
-    return [(t["id"], t["conditions"], t["apps"]) for t in manifest["tasks"] if "windows" in t["os"]]
+    return [(t["id"], t["conditions"]) for t in manifest["tasks"] if "windows" in t["os"]]
 
 
 def schedule(bench: Path, tasks: list[str] | None, conditions: list[str], runs: int) -> list[tuple[str, str, int]]:
-    known = manifest_tasks(bench)
-    chosen = [(t, c) for t, c, apps in known if (t in tasks if tasks else apps == ["BenchLab"])]
+    chosen = [(t, c) for t, c in manifest_tasks(bench) if not tasks or t in tasks]
     missing = set(tasks or []) - {t for t, _ in chosen}
     if missing:
         raise SystemExit(f"not Windows tasks of the manifest: {sorted(missing)}")
