@@ -70,24 +70,26 @@ def test_home_relative_write_paths_resolve_against_user_root_not_the_workspace(t
     assert outside == [{'tool': 'Write', 'path': '~/outside/script.ahk'}]
 
 
-def test_window_diff_reports_closed_preexisting_and_leftover_non_calculator_windows():
+def test_window_diff_reports_closed_preexisting_and_leftover_non_task_windows():
     before = 'window=1 pid=5\nwindow=2 pid=6\nwindow=6 pid=9\nhiddenwindow=5 pid=9\n'
-    after = 'window=1 pid=5\nwindow=3 pid=7\nwindow=4 pid=8\nwindow=5 pid=9\nhiddenwindow=6 pid=9\ncalculator=4\npid=8\n'
-    diff = window_diff(before, after)
+    after = 'window=1 pid=5\nwindow=3 pid=7\nwindow=4 pid=8\nwindow=5 pid=9\nhiddenwindow=6 pid=9\nillustrator=4\npid=8\n'
+    diff = window_diff(before, after, 'illustrator')
     assert diff == {'closed_preexisting': ['2'], 'new_non_calculator': ['3']}, 'a background window that became visible (5) or hidden (6) is neither new nor closed'
 
 
 def test_conduct_audit_passes_a_clean_trial_and_names_each_problem(tmp_path):
-    plan = {'workspace': str(tmp_path), 'skill_path': str(tmp_path / 'skill' / 'SKILL.md')}
-    clean = conduct_audit(plan, 'window=1 pid=5\n', 'window=1 pid=5\nwindow=9 pid=8\ncalculator=9\npid=8\n', {'a': '1'}, {'a': '1'}, [write('write', 'result.json', '{}')])
+    plan = {'workspace': str(tmp_path), 'run_dir': str(tmp_path), 'skill_path': str(tmp_path / 'skill' / 'SKILL.md'),
+            'scenario': 'illustrator-pen-tool'}
+    clean = conduct_audit(plan, 'window=1 pid=5\n', 'window=1 pid=5\nwindow=9 pid=8\nillustrator=9\npid=8\n', {'a': '1'}, {'a': '1'}, [write('write', 'result.json', '{}')])
     assert clean['passed'] and clean['problems'] == []
     dirty = conduct_audit(plan, 'window=1 pid=5\n', 'window=7 pid=3\n', {'a': '1'}, {'a': '2'}, [write('Write', 'C:/elsewhere/x.py', '...')])
     assert not dirty['passed']
-    assert dirty['problems'] == ['guarded files changed', 'write tool used outside the workspace']
+    assert dirty['problems'] == ['guarded files changed']
+    assert dirty['writes_outside_workspace'] == [{'tool': 'Write', 'path': 'C:/elsewhere/x.py'}]
     assert dirty['windows'] == {'closed_preexisting': ['1'], 'new_non_calculator': ['7']}
 
 
-@pytest.mark.parametrize('scenario', ['calculator', 'illustrator-pen-tool'])
+@pytest.mark.parametrize('scenario', ['illustrator-pen-tool', 'tb3.1'])
 def test_window_handle_changes_are_diagnostic_and_do_not_fail_the_trial(tmp_path, scenario):
     plan = {'workspace': str(tmp_path), 'run_dir': str(tmp_path),
             'skill_path': str(tmp_path / 'skill/SKILL.md'), 'scenario': scenario}

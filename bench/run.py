@@ -75,7 +75,7 @@ def restart_cua_daemon(run_dir, driver='cua-driver', timeout_s=30, cwd=None, rec
 
 
 # Prepare reproducible, offline profiles without credentials or a live desktop session.
-def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=None, native_transport='sdk-helper'):
+def prepare(arm, run_dir, *, scenario, skill=None, native_config=None, native_transport='sdk-helper'):
     adapter = get_scenario(scenario)
     scenario_name = scenario
     if arm not in ARMS:
@@ -121,11 +121,12 @@ def prepare(arm, run_dir, *, scenario='calculator', skill=None, native_config=No
     return plan
 
 
-# Delegate command resolution to its harness, leaving ordinary test emitters unchanged.
+# Resolve a launch command on PATH. A harness that needs its own resolution, such as Pi bypassing its .cmd shim,
+# defines executable_command; every other command, ordinary test emitters included, uses the plain lookup.
 def executable_command(command):
     from bench.common import executable_command as installed_command
     host = next((arm.harness for arm in ARM_TABLE.values() if arm.harness.name == command[0]), None)
-    return host.executable_command(command) if host else installed_command(command)
+    return getattr(host, 'executable_command', installed_command)(command)
 
 
 # Capture raw JSONL until normal exit or explicit cancellation; there is no overall elapsed-time deadline.
@@ -226,7 +227,7 @@ def fingerprint(roots):
 # The roots an actor of this arm could tamper with: the whole checkout (minus FINGERPRINT_SKIP) and its installed skill.
 # On 2026-10-21 a TB3 actor saved a screenshot into the repository root, which the earlier per-directory list missed.
 def guarded_roots(plan, scenario=None):
-    scenario = scenario if scenario is not None else get_scenario(plan.get('scenario', 'calculator'))
+    scenario = scenario if scenario is not None else get_scenario(plan['scenario'])
     roots = [ROOT, Path(plan['skill_path']).parent]
     if plan.get('arm') and ARM_TABLE[plan['arm']].native:
         roots += [Path(plan['run_dir']) / 'agent-home/mcp.json', Path(plan['run_dir']) / 'agent-home/native-bridge.json']
@@ -306,7 +307,7 @@ def transcript_writes(tools: list[ToolCall], workspace):
 # doing. Closed means a visible pre-existing handle no longer exists at all; left open means a visible handle that did
 # not exist before and is not the task application's. That list keeps its historical key, new_non_calculator, in every
 # scenario: conduct.json persists it under window_audit_policy.
-def window_diff(before, after, application='calculator', *, group_process_windows=False):
+def window_diff(before, after, application, *, group_process_windows=False):
     def visible(probe):
         return dict(re.findall(r'^window=(\d+) pid=(\d+)\s*$', probe, re.MULTILINE))
 
@@ -317,7 +318,6 @@ def window_diff(before, after, application='calculator', *, group_process_window
     ignored_shadows = set()
     if group_process_windows:
         # Illustrator owns its floating panels and contextual task bars in the same process as its main frame.
-        # Do not generalize this to Calculator's shared ApplicationFrameHost.
         task_pids = {new[hwnd] for hwnd in task_windows if hwnd in new}
         task_windows.update(hwnd for hwnd, pid in new.items() if pid in task_pids)
         old_classes = dict(re.findall(r'^class=(\d+) (.+)$', before, re.MULTILINE))
@@ -334,13 +334,11 @@ def conduct_audit(plan, before_probe, after_probe, before_files, after_files, to
     runtime_writes = audit_runtime_writes(tools, runtime_before, runtime_after)
     files = fingerprint_diff(before_files, after_files)
     outside, suspicious = transcript_writes(tools, plan['workspace'])
-    scenario = scenario if scenario is not None else get_scenario(plan.get('scenario', 'calculator'))
+    scenario = scenario if scenario is not None else get_scenario(plan['scenario'])
     windows = window_diff(before_probe, after_probe, scenario.application, group_process_windows=scenario.group_process_windows)
     problems = []
     if files['changed'] or files['added'] or files['removed']:
         problems.append('guarded files changed')
-    if outside and scenario.fail_outside_writes:
-        problems.append('write tool used outside the workspace')
     if any(output['status'] == 'preexisting_changed' for output in runtime_writes['outputs']):
         problems.append('runtime screenshot overwrote pre-existing file')
     return {'passed': not problems, 'problems': problems, 'runtime_writes': runtime_writes, 'guarded_files': files, 'guarded_roots': [str(r) for r in guarded_roots(plan, scenario)],
@@ -363,12 +361,27 @@ def acu_observer(run_dir, script, *args, suffix='', timeout=15):
 
 
 
+# A harness refreshes an expired login inside the trial's private copy, and OAuth refresh tokens are single-use: a
+# discarded refresh leaves the saved login with a spent token (2026-11-19: every later Pi trial got refresh_token_reused).
+# Write a refreshed copy back over the saved login, unless that login changed during the trial; a newer sign-in wins.
+def keep_refreshed_login(credential, private_auth, saved_login):
+    if not private_auth.is_file():
+        return False
+    refreshed = private_auth.read_bytes()
+    if refreshed == saved_login or credential.read_bytes() != saved_login:
+        return False
+    temporary = credential.with_name(credential.name + '.bench-refresh')
+    temporary.write_bytes(refreshed)
+    temporary.replace(credential)
+    return True
+
+
 # Run one authorized trial without an overall time limit; individual runtime/watchdog waits still apply.
 # The summary it writes has no verdict yet; run() records one from bench.outcome after cleanup.
 def run_trial(plan, *, scenario=None, capture_actor=None, observer=None):
     from bench.efficiency import measure_efficiency, token_count
 
-    scenario = scenario if scenario is not None else get_scenario(plan.get('scenario', 'calculator'))
+    scenario = scenario if scenario is not None else get_scenario(plan['scenario'])
     capture_actor = capture_actor if capture_actor is not None else capture
     observer = observer if observer is not None else acu_observer
     token_count('')  # Load the pinned reference encoding before starting any desktop work.
@@ -394,12 +407,14 @@ def run_trial(plan, *, scenario=None, capture_actor=None, observer=None):
     before = observer(run_dir, ROOT / 'bench/probe.ahk', suffix='-before')
     trial = Trial(plan, observer, before)
     recorder = None
+    saved_login = None
     try:
         scenario.prepare_desktop(trial)
-        before_actor = observer(run_dir, ROOT / 'bench/probe.ahk', suffix='-before-actor') if scenario.prepares_desktop else before
+        before_actor = observer(run_dir, ROOT / 'bench/probe.ahk', suffix='-before-actor')
         before_files = fingerprint(guarded_roots(plan, scenario))
         save_json(run_dir / 'fingerprint-before.json', before_files)
-        shutil.copyfile(credential, private_auth)
+        saved_login = credential.read_bytes()
+        private_auth.write_bytes(saved_login)
         from bench.runtime_writes import snapshot_runtime_files
         runtime_before = snapshot_runtime_files()
         save_json(run_dir / 'runtime-files-before.json', runtime_before)
@@ -425,9 +440,6 @@ def run_trial(plan, *, scenario=None, capture_actor=None, observer=None):
         save_json(run_dir / 'isolation.json', isolation)
         plan['runtime_validated'] = isolation['passed']
         save_json(run_dir / 'plan.json', plan)
-        if scenario.verify_before_audit:
-            verification = scenario.collect_and_grade(trial, measurements.get('tools', []))
-            save_json(run_dir / 'verification.json', verification)
         after_probe = observer(run_dir, ROOT / 'bench/probe.ahk', suffix='-conduct')
         after_files = fingerprint(guarded_roots(plan, scenario))
         save_json(run_dir / 'fingerprint-after.json', after_files)
@@ -436,9 +448,8 @@ def run_trial(plan, *, scenario=None, capture_actor=None, observer=None):
         scenario.audit(trial, conduct)
         conduct['stray_files'] = move_stray_files(run_dir, conduct)
         save_json(run_dir / 'conduct.json', conduct)
-        if not scenario.verify_before_audit:
-            verification = scenario.collect_and_grade(trial, measurements.get('tools', []))
-            save_json(run_dir / 'verification.json', verification)
+        verification = scenario.collect_and_grade(trial, measurements.get('tools', []))
+        save_json(run_dir / 'verification.json', verification)
         summary = {'arm': arm, 'model': plan['model'], 'reasoning': plan['reasoning'], 'exit_code': exit_code,
                    'benchmark': measurements['benchmark'],
                    'diagnostics': {'wall_s': wall, 'note': 'Not a benchmark ranking metric.'},
@@ -454,6 +465,9 @@ def run_trial(plan, *, scenario=None, capture_actor=None, observer=None):
         (run_dir / 'crash.txt').write_text(traceback.format_exc(), encoding='utf-8')
         raise
     finally:
+        if saved_login is not None:
+            save_json(run_dir / 'login-writeback.json',
+                      {'refreshed_login_kept': keep_refreshed_login(credential, private_auth, saved_login)})
         private_auth.unlink(missing_ok=True)
         if uses_cua_daemon(arm):
             try:
@@ -487,7 +501,7 @@ def record_outcome(run_dir: Path, scenario: Scenario) -> dict:
 # Enforce one bench controller at a time and preserve a traceback even for setup/cleanup failures.
 def run(plan, *, scenario=None, capture_actor=None, observer=None):
     run_dir = Path(plan['run_dir'])
-    scenario = scenario if scenario is not None else get_scenario(plan.get('scenario', 'calculator'))
+    scenario = scenario if scenario is not None else get_scenario(plan['scenario'])
     control_dir = ROOT / '.pi/bench'
     control_dir.mkdir(parents=True, exist_ok=True)
     lock = control_dir / 'active.lock'
@@ -518,7 +532,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=('prepare', 'run', 'analyse'))
     parser.add_argument('--arm', choices=ARMS, default='pi-acu')
-    parser.add_argument('--scenario', choices=SCENARIOS, default='calculator')
+    parser.add_argument('--scenario', choices=SCENARIOS, help='required for prepare and run')
     parser.add_argument('--run-dir', type=Path)
     parser.add_argument('--desktop-approved', action='store_true')
     parser.add_argument('--native-transport', choices=('sdk-helper', 'app-pipe'), default='sdk-helper',
@@ -532,6 +546,8 @@ def main():
         parser.error('run requires approval for this specific desktop trial (--desktop-approved)')
     if args.action == 'analyse' and not args.run_dir:
         parser.error('analyse requires --run-dir')
+    if args.action != 'analyse' and not args.scenario:
+        parser.error(f'{args.action} requires --scenario')
     ensure_project_runtime(Path(__file__).resolve())
     if args.action == 'analyse':
         from bench.efficiency import measure_efficiency
@@ -548,7 +564,7 @@ def main():
         directory = args.run_dir or ROOT / '.pi/bench' / f'{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{args.scenario}-{args.arm}-{uuid.uuid4().hex[:6]}'
         if args.action == 'run' and (directory / 'plan.json').is_file():
             plan = json.loads((directory / 'plan.json').read_text(encoding='utf-8'))
-            if plan['arm'] != args.arm or plan.get('scenario', 'calculator') != args.scenario:
+            if plan['arm'] != args.arm or plan['scenario'] != args.scenario:
                 parser.error('the requested arm/scenario does not match the prepared profile')
             if (directory / 'state.json').exists() or (directory / 'run-attempt.json').exists():
                 parser.error('a run directory cannot be reused; prepare a fresh trial')

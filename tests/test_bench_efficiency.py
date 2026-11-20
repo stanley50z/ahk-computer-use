@@ -430,7 +430,7 @@ def test_cli_reanalysis_reports_new_metrics_without_rewriting_historical_measure
     prior = '{"wall_s":9,"task":{"task_s":7}}'
     (tmp_path / 'metrics.json').write_text(prior, encoding='utf-8')
     (tmp_path / 'plan.json').write_text(json.dumps({'arm':'pi-acu', 'workspace':str(workspace)}), encoding='utf-8')
-    message = {'role':'assistant','model':'gpt-6-astra','thinkingLevel':'low','stopReason':'toolUse',
+    message = {'role':'assistant','model':'gpt-6.2-astra','thinkingLevel':'low','stopReason':'toolUse',
                'durationMs':1000,'usage':{'input':10,'output':100,'cacheRead':20,'totalTokens':130}}
     records = [
         {'elapsed_s':1,'event':{'type':'agent_start'}},

@@ -18,7 +18,7 @@ from bench.runtime import ensure_project_runtime
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--arm', choices=ARMS, default='pi-acu')
-    parser.add_argument('--scenario', choices=SCENARIOS, default='calculator')
+    parser.add_argument('--scenario', choices=SCENARIOS, required=True)
     parser.add_argument('--desktop-approved', action='store_true')
     parser.add_argument('--native-transport', choices=('sdk-helper', 'app-pipe'), default='sdk-helper')
     args = parser.parse_args()

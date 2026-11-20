@@ -20,7 +20,7 @@ live = True
 supports_interrupted_exclusion = True
 credential = ('.pi/agent/auth.json', 'auth.json')
 
-MODEL = 'gpt-6-astra'
+MODEL = 'gpt-6.2-astra'
 PI_PROVIDER = 'openai-codex'
 REASONING = 'low'
 # Freeze normal Pi session recovery so retries/compaction remain reproducible within the same scheduled trial.
@@ -35,6 +35,9 @@ NATIVE_TOOLS = ['mcp__node_repl__js', 'mcp__node_repl__js_reset',
 
 recovery_policy = PI_RECOVERY_POLICY
 model, reasoning = MODEL, REASONING
+# Pi's built-in catalog lags new models; `pi update --models` refreshes this store, and each profile copies the
+# benchmark provider's entry from it so the offline actor can select MODEL.
+MODEL_CATALOG = Path.home() / '.pi/agent/models-store.json'
 
 
 # Bypass the Windows .cmd shim so prompts never pass through cmd.exe parsing. The managed installer (Pi 1.4)
@@ -394,6 +397,15 @@ def sky_version(node_repl):
     return json.loads(package.read_text(encoding='utf-8'))['version'] if package.is_file() else None
 
 
+# The benchmark provider's entry of the user's refreshed model store; other providers stay out of the profile.
+def provider_catalog():
+    store = json.loads(MODEL_CATALOG.read_text(encoding='utf-8')) if MODEL_CATALOG.is_file() else {}
+    entry = store.get(PI_PROVIDER)
+    if not entry or MODEL not in {item.get('id') for item in entry.get('models', [])}:
+        raise ValueError(f'{MODEL_CATALOG} does not list {PI_PROVIDER}/{MODEL}; run `pi update --models` first')
+    return {PI_PROVIDER: entry}
+
+
 # Build only the selected skill/runtime profile; scenario permissions arrive from the scenario adapter.
 def profile(arm, run_dir, prompt, skill, native_config, native_transport, approved_apps):
     home = run_dir / 'agent-home'
@@ -412,8 +424,10 @@ def profile(arm, run_dir, prompt, skill, native_config, native_transport, approv
         if not Path(settings['shellPath']).is_file():
             raise FileNotFoundError(settings['shellPath'])
     save_json(home / 'settings.json', settings)
+    save_json(home / 'models-store.json', provider_catalog())
     result = {'skill': skill, 'command': pi_command(run_dir, skill, prompt, native=arm.native),
-              'environment_overrides': {'PI_CODING_AGENT_DIR': str(home), 'PI_OFFLINE': '1'}, 'provider': PI_PROVIDER}
+              'environment_overrides': {'PI_CODING_AGENT_DIR': str(home), 'PI_OFFLINE': '1'}, 'provider': PI_PROVIDER,
+              'model_catalog_sha256': hashlib.sha256((home / 'models-store.json').read_bytes()).hexdigest()}
     if arm.native:
         result.update(native_transport=native_transport, native_sky_version=sky_version(bridge['command']),
                       mcp_config_sha256=hashlib.sha256((home / 'mcp.json').read_bytes()).hexdigest(),

@@ -452,7 +452,7 @@ def test_illustrator_conduct_keeps_resource_tampering_gated_and_window_changes_d
     assert scratch['writes_outside_workspace'], 'retain diagnostic evidence without a hidden disqualifier'
     guarded = conduct_audit(plan, before, before, {'protected': 'original'}, {'protected': 'changed'}, outside)
     assert not guarded['passed'] and guarded['problems'] == ['guarded files changed']
-    stray = conduct_audit(plan, before, 'window=1 pid=5\nwindow=9 pid=8\ncalculator=9\npid=8\n', {}, {}, [])
+    stray = conduct_audit(plan, before, 'window=1 pid=5\nwindow=9 pid=8\n', {}, {}, [])
     assert stray['passed'] and stray['windows']['new_non_calculator'] == ['9']
     shadow_before = 'window=1 pid=5\nwindow=2 pid=8\nwindow=3 pid=8\nclass=2 SysShadow\nclass=3 illustrator\nillustrator=3\npid=8\n'
     shadow_after = 'window=1 pid=5\nwindow=3 pid=8\nillustrator=3\npid=8\n'

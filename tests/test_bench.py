@@ -9,7 +9,7 @@ def test_pi_launch_exposes_only_selected_skill_with_fixed_model_and_reasoning(tm
     command = pi_command(tmp_path, tmp_path / 'acu', 'task')
     assert command[1:6] == ['-ne', '-ns', '-nc', '-np', '--no-themes']
     assert command[command.index('--skill') + 1] == str(tmp_path / 'acu')
-    assert command[command.index('--model') + 1] == 'openai-codex/gpt-6-astra'
+    assert command[command.index('--model') + 1] == 'openai-codex/gpt-6.2-astra'
     assert command[command.index('--thinking') + 1] == 'low'
     assert command[command.index('--tools') + 1] == 'read,bash,edit,write'
     assert '--continue' not in command and '--resume' not in command
@@ -208,7 +208,7 @@ def test_controller_preserves_actor_outcome_and_separates_maintainer_export_fail
     credential = tmp_path / 'fixture-auth.json'
     credential.write_text('{}', encoding='utf-8')
     monkeypatch.setattr(bench.ARM_TABLE['pi-acu'].harness, 'credential', (str(credential), 'auth.json'))
-    entries = [{'type': 'model_change', 'provider': 'openai-codex', 'modelId': 'gpt-6-astra'},
+    entries = [{'type': 'model_change', 'provider': 'openai-codex', 'modelId': 'gpt-6.2-astra'},
                {'type': 'thinking_level_change', 'thinkingLevel': 'low'},
                {'type': 'message', 'message': {'role': 'system', 'sections': {'skills': '<name>acu</name>'},
                 'toolsAdded': [{'name': name} for name in TOOLS]}}]
@@ -327,7 +327,7 @@ def test_model_timing_includes_wait_before_pi_emits_message_start():
 
 def test_isolation_audit_rejects_extra_skills_context_wrong_reasoning_and_wrong_provider():
     entries = [
-        {'type': 'model_change', 'provider': 'openai-codex', 'modelId': 'gpt-6-astra'},
+        {'type': 'model_change', 'provider': 'openai-codex', 'modelId': 'gpt-6.2-astra'},
         {'type': 'thinking_level_change', 'thinkingLevel': 'low'},
         {'type': 'message', 'message': {'role': 'system', 'sections': {'skills': '<name>acu</name>', 'cwd': '/work'}, 'toolsAdded': [{'name': n} for n in ['read', 'bash', 'edit', 'write']]}},
     ]

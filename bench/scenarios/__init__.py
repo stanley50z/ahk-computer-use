@@ -2,7 +2,6 @@
 from functools import partial
 from typing import Callable
 
-from bench.calculator import CalculatorScenario
 from bench.scenario import Scenario
 from bench.tb3 import TASKS, TB3Scenario
 
@@ -14,7 +13,6 @@ def illustrator_scenario() -> Scenario:
 
 
 SCENARIOS: dict[str, Callable[[], Scenario]] = {
-    'calculator': CalculatorScenario,
     'illustrator-pen-tool': illustrator_scenario,
     **{name: partial(TB3Scenario, name) for name in TASKS},
 }

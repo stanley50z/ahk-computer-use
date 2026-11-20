@@ -92,8 +92,8 @@ def test_native_app_pipe_transport_keeps_the_app_pipe_and_records_it(tmp_path):
         'SKY_CUA_NATIVE_PIPE': '1', 'SKY_CUA_NATIVE_PIPE_DIRECTORY': r'\\.\pipe\codex-computer-use-test'}}}}
     builtin_root = tmp_path / 'builtin'
     builtin_root.mkdir()
-    helper = prepare('pi-computer-use', tmp_path / 'helper-run', skill=skill_fixture(tmp_path, 'computer-use'), native_config=source_config)
-    pipe = prepare('pi-computer-use', tmp_path / 'pipe-run', skill=tmp_path / 'computer-use', native_config=source_config, native_transport='app-pipe')
+    helper = prepare('pi-computer-use', tmp_path / 'helper-run', scenario='tb3.1', skill=skill_fixture(tmp_path, 'computer-use'), native_config=source_config)
+    pipe = prepare('pi-computer-use', tmp_path / 'pipe-run', scenario='tb3.1', skill=tmp_path / 'computer-use', native_config=source_config, native_transport='app-pipe')
     helper_env = json.loads((tmp_path / 'helper-run/agent-home/mcp.json').read_text(encoding='utf-8'))['mcpServers']['node_repl']['env']
     pipe_env = json.loads((tmp_path / 'pipe-run/agent-home/mcp.json').read_text(encoding='utf-8'))['mcpServers']['node_repl']['env']
     assert helper_env['SKY_CUA_NATIVE_PIPE'] == '0' and 'SKY_CUA_NATIVE_PIPE_DIRECTORY' not in helper_env
@@ -101,4 +101,4 @@ def test_native_app_pipe_transport_keeps_the_app_pipe_and_records_it(tmp_path):
     assert pipe_env['SKY_CUA_NATIVE_PIPE'] == '1' and pipe_env['SKY_CUA_NATIVE_PIPE_DIRECTORY'] == r'\\.\pipe\codex-computer-use-test'
     assert pipe['native_transport'] == 'app-pipe' and pipe['native_pipe'] == r'\\.\pipe\codex-computer-use-test'
     with pytest.raises(ValueError):
-        prepare('pi-computer-use', tmp_path / 'bad-run', skill=tmp_path / 'computer-use', native_config={'mcp_servers': {'node_repl': {'command': 'x', 'env': {}}}}, native_transport='app-pipe')
+        prepare('pi-computer-use', tmp_path / 'bad-run', scenario='tb3.1', skill=tmp_path / 'computer-use', native_config={'mcp_servers': {'node_repl': {'command': 'x', 'env': {}}}}, native_transport='app-pipe')

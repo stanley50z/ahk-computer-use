@@ -20,3 +20,5 @@ auth.json
 
 # Third-party Cloud9 artwork, built locally by bench/build_reference.py and never redistributed.
 /bench/assets/illustrator-pen-tool/Cloud9-Reference.*
+# Adobe GUDE logs Illustrator writes beside the bench scripts
+bench/illustrator/gude-*.log

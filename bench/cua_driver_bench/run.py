@@ -3,6 +3,7 @@ r"""Run Cua Driver Bench's Windows tasks against ACU, one trial at a time, resum
     python run.py --bench "<cua checkout>/libs/cua-driver-bench/automated-eval/macos_bench" \
         --python "<Python 3.12 with wxPython>" --out "<results dir>" \
         [--tasks MB-09 ...] [--conditions foreground background] [--runs 5] [--model claude-sonnet-5-5] \
+        [--effort medium] \
         [--display \\.\DISPLAY2] [--tool-exe "Cua Spaces.exe" ...]
 
 Without --tasks it runs every Bench v2 task the manifest lists for Windows, in manifest order; each task
@@ -62,6 +63,7 @@ def main() -> int:
     parser.add_argument("--conditions", nargs="*", default=["foreground", "background"])
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--model", default="claude-sonnet-5-5")
+    parser.add_argument("--effort", default="medium")
     parser.add_argument("--timeout", default="360")
     parser.add_argument("--retries", type=int, default=2)
     parser.add_argument("--tool-exe", action="append", default=[])
@@ -70,7 +72,7 @@ def main() -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     log = (args.out / "run.log").open("a", encoding="utf-8", buffering=1)
     plan = schedule(args.bench.resolve(), args.tasks, args.conditions, args.runs)
-    log.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} plan {len(plan)} trials, model {args.model}\n")
+    log.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} plan {len(plan)} trials, model {args.model}, effort {args.effort}\n")
     for task, condition, index in plan:
         if (args.out / "STOP").exists():
             log.write(f"{time.strftime('%H:%M:%S')} STOP file found, stopping\n")
@@ -85,7 +87,7 @@ def main() -> int:
                 "--task", task, "--run-index", str(index), "--condition", condition, "--out", str(trial),
                 "--label", "acu", "--timeout", args.timeout,
                 *[part for exe in args.tool_exe for part in ("--tool-exe", exe)],
-                "--", sys.executable, str(AGENT), "--model", args.model,
+                "--", sys.executable, str(AGENT), "--model", args.model, "--effort", args.effort,
             ]
             started = time.monotonic()
             done = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace")

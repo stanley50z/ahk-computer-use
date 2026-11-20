@@ -1,5 +1,6 @@
 """Profile preparation is offline and does not launch an agent or touch the desktop."""
 
+import hashlib
 import json
 import pytest
 
@@ -15,6 +16,16 @@ def test_interrupted_turn_exclusion_is_offline_only_and_does_not_prepare_a_trial
                              '--exclude-interrupted-turns'], capture_output=True, text=True, encoding='utf-8', timeout=15)
     assert result.returncode != 0 and 'only available for offline analyse' in result.stderr
     assert not target.exists()
+
+
+# A harness without its own resolver launches through the plain PATH lookup; Claude Code lost its re-exported
+# resolver as an "unused" import on 2026-11-11, which would have crashed every Claude trial at launch.
+@pytest.mark.parametrize('command', ['claude', 'codex', 'some-tool'])
+def test_harnesses_without_a_resolver_use_the_plain_path_lookup(monkeypatch, command):
+    import bench.common
+    from bench.run import executable_command
+    monkeypatch.setattr(bench.common, 'executable_command', lambda line: ['resolved', *line])
+    assert executable_command([command, '--version']) == ['resolved', command, '--version']
 
 
 @pytest.mark.parametrize('entry', ['pi-launcher.js', 'node_modules/@earendil-works/pi-coding-agent/dist/cli.js'])
@@ -65,7 +76,7 @@ def test_preparation_disables_snippets_before_actor_start(tmp_path, monkeypatch,
     global_file.write_text('{"snippets": {"enabled": true}}', encoding='utf-8')
     monkeypatch.setenv('ACU_SETTINGS_FILE', str(global_file))
     native = {'mcp_servers': {'node_repl': {'command': 'native-fixture', 'args': []}}}
-    plan = prepare(arm, tmp_path / 'trial', skill=skill_fixture(tmp_path, 'skill'), native_config=native)
+    plan = prepare(arm, tmp_path / 'trial', scenario='tb3.1', skill=skill_fixture(tmp_path, 'skill'), native_config=native)
     workspace = Path(plan['workspace'])
     setting = workspace / '.ahk-computer-use/settings.json'
     assert json.loads(setting.read_text(encoding='utf-8')) == {'snippets': {'enabled': False}}
@@ -76,7 +87,7 @@ def test_preparation_disables_snippets_before_actor_start(tmp_path, monkeypatch,
 
 def test_stale_provider_profile_is_rejected_before_actor_or_desktop_startup(tmp_path):
     from bench.run import run_trial
-    plan = prepare('pi-acu', tmp_path/'trial', skill=skill_fixture(tmp_path, 'acu'))
+    plan = prepare('pi-acu', tmp_path/'trial', scenario='tb3.1', skill=skill_fixture(tmp_path, 'acu'))
     plan['provider'] = 'openai'
     with pytest.raises(ValueError, match='explicit provider'):
         run_trial(plan)
@@ -109,16 +120,16 @@ def test_actor_prompt_paths_use_the_current_user_root_without_exposing_the_accou
     assert plan['skill_path'] == str(skill / 'SKILL.md')
 
 
-@pytest.mark.parametrize('scenario', ['calculator', 'illustrator-pen-tool'])
+@pytest.mark.parametrize('scenario', ['tb3.1', 'illustrator-pen-tool'])
 def test_prepare_pi_arms_share_scenario_and_do_not_inherit_user_configuration(tmp_path, scenario):
     acu = prepare('pi-acu', tmp_path / 'acu-run', scenario=scenario, skill=skill_fixture(tmp_path, 'acu'))
     cua = prepare('pi-cua', tmp_path / 'cua-run', scenario=scenario, skill=skill_fixture(tmp_path, 'cua-driver'))
     assert acu['scenario_sha256'] == cua['scenario_sha256']
-    assert acu['model'] == cua['model'] == 'gpt-6-astra'
+    assert acu['model'] == cua['model'] == 'gpt-6.2-astra'
     assert acu['provider'] == cua['provider'] == 'openai-codex'
     for profile in (acu, cua):
         command = profile['command']
-        assert command[command.index('--model') + 1] == 'openai-codex/gpt-6-astra'
+        assert command[command.index('--model') + 1] == 'openai-codex/gpt-6.2-astra'
     assert acu['reasoning'] == cua['reasoning'] == 'low'
     assert acu['skill_names'] == ['acu']
     assert cua['skill_names'] == ['cua-driver']
@@ -134,19 +145,29 @@ def test_prepare_pi_arms_share_scenario_and_do_not_inherit_user_configuration(tm
         assert plan['recovery_policy'] == {'retry': settings['retry'], 'compaction': settings['compaction']}
         assert not (run_dir / 'agent-home/APPEND_SYSTEM.md').exists()
         assert (run_dir / 'workspace').is_dir()
+        store = (run_dir / 'agent-home/models-store.json').read_bytes()
+        assert list(json.loads(store)) == ['openai-codex']
+        assert plan['model_catalog_sha256'] == hashlib.sha256(store).hexdigest()
 
 
-@pytest.mark.parametrize('scenario', ['calculator', 'illustrator-pen-tool'])
+# Pi's offline actor can select only models in its profile's store, so preparation stops before the run instead.
+def test_prepare_pi_refuses_a_model_store_without_the_benchmark_model(tmp_path, pi_model_catalog):
+    pi_model_catalog.write_text(json.dumps({'openai-codex': {'models': [{'id': 'gpt-6-astra'}]}}), encoding='utf-8')
+    with pytest.raises(ValueError, match='pi update --models'):
+        prepare('pi-acu', tmp_path / 'trial', scenario='tb3.1', skill=skill_fixture(tmp_path, 'acu'))
+
+
+@pytest.mark.parametrize('scenario', ['tb3.1', 'illustrator-pen-tool'])
 @pytest.mark.parametrize('arm,skill_name', [('claude-acu', 'acu'), ('claude-cua', 'cua-driver')])
 def test_prepare_claude_arm_runs_opus_low_in_safe_mode_with_only_four_tools(tmp_path, arm, skill_name, scenario):
     plan = prepare(arm, tmp_path / 'claude-run', scenario=scenario, skill=skill_fixture(tmp_path, skill_name))
     command = plan['command']
-    assert (plan['model'], plan['reasoning']) == ('claude-opus-5-5', 'low')
+    assert (plan['model'], plan['reasoning']) == ('claude-fable-5-2', 'low')
     assert plan['skill_names'] == [skill_name]
     assert command[:2] == ['claude', '-p']
     for flag in ('--safe-mode', '--disable-slash-commands', '--strict-mcp-config', '--include-partial-messages', '--verbose'):
         assert flag in command
-    assert command[command.index('--model') + 1] == 'claude-opus-5-5'
+    assert command[command.index('--model') + 1] == 'claude-fable-5-2'
     assert command[command.index('--effort') + 1] == 'low'
     assert command[command.index('--tools') + 1] == 'Read,Write,Edit,Bash'
     assert command[command.index('--setting-sources') + 1] == 'user'
@@ -162,11 +183,11 @@ def test_prepare_claude_arm_runs_opus_low_in_safe_mode_with_only_four_tools(tmp_
     assert not (tmp_path / 'claude-run/agent-home/.credentials.json').exists()
     pi = prepare('pi-acu', tmp_path / 'acu-run', scenario=scenario, skill=skill_fixture(tmp_path, 'acu-pi'))
     assert plan['scenario_sha256'] == pi['scenario_sha256']
-    assert (pi['model'], pi['reasoning']) == ('gpt-6-astra', 'low')
+    assert (pi['model'], pi['reasoning']) == ('gpt-6.2-astra', 'low')
 
 
-@pytest.mark.parametrize('scenario,allowed,forbidden', [('calculator', 'calc.exe', 'Illustrator.exe'),
-                                                     ('illustrator-pen-tool', 'Illustrator.exe', 'calc.exe')])
+@pytest.mark.parametrize('scenario,allowed,forbidden', [('tb3.1', 'EXCEL.EXE', 'Illustrator.exe'),
+                                                     ('illustrator-pen-tool', 'Illustrator.exe', 'EXCEL.EXE')])
 def test_prepare_pi_native_keeps_the_same_gpt_profile_and_only_native_mcp(tmp_path, scenario, allowed, forbidden):
     source_config = {'mcp_servers': {'node_repl': {'command': str(tmp_path / 'native-node.exe'), 'args': ['--fixture'],
                                                    'env': {'SKY_CUA_NATIVE_PIPE': '1', 'SKY_CUA_NATIVE_PIPE_DIRECTORY': 'old-pipe'}}}}
@@ -197,10 +218,10 @@ def test_prepare_pi_native_keeps_the_same_gpt_profile_and_only_native_mcp(tmp_pa
     settings = json.loads((tmp_path / 'native-run/agent-home/settings.json').read_text(encoding='utf-8'))
     assert settings['retry']['enabled'] and settings['compaction']['enabled']
     assert plan['recovery_policy'] == {'retry': settings['retry'], 'compaction': settings['compaction']}
-    assert (plan['model'], plan['reasoning']) == ('gpt-6-astra', 'low')
+    assert (plan['model'], plan['reasoning']) == ('gpt-6.2-astra', 'low')
     assert plan['provider'] == 'openai-codex'
     command = plan['command']
-    assert command[command.index('--model') + 1] == 'openai-codex/gpt-6-astra'
+    assert command[command.index('--model') + 1] == 'openai-codex/gpt-6.2-astra'
     assert command[0] == 'pi' and '--no-mcp' not in command
     assert command[command.index('-e') + 1] == 'builtin:mcp'
     assert command[command.index('--tools') + 1] == 'read,bash,edit,write,mcp__node_repl__js,mcp__node_repl__js_reset,mcp__node_repl__js_add_node_module_dir,mcp__node_repl__turn_ended'
@@ -208,4 +229,4 @@ def test_prepare_pi_native_keeps_the_same_gpt_profile_and_only_native_mcp(tmp_pa
     assert not (tmp_path / 'native-run/agent-home/config.toml').exists()
     assert ARMS == ('pi-acu', 'pi-cua', 'pi-computer-use', 'claude-acu', 'claude-cua')
     with pytest.raises(ValueError, match='unknown arm'):
-        prepare('codex-computer-use', tmp_path / 'retired-run')
+        prepare('codex-computer-use', tmp_path / 'retired-run', scenario='tb3.1')

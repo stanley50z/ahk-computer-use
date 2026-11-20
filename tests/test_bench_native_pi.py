@@ -5,7 +5,7 @@ from bench.harnesses.pi import NATIVE_TOOLS, TOOLS, audit_pi_session
 
 def test_native_pi_audit_accepts_only_the_selected_runtime_and_frozen_model():
     entries = [
-        {'type': 'model_change', 'provider': 'openai-codex', 'modelId': 'gpt-6-astra'},
+        {'type': 'model_change', 'provider': 'openai-codex', 'modelId': 'gpt-6.2-astra'},
         {'type': 'thinking_level_change', 'thinkingLevel': 'low'},
         {'type': 'message', 'message': {'role': 'system',
             'sections': {'skills': '<name>computer-use</name>'},
@@ -13,7 +13,7 @@ def test_native_pi_audit_accepts_only_the_selected_runtime_and_frozen_model():
         {'type': 'message', 'message': {'role': 'system',
             'sections': {'mcp_servers': 'node_repl native desktop'},
             'toolsAdded': [{'name': name} for name in NATIVE_TOOLS]}},
-        {'type': 'message', 'message': {'role': 'assistant', 'model': 'gpt-6-astra', 'thinkingLevel': 'low',
+        {'type': 'message', 'message': {'role': 'assistant', 'model': 'gpt-6.2-astra', 'thinkingLevel': 'low',
             'content': [{'type': 'toolCall', 'name': 'mcp__node_repl__js', 'arguments': {'code': 'await sky.list_apps()'}}]}},
     ]
     assert audit_pi_session(entries, 'computer-use')['passed']

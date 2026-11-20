@@ -11,7 +11,7 @@ from bench.harnesses.pi import PI_PROVIDER
 
 
 # Give real measurement/audit code a small, complete Pi session in an isolated fake home.
-def trial_plan(tmp_path, monkeypatch, scenario='calculator'):
+def trial_plan(tmp_path, monkeypatch, scenario):
     home, shared, directory = [tmp_path / name for name in ('home', 'temp', 'trial')]
     for path in (home / '.pi/agent', shared, directory / 'workspace', directory / 'agent-home'):
         path.mkdir(parents=True)
@@ -93,7 +93,35 @@ def test_new_scenario_uses_the_shared_trial_lifecycle(tmp_path, monkeypatch):
     assert not (directory / 'agent-home/auth.json').exists()
 
 
-@pytest.mark.parametrize('name', ['calculator', 'illustrator-pen-tool', 'tb3.1', 'tb3.2', 'tb3.3', 'tb3.4'])
+# The actor's harness refreshes the expired login in its private copy; the next trial must get the new token,
+# because OpenAI refresh tokens are single-use (2026-11-19 round: refresh_token_reused on every later Pi trial).
+def test_a_login_refreshed_during_the_trial_replaces_the_saved_login(tmp_path, monkeypatch):
+    plan = trial_plan(tmp_path, monkeypatch, scenario='new-scenario')
+    saved = Path.home() / '.pi/agent/auth.json'
+
+    def capture(command, cwd, environment, directory):
+        Path(directory, 'agent-home/auth.json').write_text('{"refreshed": true}', encoding='utf-8')
+        return actor_capture(command, cwd, environment, directory)
+
+    run.run(plan, scenario=fake_scenario([]), capture_actor=capture, observer=lambda *args, **kwargs: '')
+    assert saved.read_text(encoding='utf-8') == '{"refreshed": true}'
+    assert run.load_actor_json(Path(plan['run_dir']) / 'login-writeback.json') == {'refreshed_login_kept': True}
+    assert not Path(plan['run_dir'], 'agent-home/auth.json').exists()
+
+
+# Unchanged copies change nothing, and a sign-in made while the trial ran is newer than the trial's refresh.
+@pytest.mark.parametrize('private, saved_now, kept', [(None, 'old', False), ('old', 'old', False),
+                                                      ('refreshed', 'signed in again', False), ('refreshed', 'old', True)])
+def test_refreshed_login_write_back_never_overwrites_a_newer_login(tmp_path, private, saved_now, kept):
+    credential, copy = tmp_path / 'auth.json', tmp_path / 'private-auth.json'
+    credential.write_text(saved_now, encoding='utf-8')
+    if private is not None:
+        copy.write_text(private, encoding='utf-8')
+    assert run.keep_refreshed_login(credential, copy, b'old') is kept
+    assert credential.read_text(encoding='utf-8') == (private if kept else saved_now)
+
+
+@pytest.mark.parametrize('name', ['illustrator-pen-tool', 'tb3.1', 'tb3.2', 'tb3.3', 'tb3.4'])
 def test_registered_scenarios_preserve_summary_cleanup_and_collection_order(tmp_path, monkeypatch, name):
     from bench import illustrator_pen_tool as illustrator, tb3
 
@@ -155,7 +183,7 @@ def test_registered_scenarios_preserve_summary_cleanup_and_collection_order(tmp_
         phase = Path(script).stem + kwargs.get('suffix', '')
         events.append(phase)
         if phase == 'probe-conduct':
-            assert (directory / 'verification.json').exists() is (name == 'calculator')
+            assert not (directory / 'verification.json').exists()
         return ''
 
     def capture(*args):
@@ -170,8 +198,7 @@ def test_registered_scenarios_preserve_summary_cleanup_and_collection_order(tmp_
     common = {'arm', 'model', 'reasoning', 'exit_code', 'benchmark', 'diagnostics', 'passed', 'unexpected_failure',
               'recovered_provider_errors', 'metrics', 'evidence_dir', 'isolation_passed', 'task_passed',
               'conduct_passed', 'conduct_problems', 'cleanup_passed'}
-    detail = {'calculator': set(),
-              'illustrator-pen-tool': {'scenario', 'output_image', 'quality', 'problems', 'drawing_passed',
+    detail = {'illustrator-pen-tool': {'scenario', 'output_image', 'quality', 'problems', 'drawing_passed',
                                        'infrastructure_failure', 'safeguard_violations'}}.get(
         name, {'scenario', 'gui360_id', 'file_check', 'input_check', 'office_com_used', 'tool_calls'})
     assert set(summary) == common | detail
@@ -182,13 +209,7 @@ def test_registered_scenarios_preserve_summary_cleanup_and_collection_order(tmp_
     assert summary['evidence_dir'] == str(directory)
     assert summary['isolation_passed'] and summary['conduct_passed'] and summary['cleanup_passed']
     assert summary['conduct_problems'] == []
-    if name == 'calculator':
-        assert summary['passed'] is False and summary['task_passed'] is False
-        assert run.load_actor_json(directory / 'verification.json') == {'passed': False, 'reason': 'agent did not write result.json'}
-        assert cleanup == {'passed': True, 'remaining_new_calculator_windows': [], 'cursor_scheme_restored': True,
-                           'cursor_verification': 'Saved Windows scheme reloaded and OS showing flag checked; not a pixel-level visibility proof.'}
-        assert events == ['probe-before', 'actor', 'probe-conduct', 'probe-cleanup-bind', 'probe-after', 'restore_cursor']
-    elif name == 'illustrator-pen-tool':
+    if name == 'illustrator-pen-tool':
         assert summary['passed'] is True and summary['drawing_passed'] is summary['task_passed'] is True
         assert summary['scenario'] == name
         assert summary['output_image'] == 'grading/Cloud9-Recreated.png'
@@ -361,40 +382,6 @@ def test_crash_after_the_summary_fails_it_and_lists_the_crash(tmp_path, monkeypa
     assert summary['safeguard_violations'] == ['worker or cleanup failed; inspect crash.txt']
 
 
-def test_calculator_verifies_observed_result_and_closes_only_its_window(tmp_path, monkeypatch):
-    plan = trial_plan(tmp_path, monkeypatch)
-    directory = Path(plan['run_dir'])
-    events = []
-    claim = {'status': 'completed', 'result': '4676.04588620271'}
-
-    def capture(*args):
-        run.save_json(directory / 'workspace/result.json', claim)
-        return actor_capture(*args)
-
-    def observer(directory, script, *args, **kwargs):
-        phase = Path(script).stem + kwargs.get('suffix', '')
-        events.append(phase)
-        if phase in ('probe-bind', 'probe-cleanup-bind', 'probe-conduct'):
-            return 'window=100 pid=9\ncalculator=100\npid=9\n'
-        if phase == 'verify':
-            assert args == ('100',)
-            return 'result=4,676.04588620271\nexpression=98765 × 432 ÷ 1234 × 56 ÷ 789 + 6543 − 4321\n'
-        if phase == 'cleanup':
-            assert args == ('100', 9)
-        return ''
-
-    summary = run.run(plan, capture_actor=capture, observer=observer)
-    assert summary['passed'] is True
-    assert run.load_actor_json(directory / 'verification.json') == {
-        'passed': True, 'hwnd': '100', 'observed_result': '4,676.04588620271',
-        'observed_expression': '98765 × 432 ÷ 1234 × 56 ÷ 789 + 6543 − 4321',
-        'expected': '4676.045886202710280949769213229720652488',
-        'screenshot': str(directory / 'calculator-result.png'), 'claim': claim,
-        'script_audit': {'input_methods_by_script': {}, 'note': 'Static screening of workspace scripts for the report; the scenario names no input route. Not a security boundary.'}}
-    assert events == ['probe-before', 'probe-bind', 'verify', 'screenshot', 'probe-conduct',
-                      'probe-cleanup-bind', 'cleanup', 'probe-after', 'restore_cursor']
-
-
 def test_registering_one_adapter_enables_prepare_and_run(tmp_path, monkeypatch):
     from bench.scenarios import SCENARIOS
 
@@ -413,7 +400,7 @@ def test_registering_one_adapter_enables_prepare_and_run(tmp_path, monkeypatch):
     (prompts / 'new-scenario.md').write_text('# New scenario v1\nUse <WORKSPACE>/input.txt.\n', encoding='utf-8')
     monkeypatch.setattr(run, 'ROOT', checkout)
     # Reuse isolated credentials; preparation must create its own fresh trial directory.
-    fixture = trial_plan(tmp_path, monkeypatch)
+    fixture = trial_plan(tmp_path, monkeypatch, 'new-scenario')
     skill = Path(fixture['workspace']) / 'acu'
     skill.mkdir()
     (skill / 'SKILL.md').write_text('fixture skill', encoding='utf-8')

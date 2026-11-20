@@ -30,7 +30,7 @@ def events(harness, path, *, failed=False, command=None, body=None):
 def audit(tmp_path, records, before, after):
     analyse = analyse_pi if records[0]['event']['type'].startswith('tool_') else analyse_claude
     tools = analyse(records, 2)['tools']
-    return conduct_audit({'workspace': str(tmp_path), 'skill_path': str(tmp_path / 'skill/SKILL.md')},
+    return conduct_audit({'workspace': str(tmp_path), 'run_dir': str(tmp_path), 'skill_path': str(tmp_path / 'skill/SKILL.md'), 'scenario': 'tb3.1'},
                          '', '', {}, {}, tools,
                          runtime_before=before, runtime_after=after)
 
@@ -190,7 +190,7 @@ def test_runtime_audit_covers_shell_requests_only(tmp_path, harness, item, audit
         tools = analyse_pi(records, 2)['tools']
     else:
         tools = analyse_pi(events('pi', path)[1:], 2)['tools']
-    result = conduct_audit({'workspace': str(tmp_path), 'skill_path': str(tmp_path / 'skill/SKILL.md')}, '', '', {}, {}, tools,
+    result = conduct_audit({'workspace': str(tmp_path), 'run_dir': str(tmp_path), 'skill_path': str(tmp_path / 'skill/SKILL.md'), 'scenario': 'tb3.1'}, '', '', {}, {}, tools,
                            runtime_before=snapshot({}), runtime_after=snapshot({path: {'device': 1, 'inode': 2, 'size': 16, 'mtime_ns': 200}}))
     assert result['runtime_writes']['audited_shell_calls'] == audited
     assert result['runtime_writes']['unverified_calls'] == (

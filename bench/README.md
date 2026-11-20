@@ -1,6 +1,8 @@
 # Computer-use test bench
 
-The scenarios are **Calculator** (`calculator`, the default), **Adobe Illustrator Pen Tool** (`illustrator-pen-tool`, drawing-only since v0.11), and the Office tasks **TB3.1–TB3.4** (`tb3.1` … `tb3.4`). Each scenario supports the five configurations below. An individual configuration is an arm; a request to run a benchmark means fresh sequential trials of all five arms unless the user explicitly selects a subset. Each CLI invocation prepares or runs one trial, not a whole comparison round.
+The scenarios are **Adobe Illustrator Pen Tool** (`illustrator-pen-tool`, drawing-only since v0.11) and the Office tasks **TB3.1–TB3.4** (`tb3.1` … `tb3.4`). `prepare`, `run` and `start.py` require `--scenario`; there is no default. Each scenario supports the five configurations below. An individual configuration is an arm; a request to run a benchmark means fresh sequential trials of all five arms unless the user explicitly selects a subset. Each CLI invocation prepares or runs one trial, not a whole comparison round.
+
+Calculator (TB1) is permanently removed from the benches by the user's decision: it left the reports on 2026-11-06 and the bench code on 2026-11-19. Archived Calculator runs stay on disk and `analyse` still reads them, but no Calculator trial can be prepared or run.
 
 **TB4** is Cua Driver Bench run with ACU as the driver. It has its own harness in [`cua_driver_bench/`](cua_driver_bench/README.md), runs only the Claude Code + ACU configuration, and compares against the bench's published runs of other drivers.
 
@@ -33,9 +35,6 @@ bench/
 ├── cua_driver_bench/              ACU as a setup of Cua Driver Bench (its own README)
 ├── probe.ahk                      Shared desktop/window observer
 ├── restore_cursor.ahk             Shared post-trial cursor restoration
-├── calculator/
-│   ├── verify.ahk                 Calculator display verification
-│   └── cleanup.ahk                Owned Calculator window cleanup
 ├── illustrator_pen_tool.py      Illustrator preparation, grading and cleanup
 ├── illustrator/                   Maintainer-only application automation
 │   ├── ensure.ahk
@@ -51,7 +50,6 @@ bench/
 ├── office/
 │   └── window.ahk                 Owned Office activation/dialog handling
 ├── scenarios/                     Actor task prompts
-│   ├── calculator.md
 │   ├── illustrator-pen-tool.md
 │   └── tb3.1.md … tb3.4.md
 └── assets/
@@ -80,13 +78,13 @@ Compare five fresh configurations, grouped by a fixed model and harness. Compare
 
 | Arm | Harness / model | Only computer-use skill/runtime |
 | --- | --- | --- |
-| `pi-acu` | Pi / GPT-6 Astra, low reasoning | Project ACU skill and CLI |
-| `pi-cua` | Pi / GPT-6 Astra, low reasoning | Installed `cua-driver` skill and CLI |
-| `pi-computer-use` | Pi / GPT-6 Astra, low reasoning | Codex computer use: installed `computer-use` skill and `@oai/sky` through `node_repl` MCP |
-| `claude-acu` | Claude Code / Opus 5.5, low effort | Project ACU skill and CLI |
-| `claude-cua` | Claude Code / Opus 5.5, low effort | Installed `cua-driver` skill and CLI |
+| `pi-acu` | Pi / GPT-6.2 Astra, low reasoning | Project ACU skill and CLI |
+| `pi-cua` | Pi / GPT-6.2 Astra, low reasoning | Installed `cua-driver` skill and CLI |
+| `pi-computer-use` | Pi / GPT-6.2 Astra, low reasoning | Codex computer use: installed `computer-use` skill and `@oai/sky` through `node_repl` MCP |
+| `claude-acu` | Claude Code / Fable 5.2, low effort | Project ACU skill and CLI |
+| `claude-cua` | Claude Code / Fable 5.2, low effort | Installed `cua-driver` skill and CLI |
 
-The user selected **GPT-6 Astra (`openai-codex/gpt-6-astra`) at low reasoning** for all three Pi arms and retained **Opus 5.5 (`claude-opus-5-5`) at low effort** for Claude Code. The explicit legacy `openai-codex` provider replaces `openai` for new Pi profiles after the latter returned an OAuth refresh `invalid_grant` during a benchmark actor run. This is a requested provider choice, not an automatic fallback or a main-session authentication failure. Prepared plans record `provider`, and launch/isolation/aggregation reject the wrong provider; old cancelled profiles are not resumed or silently pooled. Model ID, low reasoning, task and computer-use runtimes are unchanged, but provider-specific model metadata/context limits may differ, so comparisons must retain the provider identity. This also supersedes the GPT-6.1/four-arm configuration for new trials; historical manifests and reports retain their original providers, models and arm names. The standalone `codex-computer-use` arm is no longer a launch option. Its archived events remain analysable; Pi now hosts the Codex computer-use runtime for the matched GPT comparison.
+Since 2026-11-19 ([issue #52](https://github.com/stanley50z/ahk-computer-use/issues/52)) the three Pi arms run **GPT-6.2 Astra (`openai-codex/gpt-6.2-astra`) at low reasoning** and the Claude Code arms **Fable 5.2 (`claude-fable-5-2`) at low effort**. They replace GPT-6 Astra and Opus 5.5 at the same reasoning levels. Aggregation rejects mixed models within a harness, so new trials form their own cohort; historical manifests and reports keep their original models. Pi 1.5.2's built-in catalog does not list GPT-6.2 Astra yet. `pi update --models` refreshes `~/.pi/agent/models-store.json`, and preparation copies that store's `openai-codex` entry into the profile, recording `model_catalog_sha256`. Preparation stops with that instruction when the store lacks the model. The explicit legacy `openai-codex` provider replaces `openai` for new Pi profiles after the latter returned an OAuth refresh `invalid_grant` during a benchmark actor run. This is a requested provider choice, not an automatic fallback or a main-session authentication failure. Prepared plans record `provider`, and launch/isolation/aggregation reject the wrong provider; old cancelled profiles are not resumed or silently pooled. Model ID, low reasoning, task and computer-use runtimes are unchanged, but provider-specific model metadata/context limits may differ, so comparisons must retain the provider identity. This also supersedes the GPT-6.1/four-arm configuration for new trials; historical manifests and reports retain their original providers, models and arm names. The standalone `codex-computer-use` arm is no longer a launch option. Its archived events remain analysable; Pi now hosts the Codex computer-use runtime for the matched GPT comparison.
 
 No automatic provider/model fallback or parent coaching. Standing desktop approval covers needed tests and fresh reruns. Preserve failed/interrupted attempts separately from completed task timings. Existing prompts/assets, correctness checks, isolation and owned-resource cleanup remain unchanged. The measurement policy below supersedes elapsed task-time ranking.
 
@@ -102,15 +100,17 @@ The user reported an invisible cursor after the earlier comparison. The archived
 
 Each run gets a new workspace, config directory, session and evidence folder under `.pi/bench/`. No global agent settings or discovery links are modified.
 
-- Pi disables discovered extensions, other skills, context files, prompt templates and themes. ACU/CUA arms also disable MCP; only the selected skill and `read,bash,edit,write` are enabled. The Codex computer-use arm explicitly enables only `builtin:mcp`, one run-local `node_repl` server and its four direct tools, alongside those same file/shell tools. Codemode/tool search and other MCP servers remain disabled. The isolated agent directory contains no `AGENTS.md`, `SYSTEM.md` or `APPEND_SYSTEM.md`. Cache warming is off; normal within-session retry and compaction are enabled. Pi profiles freeze three transient-response retries with 2/4/8-second backoff (60-second cap), provider-level retries at zero, and automatic compaction with the normal 16384 reserve/20000 recent-token budgets. Provider-side prompt caching still occurs and is measured. `plan.json::recovery_policy` records these settings; Claude Code keeps its native default recovery behavior.
+- Pi disables discovered extensions, other skills, context files, prompt templates and themes. ACU/CUA arms also disable MCP; only the selected skill and `read,bash,edit,write` are enabled. The Codex computer-use arm explicitly enables only `builtin:mcp`, one run-local `node_repl` server and its four direct tools, alongside those same file/shell tools. Codemode/tool search and other MCP servers remain disabled. The isolated agent directory contains no `AGENTS.md`, `SYSTEM.md` or `APPEND_SYSTEM.md`; its `models-store.json` holds only the `openai-codex` catalog entry. Cache warming is off; normal within-session retry and compaction are enabled. Pi profiles freeze three transient-response retries with 2/4/8-second backoff (60-second cap), provider-level retries at zero, and automatic compaction with the normal 16384 reserve/20000 recent-token budgets. Provider-side prompt caching still occurs and is measured. `plan.json::recovery_policy` records these settings; Claude Code keeps its native default recovery behavior.
 - Claude Code runs with a fresh `CLAUDE_CONFIG_DIR`, `--safe-mode` (no CLAUDE.md, skills, hooks, plugins or MCP), `--disable-slash-commands`, `--strict-mcp-config`, user-only setting sources, and exactly `Read,Write,Edit,Bash`. Only the selected ACU or CUA skill is declared by path in an appended system prompt. The stream's init event is audited for model, tools, MCP servers and skills, and the persisted transcript for effort, model and skill reads; the stream lists no memory files, so the CLAUDE.md exclusion rests on the flag. Claude Code's Bash tool uses Git Bash on Windows, like Pi.
 - Pi + Codex computer use reuses the installed vendor `node_repl` executable, `@oai/sky` service and unmodified skill. Only `sky` is trusted; browser backends are disabled. Its fresh run-local `CODEX_HOME` is for the Codex computer-use runtime, not a Codex actor. The supported `--disable-sandbox` server flag matches the former Codex CLI arm's explicit full-access mode; without it the standalone MCP kernel returns `spawn EPERM` launching the helper. Pi lacks MCP form elicitation, so `native_mcp.py` forwards tool traffic unchanged and answers only recognized low-risk app-use approvals on the scenario's exact app allowlist, under standing user authorization. Unknown apps, URL elicitations, high-risk/audio and unrelated requests are declined. Decisions go to `native-approvals.jsonl`; crashes to `native-approvals.crash.txt`. This adapter and its overhead are part of the measured profile. It never implements or replaces the desktop helper protocol.
-- Saved login credentials (Pi `auth.json` and Claude Code `.credentials.json`) are copied into the private config only while running, then deleted in `finally`. Pi uses the selected provider's credential from that private file; switching the benchmark provider does not change the main session's provider or global defaults. `pi auth check --provider openai-codex --model gpt-6-astra --json --no-refresh` reports readiness without printing credential values; never use credential-output flags in benchmark logs. Do not commit or share a run directory while a run is active. Commands and manifests contain credential paths, never credential values.
+- Saved login credentials (Pi `auth.json` and Claude Code `.credentials.json`) are copied into the private config only while running, then deleted in `finally`. A harness that refreshes an expired login does so in that private copy, and OAuth refresh tokens are single-use, so a changed copy is written back over the saved login before deletion, unless the saved login itself changed during the trial; `login-writeback.json` records whether it was. Before 2026-11-19 the refreshed copy was discarded, and in that day's round every Pi trial after the first refreshes failed with `refresh_token_reused`. Pi uses the selected provider's credential from that private file; switching the benchmark provider does not change the main session's provider or global defaults. `pi auth check --provider openai-codex --model gpt-6.2-astra --json --no-refresh` reports readiness without printing credential values; never use credential-output flags in benchmark logs. Do not commit or share a run directory while a run is active. Commands and manifests contain credential paths, never credential values.
 - This is **configuration and prompt isolation, not an OS security sandbox**. The shell is capable of arbitrary commands; method compliance also needs transcript/script review. The desktop remains shared. Run one controller at a time on an idle desktop.
 
 Installed versions at initial setup: Pi 1.1.0; Codex CLI 0.162.0; cua-driver 0.34.0; Codex computer-use skill build 26.901.51231; Claude Code 2.1.295 when the `claude-acu` arm was added. ACU source was `eae5264`. Plans save the exact selected skill path, skill SHA-256, scenario SHA-256, launch command and configuration paths.
 
 The bench always selects the newest cached computer-use plugin and the `node_repl` entry in `~/.codex/config.toml`. The Codex app writes both, but only when it starts: after a Store update, launch the app once before preparing a native trial, or the bench keeps the previous runtime. Native plans record the runtime's `@oai/sky` version as `native_sky_version`, because the skill text can be identical across app releases; earlier plans have no such field. On 2026-11-04 the app moved from plugin 26.1007.21434 / `@oai/sky` 0.7.6 to 26.1029.61003 / 0.7.17. The skill and its docs were unchanged, as were the `node_repl` tools and their arguments. cua-driver 0.38.0 was still the latest stable release that day.
+
+On 2026-11-19 the bench moved to the latest releases: cua-driver 0.54.0 (from 0.38.1-nightly) with its refreshed skill pack, and the Codex app 26.1111.9664.0, with plugin 26.1111.71704 / `@oai/sky` 0.7.21. The computer-use SKILL.md kept the same SHA-256 and the `node_repl` tools kept the same names and arguments. The Codex CLI, used only for archived replay, is 0.170.0; Pi stayed at 1.5.2 and Claude Code at 2.1.326. `codex update` fails under Git Bash, whose GNU tar reads `C:` as a remote host; run it from PowerShell.
 
 ## Runtime screenshot write audit
 
@@ -130,27 +130,13 @@ Since 2026-10-21 three measures keep screenshots and other actor files inside th
 - **The prompt names the folder.** TB3 prompts say "Your working directory is <workspace>. Save any screenshots or other files you create there." for every configuration.
 - **Stray files are moved.** After the conduct audit, files the actor demonstrably created outside the run folder move into `<run>/stray/`, listed in `conduct.json::stray_files`: files added under a guarded root, and runtime-reported screenshot paths that were absent from the home or temp folder before the trial. An overwritten pre-existing file stays where it is. Moving does not change the conduct verdict, so a file added to the checkout still fails `guarded files changed`.
 
-## Calculator
+## Conduct audit and cleanup
 
-Scenario **v1.1** (2026-10-11, by the user's decision) is the task plus the result file, with every safeguard sentence removed. The actor receives exactly:
+The first line of each scenario file is its title and version for people; `prepare` sends only the body and writes the exact text to `prompt.txt` in the run directory, with `prompt_sha256` and `scenario_version` in `plan.json`. Prompts say nothing about input routes, skill reading, ownership files or preserving other windows unless the scenario's own text does: whether an actor needs those guards is unknown, so none is added without the user's approval. Instead the bench runs a **conduct audit** around every trial and records it in `conduct.json`: a SHA-256 fingerprint of the checkout and the arm's installed skill directory (excluding directories listed in `bench/run.py::FINGERPRINT_SKIP`, including generated evidence, caches, `openwiki`, `dist`, `node_modules`, `.agents` and `.claude`), taken before and after, so changes within those guarded locations are detected regardless of write route (whole-checkout coverage since 2026-10-21; before, only `acu/`, `bench/`, `tests/` and the READMEs); the transcript's write/edit tool calls outside the workspace (`writes_outside_workspace`, diagnostic), plus a heuristic list of shell commands pairing a write verb with an outside path; and a window diff, flagging pre-existing visible windows that vanished and new visible windows left open that do not belong to the task application. The diff's `new_non_calculator` key keeps its historical name and lists those windows, whichever application the task uses. Changed guarded files fail the trial (`conduct_passed` in `summary.json`). Window-handle changes are diagnostic only (`window_audit_policy: diagnostic-only-v1`), as is the heuristic command list: Explorer restarts and transient overlays do not fail a trial. Window baselines remain necessary for identifying owned resources; identity-checked cleanup and protection of pre-existing documents are unchanged. This is detection after the fact, not prevention.
 
-```text
-Open a new Windows Calculator window and calculate:
+The independent observer runs **outside actor token/call measurements** and is the same for every arm; it is not a tool available to the actor.
 
-98765 * 432 / 1234 * 56 / 789 + 6543 - 4321
-
-When done, write result.json in the workspace with these fields: observed_result (the displayed text), observed_expression, input_method, and hiccups (an array of concrete problems encountered).
-```
-
-The answer with normal precedence is 4676.0458…; left-to-right evaluation gives a different number, which is how a mode mistake shows. The file's first line is its title and version for people; `prepare` sends only the body and writes the exact text to `prompt.txt` in the run directory, with `prompt_sha256` and `scenario_version` in `plan.json`. Nothing is said about input routes, skill reading, ownership files, preserving other windows, or leaving the window open: whether an actor needs those guards is unknown, so none is added back without the user's approval. Instead the bench runs a **conduct audit** around every trial and records it in `conduct.json`: a SHA-256 fingerprint of the checkout and the arm's installed skill directory (excluding directories listed in `bench/run.py::FINGERPRINT_SKIP`, including generated evidence, caches, `openwiki`, `dist`, `node_modules`, `.agents` and `.claude`), taken before and after, so changes within those guarded locations are detected regardless of write route (whole-checkout coverage since 2026-10-21; before, only `acu/`, `bench/`, `tests/` and the READMEs); the transcript's write/edit tool calls, which must stay inside the workspace, plus a heuristic list of shell commands pairing a write verb with an outside path; and a window diff, flagging pre-existing visible windows that vanished and new visible windows left open that do not belong to the task application. The diff's `new_non_calculator` key keeps its historical name in every scenario and lists those windows, whichever application the task uses. Changed guarded files or a Calculator write tool call outside the workspace fail the trial (`conduct_passed` in `summary.json`). Window-handle changes are diagnostic only (`window_audit_policy: diagnostic-only-v1`), as is the heuristic command list: Explorer restarts and transient overlays do not fail a trial. Window baselines remain necessary for identifying owned resources; identity-checked cleanup and protection of pre-existing documents are unchanged. This is detection after the fact, not prevention. The bench therefore finds the actor's window itself, the one visible Calculator that appeared during the trial, reads its display, and closes only that window; `result.json` is required, `ownership.json` is honoured when written. None or several new Calculator windows is an explicit failure, never a guess. The bench records which input routes each workspace script used in `verification.json` for the report; it does not fail a trial for any route.
-
-Scripts remain in the actor's workspace. The independent observer runs **outside actor token/call measurements**, reads the actor's window (claimed, or the one new Calculator), captures it, and checks the display against a fixed reference. It uses the same observer for every arm; it is not an extra tool available to the actor.
-
-Automatic Calculator selection excludes only handles independently reported as `Xaml_WindowedPopupClass` in the current probe. Unknown or missing classes still count as candidates; two new main frames remain an error. Selection requires an observed nonzero PID and rejects every pre-existing visible handle, even one not previously labelled Calculator. Hidden frame-host shells can be reused by a newly opened Calculator. Raw `observer-probe-*.log` files retain popup entries for diagnosis and remaining-window checks; an orphan popup still fails cleanup. See [issue #16](https://github.com/stanley50z/ahk-computer-use/issues/16).
-
-Cleanup protects every pre-existing visible top-level handle, checks the independently observed native PID again before closing, and validates an actor-provided PID when present. It never kills a shared frame host. Unclaimed or ambiguous windows cause an explicit cleanup failure; they are not automatically closed. Windows agent descendants are contained in a job object before execution and terminated/verified even if their parent exits first. Broker-launched application windows are handled separately. `finished.json` distinguishes worker exit from successful cleanup. After owned controllers/windows stop, cleanup reloads the saved Windows cursor scheme and checks the OS showing flag. Cursor-restoration evidence is required; a cleanup exception also clears an overall-pass summary. The mitigation passed user-confirmed emergency recovery, quiet checks, and the latest complete Calculator benchmark. Before either CUA arm, the worker restarts the shared `cua-driver` daemon outside actor timing and records `daemon-restart.json`. The 2026-10-10 restart decision addressed remembered session labels: fresh actors reused the scenario name, and trials after the first paid a rejected call of 4 to 11 s. Current trials use `stop`, then the bench scheduled task to start in the workspace; afterward the worker restarts the installed autostart entry (`daemon-restore.json`, or `daemon-restore-error.txt` on failure). This restores the normal working directory, not prior daemon sessions. The worker does not individually end named CLI lifecycles; any manual lifecycle cleanup must target only the trial's own session. No other shared service is stopped. These cleanup checks are not a visual guarantee.
-
-Versions: **v1.0** is the button-only prompt that rounds 1 to 3 used, with the expression `128+465*12387/138473-12343` and the evidence-file protocol in the prompt (its 2026-10-09 drafts tightened ownership and then allowed semantic Invoke alongside pointer clicks; the archived run directories keep each draft and its hash). A one-round interim text that listed allowed input routes, and whose title line "Calculator buttons" was sent to the actors, is recorded in [its report](../docs/reports/testbench-1-v4-2026-10-11.md) and superseded. **v1.1** is the two-line task above with a new expression. Comparisons across versions are across prompts and expressions. Preserve original verdicts and prompt hashes; this is not an exact-prompt statistical comparison.
+Cleanup protects every pre-existing visible top-level handle. Unclaimed or ambiguous windows cause an explicit cleanup failure; they are not automatically closed. Windows agent descendants are contained in a job object before execution and terminated/verified even if their parent exits first. `finished.json` distinguishes worker exit from successful cleanup. After owned controllers/windows stop, cleanup reloads the saved Windows cursor scheme and checks the OS showing flag. Cursor-restoration evidence is required; a cleanup exception also clears an overall-pass summary. Before either CUA arm, the worker restarts the shared `cua-driver` daemon outside actor timing and records `daemon-restart.json`. The 2026-10-10 restart decision addressed remembered session labels: fresh actors reused the scenario name, and trials after the first paid a rejected call of 4 to 11 s. Current trials use `stop`, then the bench scheduled task to start in the workspace; afterward the worker restarts the installed autostart entry (`daemon-restore.json`, or `daemon-restore-error.txt` on failure). This restores the normal working directory, not prior daemon sessions. The worker does not individually end named CLI lifecycles; any manual lifecycle cleanup must target only the trial's own session. No other shared service is stopped. These cleanup checks are not a visual guarantee.
 
 ## Adobe Illustrator Pen Tool
 
@@ -219,19 +205,19 @@ Install the benchmark dependencies once with `uv sync` in the checkout. CUA tria
 Offline preparation only; no credentials copied and no desktop operation:
 
 ```bash
-python bench/run.py prepare --arm pi-acu
-python bench/run.py prepare --arm claude-acu
-python bench/run.py prepare --arm pi-cua
-python bench/run.py prepare --arm pi-computer-use
-python bench/run.py prepare --arm claude-cua
+python bench/run.py prepare --arm pi-acu --scenario illustrator-pen-tool
+python bench/run.py prepare --arm claude-acu --scenario illustrator-pen-tool
+python bench/run.py prepare --arm pi-cua --scenario tb3.1
+python bench/run.py prepare --arm pi-computer-use --scenario tb3.1
+python bench/run.py prepare --arm claude-cua --scenario tb3.1
 ```
 
-These examples use Calculator. Add `--scenario illustrator-pen-tool` or `--scenario tb3.1` (through `tb3.4`) to `prepare`, `start.py` or `run`. A prepared `--run-dir` must be run with its matching arm/scenario and cannot be reused after an attempt. `bench/aggregate.py` accepts only the matched 15-trial Illustrator round, not Calculator or TB3 runs.
+Use `--scenario illustrator-pen-tool` or `--scenario tb3.1` (through `tb3.4`) with `prepare`, `start.py` or `run`. A prepared `--run-dir` must be run with its matching arm/scenario and cannot be reused after an attempt. `bench/aggregate.py` accepts only the matched 15-trial Illustrator round, not TB3 runs.
 
 With desktop authorization (the current Illustrator benchmark work has standing approval), start in the background without opening another terminal:
 
 ```bash
-python bench/start.py --arm pi-acu --desktop-approved
+python bench/start.py --arm pi-acu --scenario illustrator-pen-tool --desktop-approved
 ```
 
 Replace the arm only when the corresponding task/run is authorized. `start.py` prints the run directory and worker PID. For `pi-computer-use`, `--native-transport app-pipe` uses the running ChatGPT/Codex desktop app's own computer-use pipe instead of the shipped SDK helper; the worker refuses to start if that pipe is not open. The default remains the SDK helper. There is no overall actor time limit. Stop a stalled or unwanted run explicitly with `stop.py`; per-script watchdogs and backend request/startup timeouts remain separate protections. A run directory is never reused for another trial.
@@ -248,7 +234,7 @@ Synchronous equivalent:
 python bench/run.py run --arm pi-acu --desktop-approved
 ```
 
-No benchmark server or new fixed localhost port is required. CUA trials stop and restart the shared cua-driver daemon in the trial workspace, then restart its installed autostart entry after the trial. Do not run them alongside other CUA work. `daemon-restart.json` records the driver version. Earlier records have no version; every CUA trial through 2026-10-21 ran cua-driver 0.34.0 or older, which had no `run_steps` batch tool, so their multi-call batching is shell chaining. The driver was upgraded to 0.38.0 on 2026-11-02. The bench does not stop the Codex desktop app or unrelated host services.
+No benchmark server or new fixed localhost port is required. CUA trials stop and restart the shared cua-driver daemon in the trial workspace, then restart its installed autostart entry after the trial. Do not run them alongside other CUA work. `daemon-restart.json` records the driver version. Earlier records have no version; every CUA trial through 2026-10-21 ran cua-driver 0.34.0 or older, which had no `run_steps` batch tool, so their multi-call batching is shell chaining. The driver was upgraded to 0.38.0 on 2026-11-02 and to 0.54.0 on 2026-11-19. The bench does not stop the Codex desktop app or unrelated host services.
 
 ## Benchmark measurements
 
@@ -331,15 +317,14 @@ These tests exercise profiles, usage/timing, ownership checks, Codex computer-us
 
 ### Scenario lifecycle
 
-`bench/scenario.py` defines the scenario contract. Calculator, Illustrator and TB3 implement it in their own modules;
+`bench/scenario.py` defines the scenario contract. Illustrator and TB3 implement it in their own modules;
 `bench/scenarios/__init__.py` registers a fresh adapter per attempt. Add an adapter and its scenario Markdown file to
 that registry to add a task. `bench/common.py` owns shared paths and evidence IO; adapters never import `bench/run.py`.
 
 Preparation delegates asset validation, file preparation and native application allowlists to the adapter.
 `run_trial` owns the actor, audits, evidence writes and failure handling. It prepares the desktop, starts optional
 input recording immediately before the actor, stops recording immediately afterward, and collects and grades the
-result. Calculator retains verification before conduct; Illustrator and TB3 collect only after `conduct.json` is
-written. Illustrator keeps the result of its combined collection/cleanup operation and never repeats a refused
+result. Collection runs only after `conduct.json` is written. Illustrator keeps the result of its combined collection/cleanup operation and never repeats a refused
 collection. The shared `finally` block performs scenario cleanup and restores the saved cursor scheme even if
 cleanup raises. Adapters add their own detail to the summary; none decides the verdict.
 

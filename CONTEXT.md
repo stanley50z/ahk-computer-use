@@ -107,11 +107,11 @@ _Avoid_: frame, event, snapshot
 ### Measuring
 
 **Calculator**:
-The Calculator UI-task benchmark across five configurations: Pi plus ACU, CUA, or Codex computer use; Claude Code plus ACU or CUA. One configuration's trial is one arm, not the complete benchmark; historical reports call this Testbench 1.
-_Avoid_: Testbench 1 in current naming; using Calculator to mean the ACU arm alone
+A retired benchmark (historically Testbench 1 or TB1), permanently removed from the benches by the user's decision. Archived Calculator runs remain readable history, not a scenario.
+_Avoid_: listing Calculator among the benches or scheduling it in a round
 
 **Adobe Illustrator Pen Tool**:
-The benchmark for reconstructing a reference image with genuine Illustrator Pen-tool Bézier curves across the same five configurations, with an open drawing as the actor's result and an unchanged maintainer-exported PNG as evidence. Saving/exporting is not actor work; historical reports call this Testbench 2, TB2 or Adobe Illustrator Pen and Export (`illustrator-pen-export`); the current scenario id is `illustrator-pen-tool`.
+The benchmark for reconstructing a reference image with genuine Illustrator Pen-tool Bézier curves across five configurations (Pi plus ACU, CUA, or Codex computer use; Claude Code plus ACU or CUA), with an open drawing as the actor's result and an unchanged maintainer-exported PNG as evidence. Saving/exporting is not actor work; historical reports call this Testbench 2, TB2 or Adobe Illustrator Pen and Export (`illustrator-pen-export`); the current scenario id is `illustrator-pen-tool`.
 _Avoid_: Testbench 2, TB2 or "Pen and Export" in current naming; treating one arm as the complete benchmark
 
 **TB3.1–TB3.4**:

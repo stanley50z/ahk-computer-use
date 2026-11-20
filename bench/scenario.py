@@ -29,10 +29,7 @@ class Trial:
 # Register a fresh adapter per attempt. Optional hooks mean no work for scenarios without that resource.
 class Scenario(ABC):
     application: str
-    prepares_desktop = True
-    verify_before_audit = False
     group_process_windows = False
-    fail_outside_writes = False
     cursor_verification = 'Saved Windows scheme reloaded and OS showing flag checked; not pixel-level proof.'
 
     def validate_assets(self):

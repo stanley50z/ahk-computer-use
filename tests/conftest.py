@@ -87,6 +87,18 @@ def illustrator_reference(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def pi_model_catalog(tmp_path, monkeypatch):
+    """Pi profiles copy the benchmark model from a stand-in store, not the user's ~/.pi/agent/models-store.json."""
+    from bench.harnesses import pi
+
+    store = tmp_path / "pi-models-store.json"
+    models = [{"id": pi.MODEL}]
+    store.write_text(json.dumps({pi.PI_PROVIDER: {"models": models}, "other-provider": {"models": models}}), encoding="utf-8")
+    monkeypatch.setattr(pi, "MODEL_CATALOG", store)
+    return store
+
+
+@pytest.fixture(autouse=True)
 def acu_home(tmp_path, monkeypatch):
     """Point the launcher's logs at a temp dir so tests never write to %LOCALAPPDATA%\\ACU."""
     home = tmp_path / "ACU"

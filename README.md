@@ -220,7 +220,7 @@ Attribution and this disclaimer are not permission to redistribute third-party a
 
 ## Benchmarks and project notes
 
-The [computer-use test bench](bench/README.md) compares ACU, CUA, and Codex computer use on Calculator, Adobe Illustrator Pen drawing, and TB3.1–TB3.4 Office tasks; TB4 runs ACU on Cua's [Cua Driver Bench](bench/cua_driver_bench/README.md). Its guide covers scenarios, commands, measurement limits, and cleanup. Results and investigations are indexed in [docs/reports/](docs/reports/README.md); experiments include [click delivery while the cursor is moving](experiments/jiggle/).
+The [computer-use test bench](bench/README.md) compares ACU, CUA, and Codex computer use on Adobe Illustrator Pen drawing and the TB3.1–TB3.4 Office tasks; TB4 runs ACU on Cua's [Cua Driver Bench](bench/cua_driver_bench/README.md). Its guide covers scenarios, commands, measurement limits, and cleanup. Results and investigations are indexed in [docs/reports/](docs/reports/README.md); experiments include [click delivery while the cursor is moving](experiments/jiggle/).
 
 **[Latest report: Illustrator, TB3.1–TB3.4 and TB4](https://stanley50z.github.io/ahk-computer-use/reports/latest/)** — the 5 November 2026 round, with metrics, output comparisons and silent web-optimized video clips, plus TB4 (Cua Driver Bench, 12 November 2026). The [20–21 October report](https://stanley50z.github.io/ahk-computer-use/reports/2026-10-22/) stays online.
 

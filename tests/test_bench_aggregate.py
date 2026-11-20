@@ -77,7 +77,7 @@ def test_cli_reads_three_attempts_per_arm_and_keeps_safeguard_failures_out(tmp_p
             (folder/'prompt.txt').write_text(prompt, encoding='utf-8')
             # Each arm's first attempt carries the pre-rename recorded names; the round must still count as one protocol.
             legacy = index == 0
-            plan = {'arm':arm,'model':'gpt-6-astra' if arm.startswith('pi-') else 'claude-opus-5-5','reasoning':'low',
+            plan = {'arm':arm,'model':'gpt-6.2-astra' if arm.startswith('pi-') else 'claude-fable-5-2','reasoning':'low',
                     'scenario':'illustrator-pen-export' if legacy else 'illustrator-pen-tool',
                     'provider':'openai-codex' if arm.startswith('pi-') else None,
                     'workspace':str(workspace), 'prompt_sha256':hashlib.sha256(prompt.encode('utf-8')).hexdigest(),

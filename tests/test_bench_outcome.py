@@ -137,7 +137,7 @@ def test_metrics_row_and_output_image_come_from_the_trial(tmp_path):
     assert outcome.statistics['computer_use_call_count'] == 2
     assert outcome.statistics['computer_use_busy_s'] is None, 'durations were not marked complete'
     assert outcome.statistics['foreground_iou'] == 0.96
-    assert read_outcome(finished_trial(tmp_path / 'calculator')).output_image is None
+    assert read_outcome(finished_trial(tmp_path / 'no-image')).output_image is None
 
 
 @pytest.mark.parametrize('metrics, error', [(None, 'failed before extracted metrics were recorded'),

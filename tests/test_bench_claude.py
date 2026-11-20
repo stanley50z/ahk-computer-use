@@ -5,7 +5,7 @@ import pytest
 from bench.harnesses.claude import analyse_claude, audit_claude_session
 from bench.run import ARMS
 
-INIT = {'type': 'system', 'subtype': 'init', 'model': 'claude-opus-5-5', 'tools': ['Bash', 'Edit', 'Read', 'Write'],
+INIT = {'type': 'system', 'subtype': 'init', 'model': 'claude-fable-5-2', 'tools': ['Bash', 'Edit', 'Read', 'Write'],
         'mcp_servers': [], 'skills': [], 'slash_commands': []}
 
 
@@ -18,13 +18,13 @@ def test_arms_group_comparisons_by_model_and_harness():
 
 
 def test_claude_metrics_time_responses_from_request_to_stop_and_count_final_usage_once():
-    assistant = {'type': 'assistant', 'message': {'id': 'm1', 'model': 'claude-opus-5-5',
+    assistant = {'type': 'assistant', 'message': {'id': 'm1', 'model': 'claude-fable-5-2',
                  'content': [{'type': 'tool_use', 'id': 't1', 'name': 'Bash', 'input': {'command': 'acu run "C:/w/a.ahk"'}}],
                  'usage': {'input_tokens': 2, 'cache_creation_input_tokens': 100, 'cache_read_input_tokens': 0, 'output_tokens': 10}}}
     records = [
         {'elapsed_s': 1, 'event': INIT},
         {'elapsed_s': 2, 'event': {'type': 'system', 'subtype': 'status', 'status': 'requesting'}},
-        stream(3, {'type': 'message_start', 'message': {'id': 'm1', 'model': 'claude-opus-5-5'}}),
+        stream(3, {'type': 'message_start', 'message': {'id': 'm1', 'model': 'claude-fable-5-2'}}),
         stream(3.5, {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'input_json_delta', 'partial_json': '{'}}),
         {'elapsed_s': 3.9, 'event': assistant},
         {'elapsed_s': 3.9, 'event': assistant},  # Claude Code repeats the assistant event per content block
@@ -32,9 +32,9 @@ def test_claude_metrics_time_responses_from_request_to_stop_and_count_final_usag
         stream(4, {'type': 'message_stop'}),
         {'elapsed_s': 6, 'event': {'type': 'user', 'message': {'role': 'user', 'content': [{'type': 'tool_result', 'tool_use_id': 't1', 'content': 'ok', 'is_error': False}]}}},
         {'elapsed_s': 6.5, 'event': {'type': 'system', 'subtype': 'status', 'status': 'requesting'}},
-        stream(7, {'type': 'message_start', 'message': {'id': 'm2', 'model': 'claude-opus-5-5'}}),
+        stream(7, {'type': 'message_start', 'message': {'id': 'm2', 'model': 'claude-fable-5-2'}}),
         stream(7.5, {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': 'done'}}),
-        {'elapsed_s': 7.6, 'event': {'type': 'assistant', 'message': {'id': 'm2', 'model': 'claude-opus-5-5', 'content': [{'type': 'text', 'text': 'done'}],
+        {'elapsed_s': 7.6, 'event': {'type': 'assistant', 'message': {'id': 'm2', 'model': 'claude-fable-5-2', 'content': [{'type': 'text', 'text': 'done'}],
                                      'usage': {'input_tokens': 1, 'cache_creation_input_tokens': 5, 'cache_read_input_tokens': 100, 'output_tokens': 4}}}},
         stream(8, {'type': 'message_delta', 'usage': {'output_tokens': 5}}),
         stream(8, {'type': 'message_stop'}),
@@ -56,7 +56,7 @@ def test_claude_metrics_time_responses_from_request_to_stop_and_count_final_usag
 
 def test_claude_run_without_a_final_result_is_incomplete_not_zero():
     records = [{'elapsed_s': 1, 'event': INIT},
-               {'elapsed_s': 2, 'event': {'type': 'assistant', 'message': {'id': 'm1', 'model': 'claude-opus-5-5', 'content': [],
+               {'elapsed_s': 2, 'event': {'type': 'assistant', 'message': {'id': 'm1', 'model': 'claude-fable-5-2', 'content': [],
                                           'usage': {'input_tokens': 7, 'cache_creation_input_tokens': 0, 'cache_read_input_tokens': 0, 'output_tokens': 3}}}}]
     result = analyse_claude(records, wall_s=3)
     assert not result['agent_completed'] and not result['token_counts_complete']
@@ -79,7 +79,7 @@ def test_claude_reports_provider_api_errors_without_mislabeling_harness_limits()
 def test_claude_recovered_stream_error_does_not_fail_a_successful_final_result():
     error = {'type': 'overloaded_error', 'message': 'Transient provider error'}
     records = [{'elapsed_s': 0, 'event': INIT}, stream(1, {'type': 'error', 'error': error}),
-               stream(2, {'type': 'message_start', 'message': {'id': 'recovered', 'model': 'claude-opus-5-5'}}),
+               stream(2, {'type': 'message_start', 'message': {'id': 'recovered', 'model': 'claude-fable-5-2'}}),
                stream(3, {'type': 'message_delta', 'usage': {'output_tokens': 2}}),
                stream(4, {'type': 'message_stop'}),
                {'elapsed_s': 5, 'event': {'type': 'result', 'subtype': 'success', 'is_error': False,
@@ -103,8 +103,8 @@ def test_claude_recovered_stream_error_does_not_fail_a_successful_final_result()
 @pytest.mark.parametrize('skill_name', ['acu', 'cua-driver'])
 def test_claude_audit_requires_init_and_transcript_evidence_and_rejects_pollution(skill_name):
     records = [{'elapsed_s': 1, 'event': INIT}]
-    entries = [{'type': 'assistant', 'effort': 'low', 'requestedModel': 'claude-opus-5-5',
-                'message': {'model': 'claude-opus-5-5', 'content': [{'type': 'tool_use', 'name': 'Read', 'input': {'file_path': 'C:\\repo\\acu\\SKILL.md'}}]}}]
+    entries = [{'type': 'assistant', 'effort': 'low', 'requestedModel': 'claude-fable-5-2',
+                'message': {'model': 'claude-fable-5-2', 'content': [{'type': 'tool_use', 'name': 'Read', 'input': {'file_path': 'C:\\repo\\acu\\SKILL.md'}}]}}]
     selected = f'C:/repo/{skill_name}'
     entries[0]['message']['content'][0]['input']['file_path'] = selected + '/SKILL.md'
     audit = audit_claude_session(records, entries, selected)
@@ -116,7 +116,7 @@ def test_claude_audit_requires_init_and_transcript_evidence_and_rejects_pollutio
     assert not audit_claude_session(polluted, entries, 'C:/repo/acu')['passed']
     assert not audit_claude_session([{'elapsed_s': 1, 'event': {**INIT, 'tools': ['Bash', 'Read', 'WebFetch']}}], entries, 'C:/repo/acu')['passed']
     assert not audit_claude_session(records, [{**entries[0], 'effort': 'high'}], 'C:/repo/acu')['passed']
-    other = {**entries[0], 'message': {'model': 'claude-opus-5-5', 'content': [{'type': 'tool_use', 'name': 'Read', 'input': {'file_path': 'C:/global/cua-driver/SKILL.md'}}]}}
+    other = {**entries[0], 'message': {'model': 'claude-fable-5-2', 'content': [{'type': 'tool_use', 'name': 'Read', 'input': {'file_path': 'C:/global/cua-driver/SKILL.md'}}]}}
     assert 'other skill read: C:/global/cua-driver/SKILL.md' in audit_claude_session(records, [*entries, other], 'C:/repo/acu')['problems']
 
 
@@ -125,8 +125,8 @@ def test_claude_skill_audit_accepts_user_root_alias_without_allowing_another_ski
     monkeypatch.setattr(Path, 'home', classmethod(lambda cls: tmp_path))
     selected = tmp_path / '.agents/skills/cua-driver'
     records = [{'elapsed_s': 1, 'event': INIT}]
-    entries = [{'type': 'assistant', 'effort': 'low', 'requestedModel': 'claude-opus-5-5',
-                'message': {'model': 'claude-opus-5-5', 'content': [
+    entries = [{'type': 'assistant', 'effort': 'low', 'requestedModel': 'claude-fable-5-2',
+                'message': {'model': 'claude-fable-5-2', 'content': [
                     {'type': 'tool_use', 'name': 'Read', 'input': {'file_path': '~/.agents/skills/cua-driver/SKILL.md'}},
                 ]}}]
     assert audit_claude_session(records, entries, selected)['passed']

@@ -110,6 +110,22 @@ def test_schedule_runs_each_windows_task_in_its_manifest_conditions(tmp_path):
     assert run.schedule(bench, ["MB-10"], ["foreground", "background"], 1) == [("MB-10", "foreground", 0)]
 
 
+# The agent runs at the run's model and effort, so one checkout can run Sonnet at medium and Fable at low.
+def test_trial_agent_gets_the_runs_model_and_effort(tmp_path, monkeypatch):
+    manifest = tmp_path / "cdb" / "taskpack" / "v2-taskset.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(json.dumps({"tasks": [{"id": "MB-10", "conditions": ["foreground"], "os": ["windows"]}]}))
+    commands = []
+    monkeypatch.setattr(run.subprocess, "run", lambda command, **kwargs: commands.append(command) or
+                        types.SimpleNamespace(stdout="{}", stderr="", returncode=0))
+    monkeypatch.setattr(sys, "argv", ["run.py", "--bench", str(tmp_path / "cdb/automated-eval/macos_bench"),
+                                      "--python", "python", "--out", str(tmp_path / "out"), "--runs", "1",
+                                      "--retries", "0", "--model", "claude-fable-5-2", "--effort", "low"])
+    assert run.main() == 0
+    agent = commands[0][commands[0].index(str(run.AGENT)):]
+    assert agent[agent.index("--model") + 1] == "claude-fable-5-2" and agent[agent.index("--effort") + 1] == "low"
+
+
 # A stand-in for the bench's windows/cdb.py: CDB-G04's descriptor, whose by-name cleanup stops every chrome.exe.
 def fake_cdb(workspace):
     class CdbTask:

@@ -23,8 +23,8 @@ def test_benchmark_entry_points_do_not_offer_an_overall_deadline():
 
 
 @pytest.mark.parametrize('entry, arguments', [
-    ('start.py', ['--desktop-approved']),
-    ('run.py', ['run', '--desktop-approved']),
+    ('start.py', ['--scenario', 'tb3.1', '--desktop-approved']),
+    ('run.py', ['run', '--scenario', 'tb3.1', '--desktop-approved']),
 ])
 @pytest.mark.parametrize('environment', ['missing', 'without-dependencies'])
 def test_benchmark_setup_failure_stops_before_creating_a_trial(tmp_path, entry, arguments, environment):

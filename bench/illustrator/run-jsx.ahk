@@ -11,6 +11,14 @@ if !WinWaitActive(target, , 3)
 SetKeyDelay 30, 30
 SendEvent "^{F12}"
 dialog := AcuWaitUntil(() => WinExist("Locate script file to execute ahk_exe Illustrator.exe"), 5000)
+; Illustrator sometimes ignores Ctrl+F12 sent right after the previous script (2 of 34 preparations, 2026-11-19/20),
+; so send it once more before giving up.
+if !dialog && DllCall("IsWindowEnabled", "ptr", hwnd) {
+    WinActivate target
+    if WinWaitActive(target, , 3)
+        SendEvent "^{F12}"
+    dialog := AcuWaitUntil(() => WinExist("Locate script file to execute ahk_exe Illustrator.exe"), 5000)
+}
 if !dialog || WinGetPID("ahk_id " dialog) != Integer(A_Args[4])
     throw Error("Other Script dialog did not appear in the prepared Illustrator process")
 root := UIA.ElementFromHandle(dialog)
